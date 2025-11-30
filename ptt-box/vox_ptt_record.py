@@ -4,6 +4,7 @@ import time
 import wave
 import threading
 from datetime import datetime
+from pathlib import Path
 
 # ========== 設定 ==========
 DEVICE_INDEX = 1          # USBマイク (MME)
@@ -14,6 +15,7 @@ HOLD_COUNT = 3            # 連続3回超えたらON
 HOLD_TIME = 1.5           # PTT OFFまでの待ち時間
 SAVE_DELAY = 10.0         # 最後のOFFから保存までの待ち時間
 GAIN = 10.0               # 録音ゲイン
+RECORDINGS_DIR = Path(__file__).parent / "recordings"
 
 # ========== 状態変数 ==========
 above_count = 0
@@ -39,9 +41,10 @@ def save_recording():
     audio_data = audio_data * GAIN
     audio_data = np.clip(audio_data, -1.0, 1.0)
     
-    filename = record_start_time.strftime("rec_%Y%m%d_%H%M%S.wav")
+    RECORDINGS_DIR.mkdir(exist_ok=True)
+    filename = RECORDINGS_DIR / record_start_time.strftime("rec_%Y%m%d_%H%M%S.wav")
     
-    with wave.open(filename, 'wb') as wf:
+    with wave.open(str(filename), 'wb') as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(SAMPLE_RATE)
@@ -49,7 +52,7 @@ def save_recording():
         wf.writeframes(audio_int16.tobytes())
     
     duration = len(audio_data) / SAMPLE_RATE
-    print(f"    💾 保存完了: {filename} ({duration:.1f}秒)")
+    print(f"    💾 保存完了: {filename.name} ({duration:.1f}秒)")
     
     # リセット
     recording_data = []
