@@ -81,7 +81,7 @@ function loadPreview(filename, index) {
 // Play audio
 function playAudio(wavFile) {
     var audio = document.getElementById('audio-player');
-    audio.src = '../recordings/' + wavFile;
+    audio.src = 'audio.php?file=' + encodeURIComponent(wavFile);
     audio.play();
 }
 
@@ -96,7 +96,7 @@ function openEditor(filename) {
                 currentFile = data.file;
                 document.getElementById('editor-title').textContent = filename;
                 document.getElementById('srt-editor').value = data.file.content;
-                document.getElementById('audio-player').src = '../recordings/' + data.file.wavFile;
+                document.getElementById('audio-player').src = 'audio.php?file=' + encodeURIComponent(data.file.wavFile);
                 document.getElementById('editor-modal').style.display = 'flex';
             } else {
                 showError(data.error);

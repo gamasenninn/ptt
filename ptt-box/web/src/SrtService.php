@@ -84,9 +84,9 @@ class SrtService
             // 1行目: インデックス番号
             $index = intval($lines[0]);
 
-            // 2行目: タイムスタンプ
+            // 2行目: タイムスタンプ (カンマまたはピリオド区切りに対応)
             $timeLine = $lines[1];
-            if (preg_match('/(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})/', $timeLine, $timeMatches)) {
+            if (preg_match('/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/', $timeLine, $timeMatches)) {
                 $start = $timeMatches[1];
                 $end = $timeMatches[2];
             } else {

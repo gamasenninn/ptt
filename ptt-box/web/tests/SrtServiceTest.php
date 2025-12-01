@@ -73,6 +73,19 @@ class SrtServiceTest extends TestCase
         $this->assertCount(0, $parsed);
     }
 
+    public function testParseSrtWithPeriodTimestamp()
+    {
+        // ピリオド区切りのタイムスタンプ形式に対応
+        $srtContent = "1\n00:00:00.000 --> 00:00:02.000\nテスト\n";
+
+        $parsed = $this->service->parseSrt($srtContent);
+
+        $this->assertCount(1, $parsed);
+        $this->assertEquals('00:00:00.000', $parsed[0]['start']);
+        $this->assertEquals('00:00:02.000', $parsed[0]['end']);
+        $this->assertEquals('テスト', $parsed[0]['text']);
+    }
+
     public function testGetFileWithContent()
     {
         $file = $this->service->getFileWithContent('rec_20251201_100000.srt');
