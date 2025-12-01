@@ -13,6 +13,7 @@ FTP_SERVER_URL = os.environ.get("FTP_SERVER_URL")
 FTP_USER_ID = os.environ.get("FTP_USER_ID")
 FTP_PASSWORD = os.environ.get("FTP_PASSWORD")
 REMOTE_FILE_DIR = os.environ.get("REMOTE_FILE_DIR", "/")
+MAX_REMOTE_FILES = int(os.environ.get("MAX_REMOTE_FILES", "200"))
 
 # ========== 設定 ==========
 RECORDINGS_DIR = Path(__file__).parent / "recordings"
@@ -36,6 +37,60 @@ def mark_uploaded(file_path):
     print(f"  マーカー作成: {updone_path.name}")
 
 
+def extract_datetime_from_filename(filename):
+    """ファイル名から日時文字列を抽出 (rec_YYYYMMDD_HHMMSS.wav -> YYYYMMDD_HHMMSS)"""
+    import re
+    match = re.search(r'rec_(\d{8}_\d{6})', filename)
+    if match:
+        return match.group(1)
+    return "00000000_000000"
+
+
+def get_remote_wav_files(ftp):
+    """リモートのrec_*.wavファイル一覧を取得"""
+    try:
+        ftp.cwd(REMOTE_FILE_DIR)
+        files = ftp.nlst()
+        wav_files = [f for f in files if f.startswith("rec_") and f.endswith(".wav")]
+        return wav_files
+    except Exception as e:
+        print(f"  リモートファイル一覧取得失敗: {e}")
+        return []
+
+
+def cleanup_old_files(ftp):
+    """古いファイルをペアで削除して最大数以下に"""
+    wav_files = get_remote_wav_files(ftp)
+
+    if len(wav_files) < MAX_REMOTE_FILES:
+        return
+
+    # 日時順にソート（古い順）
+    wav_files.sort(key=extract_datetime_from_filename)
+
+    # 削除が必要な数
+    delete_count = len(wav_files) - MAX_REMOTE_FILES + 1  # 新規アップロード分の1を確保
+
+    print(f"  リモートファイル数: {len(wav_files)} (最大: {MAX_REMOTE_FILES})")
+    print(f"  {delete_count}ペアを削除します")
+
+    for i in range(delete_count):
+        wav_file = wav_files[i]
+        srt_file = wav_file.replace(".wav", ".srt")
+
+        try:
+            ftp.delete(f"{REMOTE_FILE_DIR}/{wav_file}")
+            print(f"  削除: {wav_file}")
+        except Exception as e:
+            print(f"  削除失敗: {wav_file} - {e}")
+
+        try:
+            ftp.delete(f"{REMOTE_FILE_DIR}/{srt_file}")
+            print(f"  削除: {srt_file}")
+        except Exception:
+            pass  # SRTがない場合は無視
+
+
 def upload_file(file_path):
     """単一ファイルをFTPアップロード"""
     file_path = Path(file_path)
@@ -54,6 +109,9 @@ def upload_file(file_path):
         ftp = ftplib.FTP(FTP_SERVER_URL)
         ftp.set_pasv(True)
         ftp.login(FTP_USER_ID, FTP_PASSWORD)
+
+        # 古いファイルを削除してファイル数を制限
+        cleanup_old_files(ftp)
 
         remote_path = f"{REMOTE_FILE_DIR}/{file_path.name}"
 
@@ -144,6 +202,7 @@ def main():
     print(f"  対象: {', '.join(TARGET_EXTENSIONS)}")
     print(f"  FTPサーバー: {FTP_SERVER_URL}")
     print(f"  リモートディレクトリ: {REMOTE_FILE_DIR}")
+    print(f"  最大ファイル数: {MAX_REMOTE_FILES}")
     print()
 
     # 設定確認
