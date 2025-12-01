@@ -18,3 +18,9 @@ ptt-box/recordings/history/
 
 # PHPUnit cache
 .phpunit.result.cache
+
+# Environment variables
+.env
+
+# Upload done markers
+*.updone
