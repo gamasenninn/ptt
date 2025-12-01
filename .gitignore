@@ -12,3 +12,9 @@ wheels/
 # Recording files
 *.wav
 *.srt
+
+# SRT edit history
+ptt-box/recordings/history/
+
+# PHPUnit cache
+.phpunit.result.cache

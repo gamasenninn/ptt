@@ -1,0 +1,10 @@
+services:
+  web:
+    build: .
+    ports:
+      - "9300:80"
+    volumes:
+      - ./web:/var/www/html/web
+      - ./recordings:/var/www/html/recordings
+    environment:
+      - RECORDINGS_DIR=/var/www/html/recordings
