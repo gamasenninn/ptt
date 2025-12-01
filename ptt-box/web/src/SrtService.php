@@ -30,10 +30,40 @@ class SrtService
                 'filename' => $filename,
                 'datetime' => $this->extractDatetimeFromFilename($filename),
                 'wavFile' => $this->repository->getWavPath($filename),
+                'preview' => $this->getPreview($filename),
             );
         }
 
         return $result;
+    }
+
+    /**
+     * SRTファイルのプレビューテキストを取得
+     *
+     * @param string $filename ファイル名
+     * @param int $maxLength 最大文字数
+     * @return string プレビューテキスト
+     */
+    public function getPreview($filename, $maxLength = 100)
+    {
+        $content = $this->repository->getSrtContent($filename);
+        $segments = $this->parseSrt($content);
+
+        if (empty($segments)) {
+            return '';
+        }
+
+        $texts = array();
+        foreach ($segments as $segment) {
+            $texts[] = $segment['text'];
+        }
+        $fullText = implode(' ', $texts);
+
+        if (mb_strlen($fullText) > $maxLength) {
+            return mb_substr($fullText, 0, $maxLength) . '...';
+        }
+
+        return $fullText;
     }
 
     /**

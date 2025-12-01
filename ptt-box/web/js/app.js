@@ -40,7 +40,7 @@ function renderFileList(files) {
         html += '<div class="file-item">';
         html += '<span class="file-datetime">' + (file.datetime || '-') + '</span>';
         html += '<span class="file-name">' + escapeHtml(file.filename) + '</span>';
-        html += '<span class="file-preview" id="preview-' + i + '">-</span>';
+        html += '<span class="file-preview">' + escapeHtml(file.preview || '-') + '</span>';
         html += '<div class="file-actions">';
         html += '<button class="btn btn-play" onclick="playAudio(\'' + escapeHtml(file.wavFile) + '\')">再生</button>';
         html += '<button class="btn btn-edit" onclick="openEditor(\'' + escapeHtml(file.filename) + '\')">編集</button>';
@@ -49,33 +49,6 @@ function renderFileList(files) {
     }
 
     container.innerHTML = html;
-
-    // Load previews asynchronously
-    for (var j = 0; j < files.length; j++) {
-        loadPreview(files[j].filename, j);
-    }
-}
-
-// Load preview text
-function loadPreview(filename, index) {
-    fetch('api.php?action=get&file=' + encodeURIComponent(filename))
-        .then(function(response) {
-            return response.json();
-        })
-        .then(function(data) {
-            if (data.success && data.file.segments.length > 0) {
-                var previewText = data.file.segments.map(function(seg) {
-                    return seg.text;
-                }).join(' ').substring(0, 100);
-                var element = document.getElementById('preview-' + index);
-                if (element) {
-                    element.textContent = previewText + (previewText.length >= 100 ? '...' : '');
-                }
-            }
-        })
-        .catch(function() {
-            // Ignore preview errors
-        });
 }
 
 // Play audio
