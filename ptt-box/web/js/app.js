@@ -37,13 +37,11 @@ function renderFileList(files) {
     var html = '';
     for (var i = 0; i < files.length; i++) {
         var file = files[i];
-        html += '<div class="file-item">';
+        html += '<div class="file-item" data-filename="' + escapeHtml(file.filename) + '" onclick="playAudio(\'' + escapeHtml(file.wavFile) + '\')">';
         html += '<span class="file-datetime">' + (file.datetime || '-') + '</span>';
-        html += '<span class="file-name">' + escapeHtml(file.filename) + '</span>';
         html += '<span class="file-preview">' + escapeHtml(file.preview || '-') + '</span>';
         html += '<div class="file-actions">';
-        html += '<button class="btn btn-play" onclick="playAudio(\'' + escapeHtml(file.wavFile) + '\')">再生</button>';
-        html += '<button class="btn btn-edit" onclick="openEditor(\'' + escapeHtml(file.filename) + '\')">編集</button>';
+        html += '<button class="btn-icon" onclick="event.stopPropagation(); openEditor(\'' + escapeHtml(file.filename) + '\')" title="編集">✏️</button>';
         html += '</div>';
         html += '</div>';
     }

@@ -26,9 +26,11 @@ class SrtService
         $result = array();
 
         foreach ($files as $filename) {
+            $datetime = $this->extractDatetimeFromFilename($filename);
             $result[] = array(
                 'filename' => $filename,
-                'datetime' => $this->extractDatetimeFromFilename($filename),
+                'datetime' => $datetime,
+                'datetimeShort' => $this->formatShortDatetime($datetime),
                 'wavFile' => $this->repository->getWavPath($filename),
                 'preview' => $this->getPreview($filename),
             );
@@ -64,6 +66,26 @@ class SrtService
         }
 
         return $fullText;
+    }
+
+    /**
+     * 日時を短縮フォーマットに変換
+     *
+     * @param string|null $datetime YYYY-MM-DD HH:MM:SS形式
+     * @return string MM/DD HH:MM形式
+     */
+    public function formatShortDatetime($datetime)
+    {
+        if (empty($datetime)) {
+            return '-';
+        }
+
+        // YYYY-MM-DD HH:MM:SS -> MM/DD HH:MM
+        if (preg_match('/\d{4}-(\d{2})-(\d{2}) (\d{2}):(\d{2}):\d{2}/', $datetime, $m)) {
+            return sprintf('%s/%s %s:%s', $m[1], $m[2], $m[3], $m[4]);
+        }
+
+        return $datetime;
     }
 
     /**
