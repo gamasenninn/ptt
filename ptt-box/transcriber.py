@@ -54,15 +54,22 @@ def transcribe_to_srt(wav_path):
 
     print(f"  言語: {info.language} (確率: {info.language_probability:.2f})")
 
+    # ジェネレータを一度リストに変換してから処理
+    segment_list = list(segments)
+
+    if len(segment_list) == 0:
+        print(f"  セグメントなし（無音ファイル？）")
+        return
+
     with open(srt_path, "w", encoding="utf-8") as f:
-        for i, segment in enumerate(segments, start=1):
+        for i, segment in enumerate(segment_list, start=1):
             text = segment.text.strip()
             print(f"  [{segment.start:.2f}s -> {segment.end:.2f}s] {text}")
             f.write(f"{i}\n")
             f.write(f"{format_time(segment.start)} --> {format_time(segment.end)}\n")
             f.write(f"{text}\n\n")
 
-    print(f"保存完了: {srt_path.name}")
+    print(f"保存完了: {srt_path.name} ({len(segment_list)}セグメント)")
 
 def scan_missing_srt():
     """起動時に*.wavをスキャンし、対応する*.srtがないものを処理"""
