@@ -15,9 +15,16 @@ body {
     margin: 0 auto;
 }
 
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
 h1 {
     color: #2c3e50;
-    margin-bottom: 20px;
+    margin: 0;
 }
 
 /* File List */
@@ -42,6 +49,10 @@ h1 {
 
 .file-item:hover {
     background-color: #f8f9fa;
+}
+
+.file-item.playing {
+    background-color: #d5f5e3;
 }
 
 .file-datetime {

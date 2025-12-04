@@ -14,7 +14,10 @@
 </head>
 <body>
     <div class="container">
-        <h1>トランシーバー履歴</h1>
+        <div class="header">
+            <h1>トランシーバー履歴</h1>
+            <button class="btn-icon" onclick="loadFileList()" title="更新">🔄</button>
+        </div>
 
         <div id="file-list" class="file-list">
             <p>読み込み中...</p>

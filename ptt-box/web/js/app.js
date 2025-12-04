@@ -1,10 +1,17 @@
 // SRT Viewer Application
 
 let currentFile = null;
+let currentPlayingFile = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', function() {
     loadFileList();
+
+    // 再生終了時にplayingクラスを削除
+    var audio = document.getElementById('audio-player');
+    audio.addEventListener('ended', function() {
+        clearPlayingState();
+    });
 });
 
 // Load file list
@@ -49,11 +56,48 @@ function renderFileList(files) {
     container.innerHTML = html;
 }
 
-// Play audio
+// Play audio (toggle)
 function playAudio(wavFile) {
     var audio = document.getElementById('audio-player');
+
+    // 同じファイルをクリックした場合はトグル
+    if (currentPlayingFile === wavFile) {
+        if (audio.paused) {
+            audio.play();
+            setPlayingState(wavFile);
+        } else {
+            audio.pause();
+            clearPlayingState();
+        }
+        return;
+    }
+
+    // 別のファイルを再生
+    clearPlayingState();
     audio.src = 'audio.php?file=' + encodeURIComponent(wavFile);
     audio.play();
+    setPlayingState(wavFile);
+}
+
+// 再生中状態を設定
+function setPlayingState(wavFile) {
+    currentPlayingFile = wavFile;
+    var items = document.querySelectorAll('.file-item');
+    items.forEach(function(item) {
+        var filename = item.getAttribute('data-filename');
+        if (filename && filename.replace('.srt', '.wav') === wavFile) {
+            item.classList.add('playing');
+        }
+    });
+}
+
+// 再生中状態をクリア
+function clearPlayingState() {
+    currentPlayingFile = null;
+    var items = document.querySelectorAll('.file-item.playing');
+    items.forEach(function(item) {
+        item.classList.remove('playing');
+    });
 }
 
 // Open editor

@@ -1,3 +1,4 @@
+import os
 import sounddevice as sd
 import numpy as np
 import time
@@ -5,17 +6,21 @@ import wave
 import threading
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
+
+# ========== 環境変数読み込み ==========
+load_dotenv()
 
 # ========== 設定 ==========
-DEVICE_INDEX = 1          # USBマイク (MME)
-THRESHOLD = 0.0020        # VOX閾値
-SAMPLE_RATE = 44100
-BLOCK_SIZE = 1024
-HOLD_COUNT = 3            # 連続3回超えたらON
-HOLD_TIME = 1.5           # PTT OFFまでの待ち時間
-SAVE_DELAY = 10.0         # 最後のOFFから保存までの待ち時間
-GAIN = 10.0               # 録音ゲイン
-RECORDINGS_DIR = Path(__file__).parent / "recordings"
+DEVICE_INDEX = int(os.environ.get("VOX_DEVICE_INDEX", "1"))
+THRESHOLD = float(os.environ.get("VOX_THRESHOLD", "0.0020"))
+SAMPLE_RATE = int(os.environ.get("VOX_SAMPLE_RATE", "44100"))
+BLOCK_SIZE = int(os.environ.get("VOX_BLOCK_SIZE", "1024"))
+HOLD_COUNT = int(os.environ.get("VOX_HOLD_COUNT", "3"))
+HOLD_TIME = float(os.environ.get("VOX_HOLD_TIME", "1.5"))
+SAVE_DELAY = float(os.environ.get("VOX_SAVE_DELAY", "10.0"))
+GAIN = float(os.environ.get("VOX_GAIN", "10.0"))
+RECORDINGS_DIR = Path(os.environ.get("RECORDINGS_DIR", Path(__file__).parent / "recordings"))
 
 # ========== 状態変数 ==========
 above_count = 0

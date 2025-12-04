@@ -1,14 +1,19 @@
+import os
 import time
 from pathlib import Path
 from faster_whisper import WhisperModel
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from dotenv import load_dotenv
+
+# ========== 環境変数読み込み ==========
+load_dotenv()
 
 # ========== 設定 ==========
-RECORDINGS_DIR = Path(__file__).parent / "recordings"
-MODEL_SIZE = "large-v3"
-DEVICE = "cuda"
-COMPUTE_TYPE = "float16"
+RECORDINGS_DIR = Path(os.environ.get("RECORDINGS_DIR", Path(__file__).parent / "recordings"))
+MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "large-v3")
+DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
+COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
 
 # ========== Whisperモデル（グローバル） ==========
 model = None
