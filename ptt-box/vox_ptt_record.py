@@ -38,11 +38,17 @@ def get_volume(audio_data):
 def save_recording():
     """録音データをWAVファイルに保存"""
     global recording_data, record_start_time, save_timer, is_recording
-    
+
     if len(recording_data) == 0:
         return
-    
+
     audio_data = np.concatenate(recording_data)
+
+    # 末尾の無音部分（SAVE_DELAY秒分）をカット
+    cut_samples = int(SAVE_DELAY * SAMPLE_RATE)
+    if len(audio_data) > cut_samples:
+        audio_data = audio_data[:-cut_samples]
+
     audio_data = audio_data * GAIN
     audio_data = np.clip(audio_data, -1.0, 1.0)
     
