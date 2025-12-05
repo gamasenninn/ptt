@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Audio Stream</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        .container {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+        }
+        h1 {
+            margin-bottom: 30px;
+            font-weight: 500;
+        }
+        .status {
+            font-size: 16px;
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 8px;
+            background: #0f3460;
+        }
+        .status.connected {
+            background: #1b4332;
+            color: #95d5b2;
+        }
+        .status.connecting {
+            background: #3d405b;
+            color: #f4f1de;
+        }
+        .status.error {
+            background: #641220;
+            color: #f8d7da;
+        }
+        .buttons {
+            margin: 20px 0;
+        }
+        button {
+            background: #e94560;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-size: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 5px;
+            transition: background 0.2s;
+        }
+        button:hover:not(:disabled) {
+            background: #ff6b6b;
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        button.secondary {
+            background: #3d405b;
+        }
+        button.secondary:hover:not(:disabled) {
+            background: #5c5f7e;
+        }
+        .volume-meter {
+            height: 24px;
+            background: #0f3460;
+            border-radius: 12px;
+            margin-top: 20px;
+            overflow: hidden;
+        }
+        .volume-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff87, #60efff);
+            width: 0%;
+            transition: width 0.05s;
+            border-radius: 12px;
+        }
+        .info {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Live Audio Stream</h1>
+
+        <div id="status" class="status">
+            未接続
+        </div>
+
+        <div class="buttons">
+            <button id="connectBtn" onclick="connect()">接続</button>
+            <button id="disconnectBtn" class="secondary" onclick="disconnect()" disabled>切断</button>
+        </div>
+
+        <audio id="audio" autoplay></audio>
+
+        <div class="volume-meter">
+            <div id="volumeBar" class="volume-bar"></div>
+        </div>
+
+        <div class="info">
+            WebRTC Audio Streaming
+        </div>
+    </div>
+
+    <script src="js/stream.js"></script>
+</body>
+</html>

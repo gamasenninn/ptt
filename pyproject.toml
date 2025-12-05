@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "aiohttp>=3.13.2",
+    "aiortc>=1.10.1",
+]
 
 [tool.uv.workspace]
 members = [
