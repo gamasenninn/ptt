@@ -17,12 +17,27 @@ import sounddevice as sd
 from dotenv import load_dotenv
 
 from aiohttp import web, WSMsgType
-from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer, RTCIceCandidate, MediaStreamTrack
 import av
 
 # ログ設定
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# aioice/aiortcのログレベルを下げる（TURN relay-to-relay禁止エラー等を抑制）
+logging.getLogger('aioice').setLevel(logging.WARNING)
+logging.getLogger('aiortc').setLevel(logging.WARNING)
+
+# asyncioの未取得例外を抑制
+import sys
+def exception_handler(loop, context):
+    exception = context.get('exception')
+    if exception and 'TransactionFailed' in str(type(exception)):
+        # TURN transaction失敗は無視（relay-to-relay禁止など）
+        pass
+    else:
+        # その他の例外は通常通り出力
+        loop.default_exception_handler(context)
 
 # 環境変数読み込み
 load_dotenv()
@@ -31,6 +46,11 @@ DEVICE_INDEX = int(os.environ.get("STREAM_DEVICE_INDEX", "1"))
 HOST = os.environ.get("STREAM_HOST", "0.0.0.0")
 PORT = int(os.environ.get("STREAM_PORT", "8080"))
 SAMPLE_RATE = int(os.environ.get("STREAM_SAMPLE_RATE", "48000"))
+
+# TURN設定
+TURN_SERVER = os.environ.get("TURN_SERVER", "")
+TURN_USERNAME = os.environ.get("TURN_USERNAME", "")
+TURN_PASSWORD = os.environ.get("TURN_PASSWORD", "")
 
 # 定数
 CHANNELS = 1
@@ -89,6 +109,11 @@ class MicrophoneAudioTrack(MediaStreamTrack):
         """次の音声フレームを返す"""
         data = await self._queue.get()
 
+        # デバッグ: 最初の数フレームのみログ出力
+        if self._pts < self._samples_per_frame * 5:
+            rms = np.sqrt(np.mean(data.astype(np.float32)**2))
+            logger.info(f"Audio frame: pts={self._pts}, samples={len(data)}, RMS={rms:.2f}")
+
         # av.AudioFrameを作成
         frame = av.AudioFrame.from_ndarray(
             data.T,  # shape変換: (samples, channels) → (channels, samples)
@@ -118,7 +143,41 @@ class StreamServer:
     def __init__(self):
         self.app = web.Application()
         self.pcs: set[RTCPeerConnection] = set()
-        self.audio_track: MicrophoneAudioTrack | None = None
+        self.audio_tracks: list[MicrophoneAudioTrack] = []  # 各接続用のトラック
+
+        # ICEサーバー設定
+        self.ice_servers = [
+            RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+        ]
+        if TURN_SERVER and TURN_USERNAME and TURN_PASSWORD:
+            # 複数のTURN URLを追加（UDP、TCP、TLS）
+            turn_urls = [
+                f"turn:{TURN_SERVER}?transport=udp",
+                f"turn:{TURN_SERVER}?transport=tcp",
+                f"turns:{TURN_SERVER}?transport=tcp",
+            ]
+            self.ice_servers.append(RTCIceServer(
+                urls=turn_urls,
+                username=TURN_USERNAME,
+                credential=TURN_PASSWORD
+            ))
+            logger.info(f"TURN server configured: {TURN_SERVER}")
+
+        # クライアント用ICE設定（JSON送信用）
+        self.ice_servers_for_client = [
+            {"urls": ["stun:stun.l.google.com:19302"]}
+        ]
+        if TURN_SERVER and TURN_USERNAME and TURN_PASSWORD:
+            turn_urls = [
+                f"turn:{TURN_SERVER}?transport=udp",
+                f"turn:{TURN_SERVER}?transport=tcp",
+                f"turns:{TURN_SERVER}?transport=tcp",
+            ]
+            self.ice_servers_for_client.append({
+                "urls": turn_urls,
+                "username": TURN_USERNAME,
+                "credential": TURN_PASSWORD
+            })
 
         # ルーティング設定
         self.app.router.add_get('/', self.handle_index)
@@ -139,7 +198,15 @@ class StreamServer:
 
         logger.info(f"WebSocket connected from {request.remote}")
 
-        pc = RTCPeerConnection()
+        # ICE設定をクライアントに送信
+        await ws.send_json({
+            "type": "config",
+            "iceServers": self.ice_servers_for_client
+        })
+
+        # RTCPeerConnectionを作成（ICEサーバー設定付き）
+        config = RTCConfiguration(iceServers=self.ice_servers)
+        pc = RTCPeerConnection(configuration=config)
         self.pcs.add(pc)
 
         @pc.on("connectionstatechange")
@@ -169,25 +236,80 @@ class StreamServer:
 
                     if data["type"] == "offer":
                         # Offer受信
-                        offer = RTCSessionDescription(sdp=data["sdp"], type="offer")
+                        offer_sdp = data["sdp"]
+                        if "relay" in offer_sdp:
+                            logger.info("Client offer contains relay candidates")
+                        else:
+                            logger.warning("Client offer does NOT contain relay candidates!")
+
+                        offer = RTCSessionDescription(sdp=offer_sdp, type="offer")
                         await pc.setRemoteDescription(offer)
 
-                        # 音声トラックを追加
-                        pc.addTrack(self.audio_track)
+                        # この接続用の音声トラックを作成
+                        audio_track = MicrophoneAudioTrack(DEVICE_INDEX, SAMPLE_RATE)
+                        self.audio_tracks.append(audio_track)
+                        pc.addTrack(audio_track)
 
                         # Answer作成
                         answer = await pc.createAnswer()
                         await pc.setLocalDescription(answer)
 
+                        # ICE gathering完了を待つ
+                        while pc.iceGatheringState != "complete":
+                            await asyncio.sleep(0.1)
+
+                        # ICE候補を含むSDPを送信
+                        sdp = pc.localDescription.sdp
                         await ws.send_json({
                             "type": "answer",
-                            "sdp": pc.localDescription.sdp
+                            "sdp": sdp
                         })
+                        logger.info(f"Answer sent with ICE candidates (gathering: {pc.iceGatheringState})")
+                        # SDPにrelay候補が含まれているか確認
+                        if "relay" in sdp:
+                            logger.info("SDP contains relay candidates")
+                        else:
+                            logger.warning("SDP does NOT contain relay candidates!")
 
                     elif data["type"] == "ice-candidate" and data.get("candidate"):
-                        # aiortcはTrickle ICEを完全にはサポートしていないため
-                        # ICE candidateはSDPに含まれる形で処理される
-                        logger.debug(f"ICE candidate received (handled via SDP gathering)")
+                        # 受信したICE候補をPeerConnectionに追加
+                        candidate_data = data["candidate"]
+                        candidate_str = candidate_data.get("candidate", "")
+
+                        if "relay" in candidate_str:
+                            logger.info(f"Adding relay ICE candidate: {candidate_str[:80]}...")
+                        else:
+                            logger.debug(f"Adding ICE candidate: {candidate_str[:50]}...")
+
+                        # aiortcでICE候補を追加
+                        try:
+                            # candidate文字列をパース
+                            # 形式: "candidate:foundation component protocol priority ip port typ type ..."
+                            parts = candidate_str.split()
+                            if len(parts) >= 8 and parts[0].startswith("candidate:"):
+                                foundation = parts[0].split(":")[1]
+                                component = int(parts[1])
+                                protocol = parts[2]
+                                priority = int(parts[3])
+                                ip = parts[4]
+                                port = int(parts[5])
+                                candidate_type = parts[7]  # "typ" の後
+
+                                candidate = RTCIceCandidate(
+                                    component=component,
+                                    foundation=foundation,
+                                    ip=ip,
+                                    port=port,
+                                    priority=priority,
+                                    protocol=protocol,
+                                    type=candidate_type,
+                                    sdpMid=candidate_data.get("sdpMid"),
+                                    sdpMLineIndex=candidate_data.get("sdpMLineIndex")
+                                )
+                                await pc.addIceCandidate(candidate)
+                                logger.info(f"ICE candidate added successfully: {candidate_type}")
+                        except Exception as e:
+                            logger.warning(f"Failed to add ICE candidate: {e}")
 
                 elif msg.type == WSMsgType.ERROR:
                     logger.error(f"WebSocket error: {ws.exception()}")
@@ -211,14 +333,15 @@ class StreamServer:
         await asyncio.gather(*coros)
         self.pcs.clear()
 
-        # 音声トラック停止
-        if self.audio_track:
-            self.audio_track.stop()
+        # 全音声トラック停止
+        for track in self.audio_tracks:
+            track.stop()
+        self.audio_tracks.clear()
 
     async def run(self):
         """サーバー起動"""
-        # 音声トラック初期化
-        self.audio_track = MicrophoneAudioTrack(DEVICE_INDEX, SAMPLE_RATE)
+        # asyncio例外ハンドラを設定
+        asyncio.get_event_loop().set_exception_handler(exception_handler)
 
         # サーバー起動
         runner = web.AppRunner(self.app)
