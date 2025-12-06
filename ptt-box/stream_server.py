@@ -193,7 +193,7 @@ class StreamServer:
 
     async def handle_websocket(self, request):
         """WebSocketシグナリング"""
-        ws = web.WebSocketResponse()
+        ws = web.WebSocketResponse(heartbeat=30.0)  # 30秒ごとにping/pong
         await ws.prepare(request)
 
         logger.info(f"WebSocket connected from {request.remote}")
