@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Audio Stream</title>
+    <title>トランシーバー受信</title>
     <style>
         * {
             box-sizing: border-box;
@@ -95,7 +95,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>Live Audio Stream</h1>
+        <h1>トランシーバー受信</h1>
 
         <div id="status" class="status">
             未接続
@@ -112,16 +112,12 @@
             <div id="volumeBar" class="volume-bar"></div>
         </div>
 
-        <div class="info">
-            WebRTC Audio Streaming
-        </div>
 
         <div style="margin-top: 15px;">
             <button onclick="toggleDebug()" style="background: #333; padding: 8px 16px; font-size: 14px; width: 100%;">デバッグ表示</button>
         </div>
 
-        <div id="debug" style="margin-top: 10px; font-size: 12px; color: #aaa; text-align: left; max-height: 200px; overflow-y: auto; background: #0a0a15; padding: 12px; border-radius: 6px; word-break: break-all;">
-            [デバッグログ]
+        <div id="debug" style="margin-top: 10px; font-size: 12px; color: #aaa; text-align: left; max-height: 200px; overflow-y: auto; background: #0a0a15; padding: 12px; border-radius: 6px; word-break: break-all; display: none;">
         </div>
     </div>
 

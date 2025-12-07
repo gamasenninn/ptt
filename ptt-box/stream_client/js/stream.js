@@ -5,7 +5,7 @@ let pc = null;
 let audioContext = null;
 let analyser = null;
 let iceServers = null;  // サーバーから受信したICE設定
-let debugVisible = true;
+let debugVisible = false;
 let autoReconnect = true;  // 自動再接続フラグ
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -34,7 +34,38 @@ window.addEventListener('DOMContentLoaded', () => {
     if (debugEl) {
         debugEl.innerHTML = '';
     }
+
+    // LINEなどの内蔵ブラウザを検出
+    checkInAppBrowser();
 });
+
+// 内蔵ブラウザ検出
+function checkInAppBrowser() {
+    const ua = navigator.userAgent || navigator.vendor;
+    debugLog('UA: ' + ua);
+
+    const isLine = /Line\//i.test(ua) || /LIFF/i.test(ua);
+    const isFacebook = ua.includes('FBAN') || ua.includes('FBAV');
+    const isInstagram = ua.includes('Instagram');
+    const isTwitter = ua.includes('Twitter');
+
+    if (isLine || isFacebook || isInstagram || isTwitter) {
+        const appName = isLine ? 'LINE' : isFacebook ? 'Facebook' : isInstagram ? 'Instagram' : 'Twitter';
+        showInAppBrowserWarning(appName);
+    }
+}
+
+// 警告表示
+function showInAppBrowserWarning(appName) {
+    const warning = document.createElement('div');
+    warning.id = 'inapp-warning';
+    warning.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff6b6b;color:white;padding:15px;text-align:center;z-index:9999;font-size:14px;';
+    warning.innerHTML = `
+        <div style="margin-bottom:8px;"><strong>${appName}の内蔵ブラウザでは音声が再生できません</strong></div>
+        <div style="font-size:12px;">右下の「︙」→「ブラウザで開く」を選択してください</div>
+    `;
+    document.body.prepend(warning);
+}
 
 // Wake Lock取得（スクリーンオフ防止）
 async function requestWakeLock() {
