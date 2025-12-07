@@ -220,43 +220,57 @@ async function setupWebRTC() {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    // ICE gathering完了を待つ（最大30秒 - TURN認証に時間がかかる場合がある）
+    // ICE gathering完了を待つ（relay候補取得後は早めに進む）
     await new Promise((resolve) => {
         if (pc.iceGatheringState === 'complete') {
             resolve();
-        } else {
-            let hasRelay = false;
-            const timeout = setTimeout(() => {
-                if (hasRelay) {
-                    console.log('ICE gathering timeout, but relay candidate found - proceeding');
-                } else {
-                    console.warn('ICE gathering timeout, NO relay candidate found!');
-                }
-                resolve();
-            }, 30000);
+            return;
+        }
 
-            pc.addEventListener('icegatheringstatechange', () => {
-                console.log('ICE gathering state:', pc.iceGatheringState);
-                if (pc.iceGatheringState === 'complete') {
+        let hasRelay = false;
+        let hasHostOrSrflx = false;
+        let relayTimer = null;
+
+        const timeout = setTimeout(() => {
+            debugLog('ICE gathering timeout');
+            resolve();
+        }, 10000);  // 最大10秒に短縮
+
+        const proceedIfReady = () => {
+            // relay候補があれば1秒後に進む（追加の候補を少し待つ）
+            if (hasRelay && !relayTimer) {
+                relayTimer = setTimeout(() => {
+                    debugLog('Proceeding with relay candidate');
                     clearTimeout(timeout);
                     resolve();
-                }
-            });
+                }, 1000);
+            }
+        };
 
-            // ICE候補ごとにログ出力
-            pc.addEventListener('icecandidate', (event) => {
-                if (event.candidate) {
-                    const type = event.candidate.type || 'unknown';
-                    debugLog('Candidate: ' + type);
-                    if (type === 'relay') {
-                        hasRelay = true;
-                        debugLog('✓ TURN relay OK!');
-                    }
-                } else {
-                    debugLog('ICE gathering done');
+        pc.addEventListener('icegatheringstatechange', () => {
+            if (pc.iceGatheringState === 'complete') {
+                clearTimeout(timeout);
+                if (relayTimer) clearTimeout(relayTimer);
+                resolve();
+            }
+        });
+
+        // ICE候補ごとにログ出力
+        pc.addEventListener('icecandidate', (event) => {
+            if (event.candidate) {
+                const type = event.candidate.type || 'unknown';
+                debugLog('Candidate: ' + type);
+                if (type === 'relay') {
+                    hasRelay = true;
+                    debugLog('✓ TURN relay OK!');
+                    proceedIfReady();
+                } else if (type === 'host' || type === 'srflx') {
+                    hasHostOrSrflx = true;
                 }
-            });
-        }
+            } else {
+                debugLog('ICE gathering done');
+            }
+        });
     });
 
     const hasRelayInSdp = pc.localDescription.sdp.includes('relay');
