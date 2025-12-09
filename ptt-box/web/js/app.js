@@ -175,6 +175,19 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Set volume
+function setVolume(value) {
+    var audio = document.getElementById('audio-player');
+    var volumeValue = document.getElementById('volumeValue');
+
+    if (audio) {
+        audio.volume = value / 100;
+    }
+    if (volumeValue) {
+        volumeValue.textContent = value + '%';
+    }
+}
+
 // Handle keyboard shortcuts
 document.addEventListener('keydown', function(e) {
     // ESC to close modal

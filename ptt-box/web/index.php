@@ -16,7 +16,15 @@
     <div class="container">
         <div class="header">
             <h1>トランシーバー履歴</h1>
-            <button class="btn-icon" onclick="loadFileList()" title="更新">🔄</button>
+            <div class="header-controls">
+                <div class="volume-control">
+                    <span class="volume-icon">🔈</span>
+                    <input type="range" id="volumeSlider" min="0" max="100" value="100"
+                           oninput="setVolume(this.value)">
+                    <span id="volumeValue">100%</span>
+                </div>
+                <button class="btn-icon" onclick="loadFileList()" title="更新">🔄</button>
+            </div>
         </div>
 
         <div id="file-list" class="file-list">
