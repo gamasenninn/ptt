@@ -406,3 +406,16 @@ window.addEventListener('beforeunload', () => {
     autoReconnect = false;
     cleanup();
 });
+
+// ボリューム調整
+function setVolume(value) {
+    const audio = document.getElementById('audio');
+    const volumeValue = document.getElementById('volumeValue');
+
+    if (audio) {
+        audio.volume = value / 100;
+    }
+    if (volumeValue) {
+        volumeValue.textContent = value + '%';
+    }
+}

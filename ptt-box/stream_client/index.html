@@ -108,6 +108,14 @@
 
         <audio id="audio" autoplay playsinline></audio>
 
+        <div style="margin-top: 20px; display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 20px;">🔈</span>
+            <input type="range" id="volumeSlider" min="0" max="100" value="100"
+                   style="flex: 1; height: 8px; cursor: pointer; accent-color: #60efff;"
+                   oninput="setVolume(this.value)">
+            <span id="volumeValue" style="min-width: 40px; text-align: right;">100%</span>
+        </div>
+
         <div class="volume-meter">
             <div id="volumeBar" class="volume-bar"></div>
         </div>
