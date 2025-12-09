@@ -24,3 +24,6 @@ ptt-box/recordings/history/
 
 # Upload done markers
 *.updone
+
+# Windows reserved name (accidentally created)
+nul
