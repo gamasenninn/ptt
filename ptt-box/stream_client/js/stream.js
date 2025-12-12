@@ -1,4 +1,4 @@
-// WebRTC Audio Stream Client
+// WebRTC Audio Stream Client with PTT
 
 let ws = null;
 let pc = null;
@@ -11,6 +11,13 @@ let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10;
 const RECONNECT_DELAY = 3000;  // 3秒
 let wakeLock = null;  // スクリーンロック防止
+
+// PTT関連
+let myClientId = null;
+let localStream = null;  // マイク音声ストリーム
+let isPttActive = false;  // PTTボタンが押されているか
+let pttState = 'idle';  // idle, transmitting, receiving
+let micAccessGranted = false;
 
 function debugLog(msg) {
     console.log(msg);
@@ -141,8 +148,10 @@ async function connect() {
             console.log('Received:', data.type);
 
             if (data.type === 'config') {
-                // サーバーからICE設定を受信
+                // サーバーからICE設定とクライアントIDを受信
                 iceServers = data.iceServers;
+                myClientId = data.clientId;
+                debugLog('Client ID: ' + myClientId);
                 debugLog('ICE servers: ' + JSON.stringify(iceServers.map(s => s.urls)));
                 await setupWebRTC();
             } else if (data.type === 'answer') {
@@ -154,6 +163,15 @@ async function connect() {
                 await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
             } else if (data.type === 'error') {
                 updateStatus('エラー: ' + data.message, 'error');
+            } else if (data.type === 'ptt_granted') {
+                // 送信権取得
+                handlePttGranted();
+            } else if (data.type === 'ptt_denied') {
+                // 送信権拒否
+                handlePttDenied(data.speakerName);
+            } else if (data.type === 'ptt_status') {
+                // PTT状態更新
+                handlePttStatus(data);
             }
         };
 
@@ -176,10 +194,22 @@ async function connect() {
 }
 
 async function setupWebRTC() {
+    // マイクアクセス要求
+    await requestMicrophoneAccess();
+
     // RTCPeerConnection作成（サーバーから受信したICE設定を使用）
     pc = new RTCPeerConnection({
         iceServers: iceServers || [{ urls: 'stun:stun.l.google.com:19302' }]
     });
+
+    // マイクトラックを追加（ミュート状態で開始）
+    if (localStream) {
+        localStream.getAudioTracks().forEach(track => {
+            track.enabled = false;  // ミュート状態で開始
+            pc.addTrack(track, localStream);
+            debugLog('Local audio track added (muted)');
+        });
+    }
 
     // 音声トラック受信時
     pc.ontrack = (event) => {
@@ -215,8 +245,9 @@ async function setupWebRTC() {
         debugLog('Connection: ' + pc.connectionState);
         switch (pc.connectionState) {
             case 'connected':
-                updateStatus('接続済み - 音声受信中', 'connected');
+                updateStatus('接続済み', 'connected');
                 updateButtons(true);
+                enablePttButton(true);
                 reconnectAttempts = 0;  // 接続成功でリセット
                 requestWakeLock();  // スクリーンオフ防止
                 break;
@@ -225,11 +256,13 @@ async function setupWebRTC() {
                 break;
             case 'disconnected':
                 updateStatus('切断されました', 'error');
+                enablePttButton(false);
                 cleanupConnection();
                 scheduleReconnect();
                 break;
             case 'failed':
                 updateStatus('接続失敗', 'error');
+                enablePttButton(false);
                 cleanupConnection();
                 scheduleReconnect();
                 break;
@@ -244,8 +277,11 @@ async function setupWebRTC() {
         }
     };
 
-    // 音声受信用のトランシーバーを追加（受信のみ）
-    pc.addTransceiver('audio', { direction: 'recvonly' });
+    // 双方向音声用のトランシーバーを追加
+    if (!localStream) {
+        // マイクがない場合は受信のみ
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+    }
 
     // Offer作成
     const offer = await pc.createOffer();
@@ -365,12 +401,17 @@ function cleanupConnection() {
     }
     ws = null;
     iceServers = null;
+    isPttActive = false;
 
     const audio = document.getElementById('audio');
     if (audio) {
         audio.srcObject = null;
     }
     document.getElementById('volumeBar').style.width = '0%';
+
+    // PTT状態リセット
+    updatePttState('idle', null);
+    enablePttButton(false);
 }
 
 // 完全クリーンアップ
@@ -417,5 +458,149 @@ function setVolume(value) {
     }
     if (volumeValue) {
         volumeValue.textContent = value + '%';
+    }
+}
+
+// ========== PTT機能 ==========
+
+// マイクアクセス要求
+async function requestMicrophoneAccess() {
+    if (localStream) return true;  // 既に取得済み
+
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            }
+        });
+        micAccessGranted = true;
+        debugLog('Microphone access granted');
+        return true;
+    } catch (err) {
+        debugLog('Microphone access denied: ' + err.message);
+        micAccessGranted = false;
+        return false;
+    }
+}
+
+// PTTボタンの有効/無効
+function enablePttButton(enabled) {
+    const pttBtn = document.getElementById('pttBtn');
+    if (pttBtn) {
+        pttBtn.disabled = !enabled || !micAccessGranted;
+    }
+}
+
+// PTTボタン押下開始
+function pttStart(event) {
+    event.preventDefault();
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!micAccessGranted) {
+        debugLog('Microphone not available');
+        return;
+    }
+    if (isPttActive) return;  // 既に押されている
+
+    debugLog('PTT request...');
+    ws.send(JSON.stringify({ type: 'ptt_request' }));
+}
+
+// PTTボタン解放
+function pttEnd(event) {
+    event.preventDefault();
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!isPttActive) return;
+
+    debugLog('PTT release');
+    isPttActive = false;
+
+    // マイクをミュート
+    if (localStream) {
+        localStream.getAudioTracks().forEach(track => {
+            track.enabled = false;
+        });
+    }
+
+    ws.send(JSON.stringify({ type: 'ptt_release' }));
+}
+
+// 送信権取得時
+function handlePttGranted() {
+    debugLog('PTT granted - transmitting');
+    isPttActive = true;
+
+    // マイクをアンミュート
+    if (localStream) {
+        localStream.getAudioTracks().forEach(track => {
+            track.enabled = true;
+        });
+    }
+
+    updatePttState('transmitting', 'あなた');
+}
+
+// 送信権拒否時
+function handlePttDenied(speakerName) {
+    debugLog('PTT denied - ' + speakerName + ' is speaking');
+    isPttActive = false;
+}
+
+// PTT状態更新（サーバーからのブロードキャスト）
+function handlePttStatus(data) {
+    debugLog('PTT status: ' + data.state + ' - ' + (data.speakerName || 'none'));
+
+    if (data.speaker === myClientId) {
+        // 自分が送信中
+        updatePttState('transmitting', 'あなた');
+    } else if (data.state === 'transmitting') {
+        // 他の人が送信中
+        updatePttState('receiving', data.speakerName);
+    } else {
+        // 待機中
+        updatePttState('idle', null);
+    }
+}
+
+// PTT状態のUI更新
+function updatePttState(state, speakerName) {
+    pttState = state;
+
+    const pttBtn = document.getElementById('pttBtn');
+    const speakerNameEl = document.getElementById('speakerName');
+    const speakerIndicator = document.getElementById('speakerIndicator');
+
+    // PTTボタンのクラス更新
+    if (pttBtn) {
+        pttBtn.className = 'ptt-button';
+        if (state === 'transmitting') {
+            pttBtn.classList.add('transmitting');
+        } else if (state === 'receiving') {
+            pttBtn.classList.add('receiving');
+        }
+    }
+
+    // インジケーター更新
+    if (speakerIndicator) {
+        speakerIndicator.className = 'speaker-indicator';
+        if (state === 'transmitting' || state === 'receiving') {
+            speakerIndicator.classList.add(state);
+        }
+    }
+
+    // 送信者名表示更新
+    if (speakerNameEl) {
+        switch (state) {
+            case 'idle':
+                speakerNameEl.textContent = '待機中';
+                break;
+            case 'transmitting':
+                speakerNameEl.textContent = '送信中: ' + speakerName;
+                break;
+            case 'receiving':
+                speakerNameEl.textContent = '受信中: ' + speakerName;
+                break;
+        }
     }
 }

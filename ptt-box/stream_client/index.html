@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>トランシーバー受信</title>
+    <title>Webトランシーバー</title>
     <style>
         * {
             box-sizing: border-box;
@@ -91,11 +91,106 @@
             font-size: 12px;
             color: #888;
         }
+        /* PTT Button */
+        .ptt-container {
+            margin: 25px 0;
+        }
+        .ptt-button {
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            background: #3d405b;
+            border: 5px solid #555;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto;
+            transition: all 0.15s;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+        }
+        .ptt-button:active:not(:disabled),
+        .ptt-button.transmitting {
+            background: #e94560;
+            border-color: #ff6b6b;
+            transform: scale(0.95);
+            box-shadow: 0 0 30px rgba(233, 69, 96, 0.5);
+        }
+        .ptt-button.receiving {
+            background: #1b4332;
+            border-color: #95d5b2;
+        }
+        .ptt-button:disabled {
+            background: #333;
+            border-color: #444;
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+        .ptt-icon {
+            font-size: 36px;
+            margin-bottom: 5px;
+        }
+        .ptt-label {
+            font-size: 14px;
+            font-weight: 500;
+        }
+        /* Speaker Status */
+        .speaker-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 12px 20px;
+            background: #0f3460;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .speaker-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #666;
+        }
+        .speaker-indicator.transmitting {
+            background: #e94560;
+            animation: pulse 1s infinite;
+        }
+        .speaker-indicator.receiving {
+            background: #95d5b2;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>トランシーバー受信</h1>
+        <h1>Webトランシーバー</h1>
+
+        <!-- Speaker Status -->
+        <div id="speakerStatus" class="speaker-status">
+            <div id="speakerIndicator" class="speaker-indicator"></div>
+            <span id="speakerName">待機中</span>
+        </div>
+
+        <!-- PTT Button -->
+        <div class="ptt-container">
+            <button id="pttBtn" class="ptt-button"
+                    ontouchstart="pttStart(event)"
+                    ontouchend="pttEnd(event)"
+                    onmousedown="pttStart(event)"
+                    onmouseup="pttEnd(event)"
+                    onmouseleave="pttEnd(event)"
+                    disabled>
+                <span class="ptt-icon">🎙️</span>
+                <span class="ptt-label">押して話す</span>
+            </button>
+        </div>
 
         <div id="status" class="status">
             未接続
@@ -119,7 +214,6 @@
         <div class="volume-meter">
             <div id="volumeBar" class="volume-bar"></div>
         </div>
-
 
         <div style="margin-top: 15px;">
             <button onclick="toggleDebug()" style="background: #333; padding: 8px 16px; font-size: 14px; width: 100%;">デバッグ表示</button>
