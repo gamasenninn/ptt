@@ -122,15 +122,33 @@ document.addEventListener('visibilitychange', async () => {
     }
 });
 
-function updateStatus(message, state) {
-    const statusEl = document.getElementById('status');
-    statusEl.textContent = message;
-    statusEl.className = 'status ' + (state || '');
+// 接続トグルボタン制御
+function toggleConnection() {
+    if (!ws || ws.readyState === WebSocket.CLOSED) {
+        connect();
+    } else {
+        disconnect();
+    }
 }
 
-function updateButtons(connected) {
-    document.getElementById('connectBtn').disabled = connected;
-    document.getElementById('disconnectBtn').disabled = !connected;
+function updateConnectionToggle(state) {
+    const toggle = document.getElementById('connectionToggle');
+    if (!toggle) return;
+
+    const text = toggle.querySelector('.connection-text');
+    toggle.className = 'connection-toggle ' + state;
+
+    switch (state) {
+        case 'disconnected':
+            text.textContent = '未接続 - タップで接続';
+            break;
+        case 'connecting':
+            text.textContent = '接続中... - タップでキャンセル';
+            break;
+        case 'connected':
+            text.textContent = '接続済み - タップで切断';
+            break;
+    }
 }
 
 async function connect() {
@@ -145,8 +163,7 @@ async function connect() {
     }
 
     autoReconnect = true;  // 接続時は自動再接続を有効化
-    updateStatus('接続中...', 'connecting');
-    updateButtons(true);
+    updateConnectionToggle('connecting');
 
     try {
         // WebSocket接続
@@ -222,7 +239,7 @@ async function connect() {
 
     } catch (error) {
         debugLog('Connection error: ' + error.message);
-        updateStatus('接続エラー', 'error');
+        updateConnectionToggle('disconnected');
         cleanupConnection();
         scheduleReconnect();
     }
@@ -280,23 +297,22 @@ async function setupWebRTC() {
         debugLog('Connection: ' + pc.connectionState);
         switch (pc.connectionState) {
             case 'connected':
-                updateStatus('接続済み', 'connected');
-                updateButtons(true);
+                updateConnectionToggle('connected');
                 enablePttButton(true);
                 reconnectAttempts = 0;  // 接続成功でリセット
                 requestWakeLock();  // スクリーンオフ防止
                 break;
             case 'connecting':
-                updateStatus('接続中...', 'connecting');
+                updateConnectionToggle('connecting');
                 break;
             case 'disconnected':
-                updateStatus('切断されました', 'error');
+                updateConnectionToggle('disconnected');
                 enablePttButton(false);
                 cleanupConnection();
                 scheduleReconnect();
                 break;
             case 'failed':
-                updateStatus('接続失敗', 'error');
+                updateConnectionToggle('disconnected');
                 enablePttButton(false);
                 cleanupConnection();
                 scheduleReconnect();
@@ -471,8 +487,7 @@ function cleanupConnection() {
 // 完全クリーンアップ
 function cleanup() {
     cleanupConnection();
-    updateStatus('未接続', '');
-    updateButtons(false);
+    updateConnectionToggle('disconnected');
 }
 
 // 自動再接続スケジュール
@@ -480,14 +495,13 @@ function scheduleReconnect() {
     if (!autoReconnect) return;
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
         debugLog('Max reconnect attempts reached');
-        updateStatus('再接続失敗', 'error');
-        updateButtons(false);
+        updateConnectionToggle('disconnected');
         return;
     }
 
     reconnectAttempts++;
     debugLog('Reconnecting in ' + (RECONNECT_DELAY/1000) + 's... (' + reconnectAttempts + '/' + MAX_RECONNECT_ATTEMPTS + ')');
-    updateStatus('再接続中... (' + reconnectAttempts + ')', 'connecting');
+    updateConnectionToggle('connecting');
 
     setTimeout(() => {
         if (autoReconnect && !ws) {

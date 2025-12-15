@@ -26,28 +26,41 @@
             margin-bottom: 30px;
             font-weight: 500;
         }
-        .status {
-            font-size: 16px;
+        /* Connection Toggle Button */
+        .connection-toggle {
+            width: 100%;
             margin: 20px 0;
-            padding: 15px;
+            padding: 15px 20px;
+            border: none;
             border-radius: 8px;
-            background: #0f3460;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-size: 16px;
+            transition: all 0.2s;
         }
-        .status.connected {
-            background: #1b4332;
-            color: #95d5b2;
-        }
-        .status.connecting {
-            background: #3d405b;
-            color: #f4f1de;
-        }
-        .status.error {
-            background: #641220;
+        .connection-toggle.disconnected {
+            background: #641220 !important;
             color: #f8d7da;
         }
-        .buttons {
-            margin: 20px 0;
+        .connection-toggle.connecting {
+            background: #3d405b !important;
+            color: #f4f1de;
         }
+        .connection-toggle.connected {
+            background: #1b4332 !important;
+            color: #95d5b2;
+        }
+        .connection-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        .disconnected .connection-indicator { background: #e94560; }
+        .connecting .connection-indicator { background: #f4f1de; animation: pulse 1s infinite; }
+        .connected .connection-indicator { background: #95d5b2; }
         button {
             background: #e94560;
             color: white;
@@ -172,6 +185,12 @@
     <div class="container">
         <h1>Webトランシーバー</h1>
 
+        <!-- Connection Toggle -->
+        <button id="connectionToggle" class="connection-toggle disconnected" onclick="toggleConnection()">
+            <span class="connection-indicator"></span>
+            <span class="connection-text">未接続 - タップで接続</span>
+        </button>
+
         <!-- Speaker Status -->
         <div id="speakerStatus" class="speaker-status">
             <div id="speakerIndicator" class="speaker-indicator"></div>
@@ -190,15 +209,6 @@
                 <span class="ptt-icon">🎙️</span>
                 <span class="ptt-label">押して話す</span>
             </button>
-        </div>
-
-        <div id="status" class="status">
-            未接続
-        </div>
-
-        <div class="buttons">
-            <button id="connectBtn" onclick="connect()">接続</button>
-            <button id="disconnectBtn" class="secondary" onclick="disconnect()" disabled>切断</button>
         </div>
 
         <audio id="audio" autoplay playsinline></audio>
