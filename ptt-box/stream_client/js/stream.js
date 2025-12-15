@@ -15,9 +15,15 @@ let wakeLock = null;  // スクリーンロック防止
 // PTT関連
 let myClientId = null;
 let localStream = null;  // マイク音声ストリーム
+let rawMicStream = null;  // 生のマイク入力（クリーンアップ用）
 let isPttActive = false;  // PTTボタンが押されているか
 let pttState = 'idle';  // idle, transmitting, receiving
 let micAccessGranted = false;
+
+// マイクゲイン処理
+let micAudioContext = null;
+let micGainNode = null;
+const MIC_GAIN = 1.0;  // 増幅なし（将来の調整用に残す）
 
 // P2P接続管理
 const p2pConnections = new Map();  // clientId -> { pc, audioSender, audioElement }
@@ -43,6 +49,12 @@ window.addEventListener('DOMContentLoaded', () => {
     const debugEl = document.getElementById('debug');
     if (debugEl) {
         debugEl.innerHTML = '';
+    }
+
+    // 音量の初期値を設定（スライダーのデフォルト値と同期）
+    const audio = document.getElementById('audio');
+    if (audio) {
+        audio.volume = 0.4;  // 40%
     }
 
     // LINEなどの内蔵ブラウザを検出
@@ -426,6 +438,21 @@ function cleanupConnection() {
         audioContext = null;
         analyser = null;
     }
+
+    // マイクゲイン用AudioContextをクリーンアップ
+    if (micAudioContext) {
+        micAudioContext.close();
+        micAudioContext = null;
+        micGainNode = null;
+    }
+    // 生のマイクストリームを停止
+    if (rawMicStream) {
+        rawMicStream.getTracks().forEach(track => track.stop());
+        rawMicStream = null;
+    }
+    localStream = null;
+    micAccessGranted = false;
+
     ws = null;
     iceServers = null;
     isPttActive = false;
@@ -515,15 +542,27 @@ function setVolume(value) {
     }
 }
 
+// マイクゲイン調整
+function setMicGain(value) {
+    const gain = value / 100;  // 50-300 → 0.5-3.0
+    if (micGainNode) {
+        micGainNode.gain.value = gain;
+    }
+    const gainValue = document.getElementById('micGainValue');
+    if (gainValue) {
+        gainValue.textContent = gain.toFixed(1) + 'x';
+    }
+}
+
 // ========== PTT機能 ==========
 
-// マイクアクセス要求
+// マイクアクセス要求（GainNodeで増幅）
 async function requestMicrophoneAccess() {
     if (localStream) return true;  // 既に取得済み
 
     try {
-        // サーバー側と同じフォーマット(48kHz, mono)を指定して変換を回避
-        localStream = await navigator.mediaDevices.getUserMedia({
+        // 生のマイク入力を取得
+        rawMicStream = await navigator.mediaDevices.getUserMedia({
             audio: {
                 echoCancellation: true,
                 noiseSuppression: true,
@@ -532,12 +571,26 @@ async function requestMicrophoneAccess() {
                 channelCount: 1
             }
         });
+
+        // AudioContextでゲイン処理
+        micAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = micAudioContext.createMediaStreamSource(rawMicStream);
+        micGainNode = micAudioContext.createGain();
+        micGainNode.gain.value = MIC_GAIN;
+
+        // 出力先を作成
+        const destination = micAudioContext.createMediaStreamDestination();
+        source.connect(micGainNode);
+        micGainNode.connect(destination);
+
+        // 増幅されたストリームを使用
+        localStream = destination.stream;
         micAccessGranted = true;
 
         // 実際に取得したフォーマットをログ出力
-        const track = localStream.getAudioTracks()[0];
+        const track = rawMicStream.getAudioTracks()[0];
         const settings = track.getSettings();
-        debugLog('Mic: ' + settings.sampleRate + 'Hz, ' + settings.channelCount + 'ch');
+        debugLog('Mic: ' + settings.sampleRate + 'Hz, ' + settings.channelCount + 'ch, gain=' + MIC_GAIN);
 
         return true;
     } catch (err) {

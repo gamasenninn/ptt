@@ -205,10 +205,18 @@
 
         <div style="margin-top: 20px; display: flex; align-items: center; gap: 10px;">
             <span style="font-size: 20px;">🔈</span>
-            <input type="range" id="volumeSlider" min="0" max="100" value="100"
+            <input type="range" id="volumeSlider" min="0" max="100" value="40"
                    style="flex: 1; height: 8px; cursor: pointer; accent-color: #60efff;"
                    oninput="setVolume(this.value)">
-            <span id="volumeValue" style="min-width: 40px; text-align: right;">100%</span>
+            <span id="volumeValue" style="min-width: 40px; text-align: right;">40%</span>
+        </div>
+
+        <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 20px;">🎤</span>
+            <input type="range" id="micGainSlider" min="50" max="300" value="100"
+                   style="flex: 1; height: 8px; cursor: pointer; accent-color: #27ae60;"
+                   oninput="setMicGain(this.value)">
+            <span id="micGainValue" style="min-width: 40px; text-align: right;">1.0x</span>
         </div>
 
         <div class="volume-meter">
