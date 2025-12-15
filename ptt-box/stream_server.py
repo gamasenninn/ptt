@@ -36,12 +36,13 @@ logging.getLogger('aiortc').setLevel(logging.WARNING)
 import sys
 def exception_handler(loop, context):
     exception = context.get('exception')
-    if exception and 'TransactionFailed' in str(type(exception)):
-        # TURN transaction失敗は無視（relay-to-relay禁止など）
-        pass
-    else:
-        # その他の例外は通常通り出力
-        loop.default_exception_handler(context)
+    if exception:
+        exc_type = str(type(exception))
+        # TURN/STUN関連のタイムアウトや失敗は無視
+        if any(x in exc_type for x in ['TransactionFailed', 'TransactionTimeout']):
+            return
+    # その他の例外は通常通り出力
+    loop.default_exception_handler(context)
 
 # 環境変数読み込み
 load_dotenv()
@@ -131,28 +132,9 @@ class PTTManager:
 
 
 class MicrophoneAudioTrack(MediaStreamTrack):
-    """マイク入力をWebRTC音声トラックとして提供（共有インスタンス対応）"""
+    """マイク入力をWebRTC音声トラックとして提供"""
 
     kind = "audio"
-    _instance: Optional["MicrophoneAudioTrack"] = None
-    _ref_count = 0
-
-    @classmethod
-    def get_shared_instance(cls, device_index: int, sample_rate: int = 48000) -> "MicrophoneAudioTrack":
-        """共有インスタンスを取得（シングルトンパターン）"""
-        if cls._instance is None:
-            cls._instance = cls(device_index, sample_rate)
-        cls._ref_count += 1
-        return cls._instance
-
-    @classmethod
-    def release_shared_instance(cls):
-        """共有インスタンスの参照を解放"""
-        cls._ref_count -= 1
-        if cls._ref_count <= 0 and cls._instance:
-            cls._instance.stop()
-            cls._instance = None
-            cls._ref_count = 0
 
     def __init__(self, device_index: int, sample_rate: int = 48000):
         super().__init__()
@@ -225,87 +207,14 @@ class MicrophoneAudioTrack(MediaStreamTrack):
             logger.info("Audio stream stopped")
 
 
-class AudioRelayTrack(MediaStreamTrack):
-    """PTT送信者の音声を他クライアントにリレーするトラック"""
-
-    kind = "audio"
-
-    def __init__(
-        self,
-        ptt_manager: PTTManager,
-        listener_id: str,
-        mic_track: MicrophoneAudioTrack,
-        sample_rate: int = 48000
-    ):
-        super().__init__()
-        self._ptt_manager = ptt_manager
-        self._listener_id = listener_id
-        self._mic_track = mic_track
-        self._sample_rate = sample_rate
-        self._samples_per_frame = int(sample_rate * FRAME_DURATION)
-        self._pts = 0
-
-    def _create_silence_frame(self) -> av.AudioFrame:
-        """無音フレームを生成"""
-        silence = np.zeros((1, self._samples_per_frame), dtype=np.int16)
-        frame = av.AudioFrame.from_ndarray(silence, format='s16', layout='mono')
-        frame.sample_rate = self._sample_rate
-        frame.pts = self._pts
-        frame.time_base = Fraction(1, self._sample_rate)
-        self._pts += self._samples_per_frame
-        return frame
-
-    async def recv(self) -> av.AudioFrame:
-        """送信者の音声を取得してリレー"""
-        speaker_id = self._ptt_manager.current_speaker
-
-        # 送信者がいない、または自分が送信者の場合は無音
-        if speaker_id is None or speaker_id == self._listener_id:
-            await asyncio.sleep(FRAME_DURATION)
-            return self._create_silence_frame()
-
-        # PCマイクからの送信
-        if speaker_id == "pc_mic":
-            try:
-                frame = await asyncio.wait_for(
-                    self._mic_track.recv(),
-                    timeout=FRAME_DURATION * 2
-                )
-                # ptsを自分用に更新
-                frame.pts = self._pts
-                self._pts += self._samples_per_frame
-                return frame
-            except asyncio.TimeoutError:
-                return self._create_silence_frame()
-
-        # 他のクライアントからの送信
-        client = self._ptt_manager.clients.get(speaker_id)
-        if client and client.remote_audio_track:
-            try:
-                frame = await asyncio.wait_for(
-                    client.remote_audio_track.recv(),
-                    timeout=FRAME_DURATION * 2
-                )
-                frame.pts = self._pts
-                self._pts += self._samples_per_frame
-                return frame
-            except asyncio.TimeoutError:
-                return self._create_silence_frame()
-
-        # フォールバック: 無音
-        await asyncio.sleep(FRAME_DURATION)
-        return self._create_silence_frame()
-
-
 class StreamServer:
     """HTTP + WebSocketサーバー"""
 
     def __init__(self):
         self.app = web.Application()
         self.pcs: set[RTCPeerConnection] = set()
-        self.relay_tracks: list[AudioRelayTrack] = []  # 各接続用のリレートラック
+        self.mic_tracks: list[MicrophoneAudioTrack] = []  # 各接続用のマイクトラック
         self.ptt_manager = PTTManager()  # PTT管理
-        self.mic_track: Optional[MicrophoneAudioTrack] = None  # 共有マイクトラック
 
         # ICEサーバー設定
         self.ice_servers = [
@@ -366,6 +275,53 @@ class StreamServer:
                 await client.websocket.send_json(status)
             except Exception:
                 pass  # 切断済みクライアントは無視
+
+    async def send_client_list(self, to_client_id: str):
+        """指定クライアントに他クライアントのリストを送信"""
+        client = self.ptt_manager.clients.get(to_client_id)
+        if not client:
+            return
+
+        other_clients = [
+            {"clientId": c.client_id, "displayName": c.display_name}
+            for c in self.ptt_manager.clients.values()
+            if c.client_id != to_client_id
+        ]
+
+        await client.websocket.send_json({
+            "type": "client_list",
+            "clients": other_clients
+        })
+        logger.info(f"Sent client list to {to_client_id}: {len(other_clients)} clients")
+
+    async def broadcast_client_joined(self, new_client_id: str):
+        """新規クライアント参加を他クライアントに通知"""
+        new_client = self.ptt_manager.clients.get(new_client_id)
+        if not new_client:
+            return
+
+        for client in self.ptt_manager.clients.values():
+            if client.client_id != new_client_id:
+                try:
+                    await client.websocket.send_json({
+                        "type": "client_joined",
+                        "clientId": new_client_id,
+                        "displayName": new_client.display_name
+                    })
+                except Exception:
+                    pass
+
+    async def broadcast_client_left(self, left_client_id: str):
+        """クライアント切断を他クライアントに通知"""
+        for client in self.ptt_manager.clients.values():
+            if client.client_id != left_client_id:
+                try:
+                    await client.websocket.send_json({
+                        "type": "client_left",
+                        "clientId": left_client_id
+                    })
+                except Exception:
+                    pass
 
     async def handle_websocket(self, request):
         """WebSocketシグナリング"""
@@ -447,19 +403,10 @@ class StreamServer:
                         offer = RTCSessionDescription(sdp=offer_sdp, type="offer")
                         await pc.setRemoteDescription(offer)
 
-                        # 共有マイクトラックを初期化（初回のみ）
-                        if self.mic_track is None:
-                            self.mic_track = MicrophoneAudioTrack(DEVICE_INDEX, SAMPLE_RATE)
-
-                        # このクライアント用のリレートラックを作成
-                        relay_track = AudioRelayTrack(
-                            ptt_manager=self.ptt_manager,
-                            listener_id=client_id,
-                            mic_track=self.mic_track,
-                            sample_rate=SAMPLE_RATE
-                        )
-                        self.relay_tracks.append(relay_track)
-                        pc.addTrack(relay_track)
+                        # このクライアント用のマイクトラックを作成（main方式: 各クライアントに独立トラック）
+                        mic_track = MicrophoneAudioTrack(DEVICE_INDEX, SAMPLE_RATE)
+                        self.mic_tracks.append(mic_track)
+                        pc.addTrack(mic_track)
 
                         # Answer作成
                         answer = await pc.createAnswer()
@@ -481,6 +428,11 @@ class StreamServer:
                             logger.info("SDP contains relay candidates")
                         else:
                             logger.warning("SDP does NOT contain relay candidates!")
+
+                        # P2P接続用: 既存クライアントに新規参加を通知
+                        await self.broadcast_client_joined(client_id)
+                        # P2P接続用: 新規クライアントに既存クライアントリストを送信
+                        await self.send_client_list(client_id)
 
                     elif data["type"] == "ice-candidate" and data.get("candidate"):
                         # 受信したICE候補をPeerConnectionに追加
@@ -539,6 +491,39 @@ class StreamServer:
                         if self.ptt_manager.release_floor(client_id):
                             await self.broadcast_ptt_status()
 
+                    # ========== P2Pシグナリング中継 ==========
+                    elif data["type"] == "p2p_offer":
+                        # P2P Offerを対象クライアントに中継
+                        target = self.ptt_manager.clients.get(data.get("to"))
+                        if target:
+                            await target.websocket.send_json({
+                                "type": "p2p_offer",
+                                "from": client_id,
+                                "sdp": data["sdp"]
+                            })
+                            logger.info(f"P2P offer relayed: {client_id} -> {data.get('to')}")
+
+                    elif data["type"] == "p2p_answer":
+                        # P2P Answerを対象クライアントに中継
+                        target = self.ptt_manager.clients.get(data.get("to"))
+                        if target:
+                            await target.websocket.send_json({
+                                "type": "p2p_answer",
+                                "from": client_id,
+                                "sdp": data["sdp"]
+                            })
+                            logger.info(f"P2P answer relayed: {client_id} -> {data.get('to')}")
+
+                    elif data["type"] == "p2p_ice_candidate":
+                        # P2P ICE候補を対象クライアントに中継
+                        target = self.ptt_manager.clients.get(data.get("to"))
+                        if target:
+                            await target.websocket.send_json({
+                                "type": "p2p_ice_candidate",
+                                "from": client_id,
+                                "candidate": data.get("candidate")
+                            })
+
                 elif msg.type == WSMsgType.ERROR:
                     logger.error(f"WebSocket error: {ws.exception()}")
 
@@ -549,6 +534,9 @@ class StreamServer:
             # 切断時に送信権を解放
             if self.ptt_manager.release_floor(client_id):
                 await self.broadcast_ptt_status()
+
+            # P2P接続用: 他クライアントに切断を通知
+            await self.broadcast_client_left(client_id)
 
             # クライアント情報削除
             self.ptt_manager.clients.pop(client_id, None)
@@ -568,15 +556,10 @@ class StreamServer:
         await asyncio.gather(*coros)
         self.pcs.clear()
 
-        # リレートラック停止
-        for track in self.relay_tracks:
+        # マイクトラック停止
+        for track in self.mic_tracks:
             track.stop()
-        self.relay_tracks.clear()
-
-        # 共有マイクトラック停止
-        if self.mic_track:
-            self.mic_track.stop()
-            self.mic_track = None
+        self.mic_tracks.clear()
 
     async def ptt_timeout_checker(self):
         """PTTタイムアウトを定期チェック"""

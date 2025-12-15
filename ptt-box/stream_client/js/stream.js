@@ -19,6 +19,9 @@ let isPttActive = false;  // PTTボタンが押されているか
 let pttState = 'idle';  // idle, transmitting, receiving
 let micAccessGranted = false;
 
+// P2P接続管理
+const p2pConnections = new Map();  // clientId -> { pc, audioSender, audioElement }
+
 function debugLog(msg) {
     console.log(msg);
     const debugEl = document.getElementById('debug');
@@ -173,6 +176,26 @@ async function connect() {
                 // PTT状態更新
                 handlePttStatus(data);
             }
+            // ========== P2Pシグナリング ==========
+            else if (data.type === 'client_list') {
+                // 既存クライアントリスト受信 → 各クライアントとP2P接続確立
+                handleClientList(data.clients);
+            } else if (data.type === 'client_joined') {
+                // 新規クライアント参加 → P2P接続確立（相手からofferが来る）
+                debugLog('Client joined: ' + data.clientId);
+            } else if (data.type === 'client_left') {
+                // クライアント切断 → P2P接続クリーンアップ
+                handleClientLeft(data.clientId);
+            } else if (data.type === 'p2p_offer') {
+                // P2P Offer受信
+                handleP2POffer(data.from, data.sdp);
+            } else if (data.type === 'p2p_answer') {
+                // P2P Answer受信
+                handleP2PAnswer(data.from, data.sdp);
+            } else if (data.type === 'p2p_ice_candidate') {
+                // P2P ICE候補受信
+                handleP2PIceCandidate(data.from, data.candidate);
+            }
         };
 
         ws.onerror = (error) => {
@@ -283,9 +306,10 @@ async function setupWebRTC() {
         pc.addTransceiver('audio', { direction: 'recvonly' });
     }
 
-    // Offer作成
+    // Offer作成（Opusをモノラルに設定してリサンプル回避）
     const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+    const monoSdp = forceOpusMono(offer.sdp);
+    await pc.setLocalDescription({ type: 'offer', sdp: monoSdp });
 
     // ICE gathering完了を待つ（relay候補取得後は早めに進む）
     await new Promise((resolve) => {
@@ -390,6 +414,9 @@ function disconnect() {
 
 // 接続リソースのみクリーンアップ（自動再接続用）
 function cleanupConnection() {
+    // 全P2P接続をクリーンアップ
+    cleanupAllP2PConnections();
+
     if (pc) {
         pc.close();
         pc = null;
@@ -448,6 +475,33 @@ window.addEventListener('beforeunload', () => {
     cleanup();
 });
 
+// SDPを修正してOpusをモノラルに強制
+function forceOpusMono(sdp) {
+    // Opusのペイロードタイプを探す
+    const opusMatch = sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/);
+    if (!opusMatch) {
+        debugLog('Opus not found in SDP');
+        return sdp;
+    }
+    const opusPayloadType = opusMatch[1];
+    debugLog('Opus payload type: ' + opusPayloadType);
+
+    // 既存のfmtpがあれば修正、なければ追加
+    const fmtpRegex = new RegExp('a=fmtp:' + opusPayloadType + ' (.+)');
+    if (fmtpRegex.test(sdp)) {
+        sdp = sdp.replace(fmtpRegex, 'a=fmtp:' + opusPayloadType + ' $1;stereo=0;sprop-stereo=0');
+    } else {
+        // fmtpがない場合、rtpmapの後に追加
+        sdp = sdp.replace(
+            new RegExp('(a=rtpmap:' + opusPayloadType + ' opus/48000/2)'),
+            '$1\r\na=fmtp:' + opusPayloadType + ' stereo=0;sprop-stereo=0'
+        );
+    }
+
+    debugLog('SDP modified for mono');
+    return sdp;
+}
+
 // ボリューム調整
 function setVolume(value) {
     const audio = document.getElementById('audio');
@@ -468,15 +522,23 @@ async function requestMicrophoneAccess() {
     if (localStream) return true;  // 既に取得済み
 
     try {
+        // サーバー側と同じフォーマット(48kHz, mono)を指定して変換を回避
         localStream = await navigator.mediaDevices.getUserMedia({
             audio: {
                 echoCancellation: true,
                 noiseSuppression: true,
-                autoGainControl: true
+                autoGainControl: true,
+                sampleRate: 48000,
+                channelCount: 1
             }
         });
         micAccessGranted = true;
-        debugLog('Microphone access granted');
+
+        // 実際に取得したフォーマットをログ出力
+        const track = localStream.getAudioTracks()[0];
+        const settings = track.getSettings();
+        debugLog('Mic: ' + settings.sampleRate + 'Hz, ' + settings.channelCount + 'ch');
+
         return true;
     } catch (err) {
         debugLog('Microphone access denied: ' + err.message);
@@ -494,14 +556,23 @@ function enablePttButton(enabled) {
 }
 
 // PTTボタン押下開始
+let pttButtonPressed = false;  // ボタンが物理的に押されているか
+
 function pttStart(event) {
     event.preventDefault();
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    event.stopPropagation();
+
+    if (pttButtonPressed) return;  // 既に押されている
+    pttButtonPressed = true;
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        debugLog('WebSocket not connected');
+        return;
+    }
     if (!micAccessGranted) {
         debugLog('Microphone not available');
         return;
     }
-    if (isPttActive) return;  // 既に押されている
 
     debugLog('PTT request...');
     ws.send(JSON.stringify({ type: 'ptt_request' }));
@@ -510,18 +581,30 @@ function pttStart(event) {
 // PTTボタン解放
 function pttEnd(event) {
     event.preventDefault();
+    event.stopPropagation();
+
+    if (!pttButtonPressed) return;  // 押されていない
+    pttButtonPressed = false;
+
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    if (!isPttActive) return;
+    if (!isPttActive) return;  // 送信権を持っていない
 
     debugLog('PTT release');
     isPttActive = false;
 
-    // マイクをミュート
+    // サーバー向けマイクをミュート
     if (localStream) {
         localStream.getAudioTracks().forEach(track => {
             track.enabled = false;
         });
     }
+
+    // 全P2P接続のマイクトラックを無効化
+    p2pConnections.forEach((connInfo, clientId) => {
+        if (connInfo.audioSender && connInfo.audioSender.track) {
+            connInfo.audioSender.track.enabled = false;
+        }
+    });
 
     ws.send(JSON.stringify({ type: 'ptt_release' }));
 }
@@ -531,12 +614,20 @@ function handlePttGranted() {
     debugLog('PTT granted - transmitting');
     isPttActive = true;
 
-    // マイクをアンミュート
+    // サーバー向けマイクをアンミュート
     if (localStream) {
         localStream.getAudioTracks().forEach(track => {
             track.enabled = true;
         });
     }
+
+    // 全P2P接続のマイクトラックを有効化
+    p2pConnections.forEach((connInfo, clientId) => {
+        if (connInfo.audioSender && connInfo.audioSender.track) {
+            connInfo.audioSender.track.enabled = true;
+            debugLog('P2P track enabled for ' + clientId);
+        }
+    });
 
     updatePttState('transmitting', 'あなた');
 }
@@ -603,4 +694,265 @@ function updatePttState(state, speakerName) {
                 break;
         }
     }
+}
+
+// ========== P2P接続管理 ==========
+
+// クライアントリスト受信 → 各クライアントとP2P接続確立
+async function handleClientList(clients) {
+    debugLog('Client list received: ' + clients.length + ' clients');
+
+    for (const client of clients) {
+        if (!p2pConnections.has(client.clientId)) {
+            await createP2PConnection(client.clientId, true);  // offerer
+        }
+    }
+}
+
+// P2P接続作成
+async function createP2PConnection(remoteClientId, isOfferer) {
+    debugLog('Creating P2P to ' + remoteClientId + ' (offerer: ' + isOfferer + ')');
+
+    const p2pPc = new RTCPeerConnection({
+        iceServers: iceServers || [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+
+    const connInfo = {
+        pc: p2pPc,
+        audioSender: null,
+        audioElement: null,
+        pendingCandidates: [],  // remote descriptionが設定されるまでICE候補をキュー
+        remoteDescriptionSet: false
+    };
+    p2pConnections.set(remoteClientId, connInfo);
+
+    // ローカルマイクトラックを追加（ミュート状態）
+    if (localStream) {
+        const track = localStream.getAudioTracks()[0];
+        if (track) {
+            const clonedTrack = track.clone();
+            clonedTrack.enabled = isPttActive;  // PTT状態に応じて
+            connInfo.audioSender = p2pPc.addTrack(clonedTrack, localStream);
+            debugLog('P2P track added (enabled: ' + clonedTrack.enabled + ')');
+        }
+    }
+
+    // リモート音声受信
+    p2pPc.ontrack = (event) => {
+        debugLog('P2P track received from ' + remoteClientId + ', streams: ' + event.streams.length);
+
+        // 音声再生用要素を作成
+        let audio = document.getElementById('p2p-audio-' + remoteClientId);
+        if (!audio) {
+            audio = document.createElement('audio');
+            audio.id = 'p2p-audio-' + remoteClientId;
+            audio.autoplay = true;
+            audio.playsInline = true;
+            audio.style.display = 'none';
+            document.body.appendChild(audio);
+        }
+
+        // ストリームがある場合はそれを使用、ない場合はトラックから作成
+        if (event.streams.length > 0) {
+            audio.srcObject = event.streams[0];
+        } else {
+            // ストリームがない場合、トラックから新しいストリームを作成
+            const stream = new MediaStream([event.track]);
+            audio.srcObject = stream;
+            debugLog('Created MediaStream from track');
+        }
+        connInfo.audioElement = audio;
+
+        // 音量をメインと同じに設定
+        const mainAudio = document.getElementById('audio');
+        if (mainAudio) {
+            audio.volume = mainAudio.volume;
+        }
+
+        // 再生を試みる
+        audio.play().catch(e => debugLog('P2P audio play error: ' + e.message));
+    };
+
+    // ICE候補をサーバー経由で送信
+    p2pPc.onicecandidate = (event) => {
+        if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'p2p_ice_candidate',
+                to: remoteClientId,
+                candidate: {
+                    candidate: event.candidate.candidate,
+                    sdpMid: event.candidate.sdpMid,
+                    sdpMLineIndex: event.candidate.sdpMLineIndex
+                }
+            }));
+        }
+    };
+
+    // 接続状態変化
+    p2pPc.onconnectionstatechange = () => {
+        debugLog('P2P to ' + remoteClientId + ': ' + p2pPc.connectionState);
+        if (p2pPc.connectionState === 'connected') {
+            debugLog('✓ P2P connected to ' + remoteClientId);
+        } else if (p2pPc.connectionState === 'failed' || p2pPc.connectionState === 'closed') {
+            cleanupP2PConnection(remoteClientId);
+        }
+    };
+
+    // Offerer側: Offer作成・送信
+    if (isOfferer) {
+        const offer = await p2pPc.createOffer();
+        const monoSdp = forceOpusMono(offer.sdp);
+        await p2pPc.setLocalDescription({ type: 'offer', sdp: monoSdp });
+
+        // ICE gathering完了を待つ
+        await waitForP2PIceGathering(p2pPc);
+
+        ws.send(JSON.stringify({
+            type: 'p2p_offer',
+            to: remoteClientId,
+            sdp: p2pPc.localDescription.sdp
+        }));
+        debugLog('P2P offer sent to ' + remoteClientId);
+    }
+
+    return connInfo;
+}
+
+// P2P Offer受信時
+async function handleP2POffer(fromClientId, sdp) {
+    debugLog('P2P offer from ' + fromClientId);
+
+    let connInfo = p2pConnections.get(fromClientId);
+    if (!connInfo) {
+        connInfo = await createP2PConnection(fromClientId, false);
+    }
+
+    await connInfo.pc.setRemoteDescription(new RTCSessionDescription({
+        type: 'offer',
+        sdp: sdp
+    }));
+
+    // remote descriptionが設定されたことをマーク
+    connInfo.remoteDescriptionSet = true;
+
+    // キューに溜まったICE候補を処理
+    for (const candidate of connInfo.pendingCandidates) {
+        try {
+            await connInfo.pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) {
+            debugLog('P2P ICE (queued) error: ' + e.message);
+        }
+    }
+    connInfo.pendingCandidates = [];
+
+    const answer = await connInfo.pc.createAnswer();
+    const monoSdp = forceOpusMono(answer.sdp);
+    await connInfo.pc.setLocalDescription({ type: 'answer', sdp: monoSdp });
+
+    // ICE gathering完了を待つ
+    await waitForP2PIceGathering(connInfo.pc);
+
+    ws.send(JSON.stringify({
+        type: 'p2p_answer',
+        to: fromClientId,
+        sdp: connInfo.pc.localDescription.sdp
+    }));
+    debugLog('P2P answer sent to ' + fromClientId);
+}
+
+// P2P Answer受信時
+async function handleP2PAnswer(fromClientId, sdp) {
+    debugLog('P2P answer from ' + fromClientId);
+
+    const connInfo = p2pConnections.get(fromClientId);
+    if (connInfo) {
+        await connInfo.pc.setRemoteDescription(new RTCSessionDescription({
+            type: 'answer',
+            sdp: sdp
+        }));
+
+        // remote descriptionが設定されたことをマーク
+        connInfo.remoteDescriptionSet = true;
+
+        // キューに溜まったICE候補を処理
+        for (const candidate of connInfo.pendingCandidates) {
+            try {
+                await connInfo.pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (e) {
+                debugLog('P2P ICE (queued) error: ' + e.message);
+            }
+        }
+        connInfo.pendingCandidates = [];
+
+        debugLog('P2P connection established with ' + fromClientId);
+    }
+}
+
+// P2P ICE候補受信時
+async function handleP2PIceCandidate(fromClientId, candidate) {
+    let connInfo = p2pConnections.get(fromClientId);
+
+    // まだ接続がない場合は作成（answerer側で先にICE候補が届く場合）
+    if (!connInfo) {
+        connInfo = await createP2PConnection(fromClientId, false);
+    }
+
+    if (connInfo && candidate) {
+        // remote descriptionが設定されていない場合はキューに追加
+        if (!connInfo.remoteDescriptionSet) {
+            connInfo.pendingCandidates.push(candidate);
+            return;
+        }
+
+        try {
+            await connInfo.pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) {
+            debugLog('P2P ICE error: ' + e.message);
+        }
+    }
+}
+
+// クライアント切断時
+function handleClientLeft(clientId) {
+    debugLog('Client left: ' + clientId);
+    cleanupP2PConnection(clientId);
+}
+
+// P2P接続クリーンアップ
+function cleanupP2PConnection(clientId) {
+    const connInfo = p2pConnections.get(clientId);
+    if (connInfo) {
+        if (connInfo.pc) {
+            connInfo.pc.close();
+        }
+        if (connInfo.audioElement) {
+            connInfo.audioElement.srcObject = null;
+            connInfo.audioElement.remove();
+        }
+        p2pConnections.delete(clientId);
+        debugLog('P2P cleanup: ' + clientId);
+    }
+}
+
+// 全P2P接続クリーンアップ
+function cleanupAllP2PConnections() {
+    p2pConnections.forEach((_, clientId) => {
+        cleanupP2PConnection(clientId);
+    });
+}
+
+// P2P ICE gathering待機
+async function waitForP2PIceGathering(p2pPc) {
+    if (p2pPc.iceGatheringState === 'complete') return;
+
+    return new Promise((resolve) => {
+        const timeout = setTimeout(resolve, 5000);  // 最大5秒
+
+        p2pPc.addEventListener('icegatheringstatechange', () => {
+            if (p2pPc.iceGatheringState === 'complete') {
+                clearTimeout(timeout);
+                resolve();
+            }
+        });
+    });
 }
