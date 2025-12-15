@@ -79,6 +79,8 @@ class ClientConnection:
     peer_connection: Optional[RTCPeerConnection] = None
     remote_audio_track: Optional[MediaStreamTrack] = None
     display_name: str = "Anonymous"
+    connected_at: float = field(default_factory=time.time)
+    is_monitor: bool = False  # モニタークライアント識別
 
 
 class PTTManager:
@@ -215,6 +217,8 @@ class StreamServer:
         self.pcs: set[RTCPeerConnection] = set()
         self.mic_tracks: list[MicrophoneAudioTrack] = []  # 各接続用のマイクトラック
         self.ptt_manager = PTTManager()  # PTT管理
+        self.monitors: dict[str, ClientConnection] = {}  # モニタークライアント
+        self.server_start_time = time.time()  # サーバー起動時刻
 
         # ICEサーバー設定
         self.ice_servers = [
@@ -253,6 +257,8 @@ class StreamServer:
         # ルーティング設定
         self.app.router.add_get('/', self.handle_index)
         self.app.router.add_get('/ws', self.handle_websocket)
+        self.app.router.add_get('/monitor', self.handle_monitor_page)
+        self.app.router.add_get('/ws/monitor', self.handle_monitor_websocket)
         self.app.router.add_static('/js', CLIENT_DIR / 'js')
 
         # シャットダウン時のクリーンアップ
@@ -261,6 +267,163 @@ class StreamServer:
     async def handle_index(self, request):
         """index.html配信"""
         return web.FileResponse(CLIENT_DIR / 'index.html')
+
+    async def handle_monitor_page(self, request):
+        """monitor.html配信"""
+        return web.FileResponse(CLIENT_DIR / 'monitor.html')
+
+    def get_monitor_state(self) -> dict:
+        """モニター用のシステム状態を取得"""
+        now = time.time()
+
+        # クライアント情報
+        clients = []
+        for c in self.ptt_manager.clients.values():
+            if c.is_monitor:
+                continue  # モニタークライアントは除外
+
+            client_info = {
+                "clientId": c.client_id,
+                "displayName": c.display_name,
+                "connectedAt": c.connected_at,
+                "duration": now - c.connected_at,
+                "connectionState": c.peer_connection.connectionState if c.peer_connection else "unknown",
+                "iceState": c.peer_connection.iceConnectionState if c.peer_connection else "unknown"
+            }
+            clients.append(client_info)
+
+        # PTT状態
+        ptt_state = {
+            "state": "transmitting" if self.ptt_manager.current_speaker else "idle",
+            "speaker": self.ptt_manager.current_speaker,
+            "speakerName": self.ptt_manager.get_speaker_name(),
+            "startTime": self.ptt_manager.speaker_start_time,
+            "elapsed": (now - self.ptt_manager.speaker_start_time) if self.ptt_manager.speaker_start_time else 0,
+            "maxTime": self.ptt_manager.max_transmit_time
+        }
+
+        # システム統計
+        stats = {
+            "totalClients": len([c for c in self.ptt_manager.clients.values() if not c.is_monitor]),
+            "totalMonitors": len(self.monitors),
+            "uptime": now - self.server_start_time
+        }
+
+        return {
+            "type": "monitor_state",
+            "timestamp": now,
+            "clients": clients,
+            "ptt": ptt_state,
+            "stats": stats
+        }
+
+    async def handle_monitor_websocket(self, request):
+        """モニター用WebSocketハンドラ"""
+        ws = web.WebSocketResponse(heartbeat=30.0)
+        await ws.prepare(request)
+
+        # モニターID生成
+        monitor_id = f"mon-{str(uuid.uuid4())[:6]}"
+        monitor = ClientConnection(
+            client_id=monitor_id,
+            websocket=ws,
+            display_name=f"Monitor-{monitor_id[-4:]}",
+            is_monitor=True
+        )
+        self.monitors[monitor_id] = monitor
+
+        logger.info(f"Monitor connected from {request.remote} (id: {monitor_id})")
+
+        # RTCPeerConnection作成（音声受信用）
+        config = RTCConfiguration(iceServers=self.ice_servers)
+        pc = RTCPeerConnection(configuration=config)
+        monitor.peer_connection = pc
+        self.pcs.add(pc)
+
+        @pc.on("connectionstatechange")
+        async def on_connectionstatechange():
+            logger.info(f"Monitor {monitor_id} connection state: {pc.connectionState}")
+            if pc.connectionState in ("failed", "closed"):
+                await pc.close()
+                self.pcs.discard(pc)
+
+        @pc.on("icecandidate")
+        async def on_icecandidate(candidate):
+            if candidate:
+                await ws.send_json({
+                    "type": "ice-candidate",
+                    "candidate": {
+                        "candidate": candidate.candidate,
+                        "sdpMid": candidate.sdpMid,
+                        "sdpMLineIndex": candidate.sdpMLineIndex
+                    }
+                })
+
+        # 初期設定送信
+        await ws.send_json({
+            "type": "config",
+            "iceServers": self.ice_servers_for_client,
+            "monitorId": monitor_id
+        })
+
+        # 初期状態送信
+        await ws.send_json(self.get_monitor_state())
+
+        # 状態定期配信タスク
+        async def send_state_periodically():
+            try:
+                while not ws.closed:
+                    await asyncio.sleep(1.0)
+                    if not ws.closed:
+                        await ws.send_json(self.get_monitor_state())
+            except Exception:
+                pass
+
+        state_task = asyncio.create_task(send_state_periodically())
+
+        try:
+            async for msg in ws:
+                if msg.type == WSMsgType.TEXT:
+                    data = msg.json()
+
+                    if data["type"] == "offer":
+                        # モニターからのOffer（音声受信用）
+                        offer = RTCSessionDescription(sdp=data["sdp"], type="offer")
+                        await pc.setRemoteDescription(offer)
+
+                        # マイクトラックを追加（モニターも音声を聴ける）
+                        mic_track = MicrophoneAudioTrack(DEVICE_INDEX, SAMPLE_RATE)
+                        self.mic_tracks.append(mic_track)
+                        pc.addTrack(mic_track)
+
+                        # Answer作成
+                        answer = await pc.createAnswer()
+                        await pc.setLocalDescription(answer)
+
+                        # ICE gathering完了を待つ
+                        while pc.iceGatheringState != "complete":
+                            await asyncio.sleep(0.1)
+
+                        await ws.send_json({
+                            "type": "answer",
+                            "sdp": pc.localDescription.sdp
+                        })
+                        logger.info(f"Monitor {monitor_id}: Answer sent")
+
+                elif msg.type == WSMsgType.ERROR:
+                    logger.error(f"Monitor WebSocket error: {ws.exception()}")
+
+        except Exception as e:
+            logger.error(f"Monitor WebSocket handler error: {e}")
+
+        finally:
+            state_task.cancel()
+            self.monitors.pop(monitor_id, None)
+            await pc.close()
+            self.pcs.discard(pc)
+            logger.info(f"Monitor disconnected (id: {monitor_id})")
+
+        return ws
 
     async def broadcast_ptt_status(self):
         """全クライアントにPTT状態を通知"""
