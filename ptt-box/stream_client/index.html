@@ -179,68 +179,299 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
+
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #0f3460;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 12px;
+            background: transparent !important;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 14px;
+            border-radius: 0;
+            margin: 0;
+            transition: color 0.2s;
+        }
+        .tab-btn:hover {
+            color: #aaa;
+            background: transparent !important;
+        }
+        .tab-btn.active {
+            color: #60efff;
+            border-bottom: 2px solid #60efff;
+            margin-bottom: -2px;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+
+        /* History List */
+        .history-list {
+            text-align: left;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .history-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            background: #0f3460;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+            gap: 12px;
+        }
+        .history-item:hover {
+            background: #1a4a7a;
+        }
+        .history-item.playing {
+            background: #1b4332;
+        }
+        .history-play-icon {
+            font-size: 16px;
+            color: #888;
+            flex-shrink: 0;
+            width: 24px;
+            text-align: center;
+        }
+        .history-item.playing .history-play-icon {
+            color: #e94560;
+        }
+        .history-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .history-datetime {
+            font-size: 12px;
+            color: #60efff;
+            margin-bottom: 4px;
+        }
+        .history-preview {
+            font-size: 13px;
+            color: #ccc;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .history-edit-btn {
+            padding: 6px 12px;
+            background: #3d405b;
+            border: none;
+            color: #aaa;
+            font-size: 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .history-edit-btn:hover {
+            background: #5c5f7e;
+            color: #fff;
+        }
+        .history-empty {
+            text-align: center;
+            color: #666;
+            padding: 40px 20px;
+        }
+        .history-loading {
+            text-align: center;
+            color: #888;
+            padding: 40px 20px;
+        }
+
+        /* Edit Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .modal-overlay.active {
+            display: flex;
+        }
+        .modal-content {
+            background: #16213e;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 600px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            border-bottom: 1px solid #0f3460;
+        }
+        .modal-title {
+            font-size: 16px;
+            font-weight: 500;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        .modal-body {
+            padding: 20px;
+            flex: 1;
+            overflow-y: auto;
+        }
+        .modal-textarea {
+            width: 100%;
+            height: 300px;
+            background: #0a0a15;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            color: #eee;
+            font-family: monospace;
+            font-size: 13px;
+            padding: 12px;
+            resize: vertical;
+        }
+        .modal-footer {
+            display: flex;
+            gap: 10px;
+            padding: 15px 20px;
+            border-top: 1px solid #0f3460;
+            justify-content: flex-end;
+        }
+        .modal-btn {
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .modal-btn-primary {
+            background: #60efff;
+            color: #1a1a2e;
+            border: none;
+        }
+        .modal-btn-secondary {
+            background: #3d405b;
+            color: #eee;
+            border: none;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Webトランシーバー</h1>
 
-        <!-- Connection Toggle -->
-        <button id="connectionToggle" class="connection-toggle disconnected" onclick="toggleConnection()">
-            <span class="connection-indicator"></span>
-            <span class="connection-text">未接続 - タップで接続</span>
-        </button>
-
-        <!-- Speaker Status -->
-        <div id="speakerStatus" class="speaker-status">
-            <div id="speakerIndicator" class="speaker-indicator"></div>
-            <span id="speakerName">待機中</span>
+        <!-- Tab Navigation -->
+        <div class="tab-nav">
+            <button class="tab-btn active" onclick="switchTab('transceiver')">トランシーバー</button>
+            <button class="tab-btn" onclick="switchTab('history')">履歴</button>
         </div>
 
-        <!-- PTT Button -->
-        <div class="ptt-container">
-            <button id="pttBtn" class="ptt-button"
-                    ontouchstart="pttStart(event)"
-                    ontouchend="pttEnd(event)"
-                    onmousedown="pttStart(event)"
-                    onmouseup="pttEnd(event)"
-                    onmouseleave="pttEnd(event)"
-                    disabled>
-                <span class="ptt-icon">🎙️</span>
-                <span class="ptt-label">押して話す</span>
+        <!-- Transceiver Tab -->
+        <div id="tab-transceiver" class="tab-content active">
+            <!-- Connection Toggle -->
+            <button id="connectionToggle" class="connection-toggle disconnected" onclick="toggleConnection()">
+                <span class="connection-indicator"></span>
+                <span class="connection-text">未接続 - タップで接続</span>
             </button>
+
+            <!-- Speaker Status -->
+            <div id="speakerStatus" class="speaker-status">
+                <div id="speakerIndicator" class="speaker-indicator"></div>
+                <span id="speakerName">待機中</span>
+            </div>
+
+            <!-- PTT Button -->
+            <div class="ptt-container">
+                <button id="pttBtn" class="ptt-button"
+                        ontouchstart="pttStart(event)"
+                        ontouchend="pttEnd(event)"
+                        onmousedown="pttStart(event)"
+                        onmouseup="pttEnd(event)"
+                        onmouseleave="pttEnd(event)"
+                        disabled>
+                    <span class="ptt-icon">🎙️</span>
+                    <span class="ptt-label">押して話す</span>
+                </button>
+            </div>
+
+            <audio id="audio" autoplay playsinline></audio>
+
+            <div style="margin-top: 20px; display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 20px;">🔈</span>
+                <input type="range" id="volumeSlider" min="0" max="100" value="40"
+                       style="flex: 1; height: 8px; cursor: pointer; accent-color: #60efff;"
+                       oninput="setVolume(this.value)">
+                <span id="volumeValue" style="min-width: 40px; text-align: right;">40%</span>
+            </div>
+
+            <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 20px;">🎤</span>
+                <input type="range" id="micGainSlider" min="50" max="300" value="100"
+                       style="flex: 1; height: 8px; cursor: pointer; accent-color: #27ae60;"
+                       oninput="setMicGain(this.value)">
+                <span id="micGainValue" style="min-width: 40px; text-align: right;">1.0x</span>
+            </div>
+
+            <div class="volume-meter">
+                <div id="volumeBar" class="volume-bar"></div>
+            </div>
+
+            <div style="margin-top: 15px;">
+                <button onclick="toggleDebug()" style="background: #333; padding: 8px 16px; font-size: 14px; width: 100%;">デバッグ表示</button>
+            </div>
+
+            <div id="debug" style="margin-top: 10px; font-size: 12px; color: #aaa; text-align: left; max-height: 200px; overflow-y: auto; background: #0a0a15; padding: 12px; border-radius: 6px; word-break: break-all; display: none;">
+            </div>
         </div>
 
-        <audio id="audio" autoplay playsinline></audio>
-
-        <div style="margin-top: 20px; display: flex; align-items: center; gap: 10px;">
-            <span style="font-size: 20px;">🔈</span>
-            <input type="range" id="volumeSlider" min="0" max="100" value="40"
-                   style="flex: 1; height: 8px; cursor: pointer; accent-color: #60efff;"
-                   oninput="setVolume(this.value)">
-            <span id="volumeValue" style="min-width: 40px; text-align: right;">40%</span>
+        <!-- History Tab -->
+        <div id="tab-history" class="tab-content">
+            <div id="historyList" class="history-list">
+                <div class="history-loading">読み込み中...</div>
+            </div>
+            <audio id="historyAudio" style="display: none;"></audio>
         </div>
+    </div>
 
-        <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px;">
-            <span style="font-size: 20px;">🎤</span>
-            <input type="range" id="micGainSlider" min="50" max="300" value="100"
-                   style="flex: 1; height: 8px; cursor: pointer; accent-color: #27ae60;"
-                   oninput="setMicGain(this.value)">
-            <span id="micGainValue" style="min-width: 40px; text-align: right;">1.0x</span>
-        </div>
-
-        <div class="volume-meter">
-            <div id="volumeBar" class="volume-bar"></div>
-        </div>
-
-        <div style="margin-top: 15px;">
-            <button onclick="toggleDebug()" style="background: #333; padding: 8px 16px; font-size: 14px; width: 100%;">デバッグ表示</button>
-        </div>
-
-        <div id="debug" style="margin-top: 10px; font-size: 12px; color: #aaa; text-align: left; max-height: 200px; overflow-y: auto; background: #0a0a15; padding: 12px; border-radius: 6px; word-break: break-all; display: none;">
+    <!-- Edit Modal -->
+    <div id="editModal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-title">SRT編集</span>
+                <button class="modal-close" onclick="closeEditor()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <audio id="editAudioPlayer" controls style="width: 100%; margin-bottom: 15px;"></audio>
+                <textarea id="editTextarea" class="modal-textarea"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn modal-btn-secondary" onclick="closeEditor()">キャンセル</button>
+                <button class="modal-btn modal-btn-primary" onclick="saveSrt()">保存</button>
+            </div>
         </div>
     </div>
 
     <script src="js/stream.js"></script>
+    <script src="js/history.js"></script>
 </body>
 </html>

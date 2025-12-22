@@ -11,7 +11,10 @@ import asyncio
 import logging
 import time
 import uuid
+import re
+import shutil
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from fractions import Fraction
 from typing import Optional
@@ -67,6 +70,10 @@ PTT_TIMEOUT = float(os.environ.get("PTT_TIMEOUT", "30.0"))  # 最大送信時間
 
 # クライアントHTMLのパス
 CLIENT_DIR = Path(__file__).parent / "stream_client"
+
+# 録音ファイルのパス
+RECORDINGS_DIR = Path(os.environ.get("RECORDINGS_DIR", Path(__file__).parent / "recordings"))
+HISTORY_DIR = RECORDINGS_DIR / "history"
 
 
 # ========== PTT管理 ==========
@@ -261,6 +268,12 @@ class StreamServer:
         self.app.router.add_get('/ws/monitor', self.handle_monitor_websocket)
         self.app.router.add_static('/js', CLIENT_DIR / 'js')
 
+        # SRT API
+        self.app.router.add_get('/api/srt/list', self.handle_srt_list)
+        self.app.router.add_get('/api/srt/get', self.handle_srt_get)
+        self.app.router.add_post('/api/srt/save', self.handle_srt_save)
+        self.app.router.add_get('/api/audio', self.handle_audio)
+
         # シャットダウン時のクリーンアップ
         self.app.on_shutdown.append(self.on_shutdown)
 
@@ -271,6 +284,216 @@ class StreamServer:
     async def handle_monitor_page(self, request):
         """monitor.html配信"""
         return web.FileResponse(CLIENT_DIR / 'monitor.html')
+
+    # ========== SRT API ==========
+
+    def _extract_datetime_from_filename(self, filename: str) -> Optional[str]:
+        """ファイル名から日時を抽出 (rec_YYYYMMDD_HHMMSS.srt -> YYYY-MM-DD HH:MM:SS)"""
+        basename = Path(filename).stem
+        match = re.match(r'rec_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})', basename)
+        if match:
+            return f"{match[1]}-{match[2]}-{match[3]} {match[4]}:{match[5]}:{match[6]}"
+        return None
+
+    def _format_short_datetime(self, datetime_str: Optional[str]) -> str:
+        """日時を短縮フォーマット (MM/DD HH:MM)"""
+        if not datetime_str:
+            return "-"
+        match = re.match(r'\d{4}-(\d{2})-(\d{2}) (\d{2}):(\d{2}):\d{2}', datetime_str)
+        if match:
+            return f"{match[1]}/{match[2]} {match[3]}:{match[4]}"
+        return datetime_str
+
+    def _parse_srt(self, content: str) -> list:
+        """SRTファイルをパース"""
+        if not content.strip():
+            return []
+
+        segments = []
+        blocks = re.split(r'\n\n+', content.strip())
+
+        for block in blocks:
+            lines = block.strip().split('\n')
+            if len(lines) < 3:
+                continue
+
+            # 1行目: インデックス番号
+            try:
+                index = int(lines[0])
+            except ValueError:
+                continue
+
+            # 2行目: タイムスタンプ
+            time_match = re.match(
+                r'(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})',
+                lines[1]
+            )
+            if not time_match:
+                continue
+
+            # 3行目以降: テキスト
+            text = '\n'.join(lines[2:])
+
+            segments.append({
+                'index': index,
+                'start': time_match[1],
+                'end': time_match[2],
+                'text': text
+            })
+
+        return segments
+
+    def _get_preview(self, filename: str, max_length: int = 100) -> str:
+        """SRTファイルのプレビューテキストを取得"""
+        try:
+            content = (RECORDINGS_DIR / filename).read_text(encoding='utf-8')
+            segments = self._parse_srt(content)
+            if not segments:
+                return ""
+
+            full_text = ' '.join(seg['text'] for seg in segments)
+            if len(full_text) > max_length:
+                return full_text[:max_length] + '...'
+            return full_text
+        except Exception:
+            return ""
+
+    async def handle_srt_list(self, request):
+        """SRTファイル一覧"""
+        try:
+            files = []
+            srt_files = sorted(RECORDINGS_DIR.glob('*.srt'), reverse=True)[:100]
+
+            for srt_path in srt_files:
+                filename = srt_path.name
+                datetime_str = self._extract_datetime_from_filename(filename)
+                wav_file = srt_path.stem + '.wav'
+
+                files.append({
+                    'filename': filename,
+                    'datetime': datetime_str,
+                    'datetimeShort': self._format_short_datetime(datetime_str),
+                    'wavFile': wav_file,
+                    'preview': self._get_preview(filename)
+                })
+
+            return web.json_response({'success': True, 'files': files})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)}, status=400)
+
+    async def handle_srt_get(self, request):
+        """SRT内容取得"""
+        try:
+            filename = request.query.get('file', '')
+            if not filename:
+                raise ValueError('File parameter is required')
+
+            # セキュリティ: ディレクトリトラバーサル防止
+            filename = Path(filename).name
+            srt_path = RECORDINGS_DIR / filename
+
+            if not srt_path.exists():
+                raise FileNotFoundError(f'File not found: {filename}')
+
+            content = srt_path.read_text(encoding='utf-8')
+            segments = self._parse_srt(content)
+            wav_file = srt_path.stem + '.wav'
+
+            return web.json_response({
+                'success': True,
+                'file': {
+                    'filename': filename,
+                    'datetime': self._extract_datetime_from_filename(filename),
+                    'content': content,
+                    'segments': segments,
+                    'wavFile': wav_file
+                }
+            })
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)}, status=400)
+
+    async def handle_srt_save(self, request):
+        """SRT保存"""
+        try:
+            data = await request.json()
+            filename = data.get('file', '')
+            content = data.get('content', '')
+
+            if not filename:
+                raise ValueError('File parameter is required')
+            if not content:
+                raise ValueError('Content parameter is required')
+
+            # セキュリティ: ディレクトリトラバーサル防止
+            filename = Path(filename).name
+            srt_path = RECORDINGS_DIR / filename
+
+            # バックアップ作成
+            if srt_path.exists():
+                HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+                backup_path = HISTORY_DIR / f"{filename}.{timestamp}"
+                shutil.copy2(srt_path, backup_path)
+
+            # 保存
+            srt_path.write_text(content, encoding='utf-8')
+
+            return web.json_response({'success': True, 'message': 'Saved successfully'})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)}, status=400)
+
+    async def handle_audio(self, request):
+        """WAVファイル配信（Range対応）"""
+        try:
+            filename = request.query.get('file', '')
+            if not filename:
+                raise ValueError('File parameter is required')
+
+            # セキュリティ: ディレクトリトラバーサル防止、WAVファイルのみ許可
+            filename = Path(filename).name
+            if not re.match(r'^[\w\-]+\.wav$', filename, re.IGNORECASE):
+                raise ValueError('Invalid file name')
+
+            wav_path = RECORDINGS_DIR / filename
+            if not wav_path.exists():
+                raise FileNotFoundError('File not found')
+
+            file_size = wav_path.stat().st_size
+
+            # Range リクエスト対応
+            range_header = request.headers.get('Range', '')
+            if range_header:
+                match = re.match(r'bytes=(\d+)-(\d*)', range_header)
+                if match:
+                    start = int(match[1])
+                    end = int(match[2]) if match[2] else file_size - 1
+                    length = end - start + 1
+
+                    with open(wav_path, 'rb') as f:
+                        f.seek(start)
+                        data = f.read(length)
+
+                    return web.Response(
+                        body=data,
+                        status=206,
+                        headers={
+                            'Content-Type': 'audio/wav',
+                            'Content-Length': str(length),
+                            'Content-Range': f'bytes {start}-{end}/{file_size}',
+                            'Accept-Ranges': 'bytes'
+                        }
+                    )
+
+            # 通常リクエスト
+            return web.FileResponse(
+                wav_path,
+                headers={
+                    'Content-Type': 'audio/wav',
+                    'Accept-Ranges': 'bytes'
+                }
+            )
+        except Exception as e:
+            return web.Response(text=str(e), status=400)
 
     def get_monitor_state(self) -> dict:
         """モニター用のシステム状態を取得"""
