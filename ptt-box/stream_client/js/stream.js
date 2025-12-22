@@ -624,20 +624,27 @@ function enablePttButton(enabled) {
 
 // PTTボタン押下開始
 let pttButtonPressed = false;  // ボタンが物理的に押されているか
+let pttDebounceTimer = null;   // デバウンス用タイマー
+const PTT_DEBOUNCE_MS = 100;   // デバウンス時間
 
 function pttStart(event) {
     event.preventDefault();
     event.stopPropagation();
+
+    // デバウンス中は無視
+    if (pttDebounceTimer) return;
 
     if (pttButtonPressed) return;  // 既に押されている
     pttButtonPressed = true;
 
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         debugLog('WebSocket not connected');
+        pttButtonPressed = false;
         return;
     }
     if (!micAccessGranted) {
         debugLog('Microphone not available');
+        pttButtonPressed = false;
         return;
     }
 
@@ -652,6 +659,11 @@ function pttEnd(event) {
 
     if (!pttButtonPressed) return;  // 押されていない
     pttButtonPressed = false;
+
+    // デバウンス: 短時間での再押下を防ぐ
+    pttDebounceTimer = setTimeout(() => {
+        pttDebounceTimer = null;
+    }, PTT_DEBOUNCE_MS);
 
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (!isPttActive) return;  // 送信権を持っていない
