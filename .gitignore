@@ -27,3 +27,7 @@ ptt-box/recordings/history/
 
 # Windows reserved name (accidentally created)
 nul
+
+# Node.js
+node_modules/
+package-lock.json

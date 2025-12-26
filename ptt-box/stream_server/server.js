@@ -1,0 +1,922 @@
+/**
+ * Stream Server (Node.js版)
+ *
+ * Webトランシーバーサーバー
+ * - 静的ファイル配信
+ * - WebSocketシグナリング
+ * - PTT状態管理
+ * - P2Pシグナリング中継
+ * - PCマイク入力 → P2P送信
+ * - P2P受信 → スピーカー出力
+ */
+
+require('dotenv').config();
+const express = require('express');
+const http = require('http');
+const path = require('path');
+const WebSocket = require('ws');
+const { spawn } = require('child_process');
+const { v4: uuidv4 } = require('uuid');
+const {
+    RTCPeerConnection,
+    RTCSessionDescription,
+    RTCIceCandidate,
+    useAbsSendTime,
+    useSdesMid,
+    MediaStreamTrack,
+} = require('werift');
+
+// 設定
+const HTTP_PORT = parseInt(process.env.HTTP_PORT) || 9320;
+const PTT_TIMEOUT = parseInt(process.env.PTT_TIMEOUT) || 300000;  // 5分（0で無効化）
+const STUN_SERVER = process.env.STUN_SERVER || 'stun:stun.l.google.com:19302';
+const MIC_DEVICE = process.env.MIC_DEVICE || 'CABLE Output (VB-Audio Virtual Cable)';
+const ENABLE_LOCAL_AUDIO = process.env.ENABLE_LOCAL_AUDIO !== 'false';  // デフォルト有効
+const ENABLE_SERVER_MIC = process.env.ENABLE_SERVER_MIC !== 'false';  // デフォルト有効
+
+// 音声設定
+const SAMPLE_RATE = 48000;
+const CHANNELS = 1;
+const FRAME_DURATION_MS = 20;
+const OPUS_PAYLOAD_TYPE = 111;
+const OUTPUT_GAIN_DB = 6;  // 6dB boost
+
+// ICE設定
+const iceServers = [{ urls: STUN_SERVER }];
+
+// ========== PTT Manager ==========
+class PTTManager {
+    constructor() {
+        this.currentSpeaker = null;
+        this.speakerStartTime = null;
+        this.maxTransmitTime = PTT_TIMEOUT;
+    }
+
+    requestFloor(clientId) {
+        if (this.currentSpeaker === null) {
+            this.currentSpeaker = clientId;
+            this.speakerStartTime = Date.now();
+            return true;
+        }
+        return false;
+    }
+
+    releaseFloor(clientId) {
+        if (this.currentSpeaker === clientId) {
+            this.currentSpeaker = null;
+            this.speakerStartTime = null;
+            return true;
+        }
+        return false;
+    }
+
+    checkTimeout() {
+        // タイムアウト0は無効化
+        if (this.maxTransmitTime <= 0) return null;
+
+        if (this.currentSpeaker && this.speakerStartTime) {
+            const elapsed = Date.now() - this.speakerStartTime;
+            if (elapsed > this.maxTransmitTime) {
+                const timedOutSpeaker = this.currentSpeaker;
+                this.currentSpeaker = null;
+                this.speakerStartTime = null;
+                return timedOutSpeaker;
+            }
+        }
+        return null;
+    }
+
+    getState() {
+        return this.currentSpeaker ? 'transmitting' : 'idle';
+    }
+}
+
+// ========== Client Connection ==========
+class ClientConnection {
+    constructor(clientId, ws, displayName) {
+        this.clientId = clientId;
+        this.ws = ws;
+        this.displayName = displayName;
+        this.pc = null;  // RTCPeerConnection
+    }
+
+    send(data) {
+        if (this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify(data));
+        }
+    }
+}
+
+// ========== Server ==========
+class StreamServer {
+    constructor() {
+        this.clients = new Map();  // clientId -> ClientConnection
+        this.pttManager = new PTTManager();
+
+        // P2P接続（サーバーがクライアントとして参加）
+        this.p2pConnections = new Map();  // clientId -> { pc, audioTrack }
+        this.serverClientId = 'server';
+
+        // 音声入力（マイク）
+        this.ffmpegProcess = null;
+        this.rtpSequence = 0;
+        this.rtpTimestamp = 0;
+        this.rtpSsrc = Math.floor(Math.random() * 0xFFFFFFFF);
+
+        // 音声出力（スピーカー）
+        this.ffplayProcess = null;
+        this.oggInitialized = false;
+        this.oggPageSequence = 0;
+        this.oggGranulePos = 0;
+        this.oggSerial = 0x12345678;
+
+        // Express設定
+        this.app = express();
+        this.server = http.createServer(this.app);
+
+        // 静的ファイル配信
+        const clientPath = path.join(__dirname, '..', 'stream_client');
+        this.app.use(express.static(clientPath));
+        log(`Static files: ${clientPath}`);
+
+        // WebSocket設定
+        this.wss = new WebSocket.Server({ server: this.server, path: '/ws' });
+        this.wss.on('connection', (ws) => this.handleConnection(ws));
+
+        // PTTタイムアウトチェッカー
+        setInterval(() => this.checkPttTimeout(), 1000);
+    }
+
+    start() {
+        this.server.listen(HTTP_PORT, () => {
+            log(`Server started on http://localhost:${HTTP_PORT}`);
+        });
+    }
+
+    // 新規接続
+    async handleConnection(ws) {
+        const clientId = uuidv4().substring(0, 8);
+        const displayName = `Client-${clientId.substring(0, 4)}`;
+        const client = new ClientConnection(clientId, ws, displayName);
+        this.clients.set(clientId, client);
+
+        log(`Client connected: ${displayName} (${clientId})`);
+
+        // config送信
+        client.send({
+            type: 'config',
+            clientId: clientId,
+            iceServers: iceServers
+        });
+
+        // メッセージハンドラ
+        ws.on('message', async (data) => {
+            try {
+                const msg = JSON.parse(data.toString());
+                await this.handleMessage(client, msg);
+            } catch (e) {
+                logError(`Message error: ${e.message}`);
+            }
+        });
+
+        // 切断ハンドラ
+        ws.on('close', () => {
+            this.handleDisconnect(client);
+        });
+
+        ws.on('error', (err) => {
+            logError(`WebSocket error: ${err.message}`);
+        });
+    }
+
+    // メッセージ処理
+    async handleMessage(client, msg) {
+        switch (msg.type) {
+            case 'offer':
+                await this.handleOffer(client, msg.sdp);
+                break;
+
+            case 'ice-candidate':
+                await this.handleIceCandidate(client, msg.candidate);
+                break;
+
+            case 'ptt_request':
+                this.handlePttRequest(client);
+                break;
+
+            case 'ptt_release':
+                this.handlePttRelease(client);
+                break;
+
+            case 'set_display_name':
+                client.displayName = msg.displayName || client.displayName;
+                break;
+
+            // P2Pシグナリング中継
+            case 'p2p_offer':
+                this.relayP2PMessage(client, msg);
+                break;
+
+            case 'p2p_answer':
+                // サーバー宛てのP2P Answerか確認
+                if (msg.to === this.serverClientId) {
+                    await this.handleP2PAnswer(client, msg.sdp);
+                } else {
+                    this.relayP2PMessage(client, msg);
+                }
+                break;
+
+            case 'p2p_ice_candidate':
+                // サーバー宛てのICE候補か確認
+                if (msg.to === this.serverClientId) {
+                    await this.handleP2PIceCandidate(client, msg.candidate);
+                } else {
+                    this.relayP2PMessage(client, msg);
+                }
+                break;
+        }
+    }
+
+    // WebRTC Offer処理
+    async handleOffer(client, sdp) {
+        const config = {
+            iceServers: iceServers.map(s => ({ urls: s.urls })),
+            headerExtensions: {
+                audio: [useSdesMid(), useAbsSendTime()]
+            }
+        };
+
+        client.pc = new RTCPeerConnection(config);
+
+        client.pc.onconnectionstatechange = () => {
+            log(`${client.displayName}: connection state = ${client.pc.connectionState}`);
+
+            if (client.pc.connectionState === 'connected') {
+                // 接続完了後にclient_list送信
+                this.sendClientList(client);
+                this.broadcastClientJoined(client);
+
+                // サーバーからクライアントへのP2P接続を確立
+                if (ENABLE_LOCAL_AUDIO) {
+                    this.createP2PToClient(client);
+                }
+            }
+        };
+
+        // ICE候補をクライアントに送信
+        client.pc.onicecandidate = (candidate) => {
+            if (candidate) {
+                client.send({
+                    type: 'ice-candidate',
+                    candidate: {
+                        candidate: candidate.candidate,
+                        sdpMid: candidate.sdpMid,
+                        sdpMLineIndex: candidate.sdpMLineIndex
+                    }
+                });
+            }
+        };
+
+        // 受信用トランシーバー
+        client.pc.addTransceiver('audio', { direction: 'recvonly' });
+
+        await client.pc.setRemoteDescription(new RTCSessionDescription(sdp, 'offer'));
+        const answer = await client.pc.createAnswer();
+        await client.pc.setLocalDescription(answer);
+
+        client.send({
+            type: 'answer',
+            sdp: client.pc.localDescription.sdp
+        });
+    }
+
+    // ICE候補処理
+    async handleIceCandidate(client, candidate) {
+        if (client.pc && candidate) {
+            try {
+                await client.pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (e) {
+                // Ignore
+            }
+        }
+    }
+
+    // PTTリクエスト
+    handlePttRequest(client) {
+        if (this.pttManager.requestFloor(client.clientId)) {
+            client.send({ type: 'ptt_granted' });
+            log(`PTT granted to ${client.displayName}`);
+            this.broadcastPttStatus();
+
+            // クライアントからの音声受信のためスピーカー開始
+            if (ENABLE_LOCAL_AUDIO) {
+                this.startSpeakerOutput();
+            }
+        } else {
+            const speaker = this.clients.get(this.pttManager.currentSpeaker);
+            client.send({
+                type: 'ptt_denied',
+                speaker: this.pttManager.currentSpeaker,
+                speakerName: speaker ? speaker.displayName : 'Unknown'
+            });
+        }
+    }
+
+    // PTTリリース
+    handlePttRelease(client) {
+        if (this.pttManager.releaseFloor(client.clientId)) {
+            log(`PTT released by ${client.displayName}`);
+            this.broadcastPttStatus();
+
+            // スピーカー停止
+            if (ENABLE_LOCAL_AUDIO) {
+                this.stopSpeakerOutput();
+            }
+        }
+    }
+
+    // P2Pメッセージ中継
+    relayP2PMessage(from, msg) {
+        const target = this.clients.get(msg.to);
+        if (target) {
+            target.send({
+                type: msg.type,
+                from: from.clientId,
+                sdp: msg.sdp,
+                candidate: msg.candidate
+            });
+        }
+    }
+
+    // 切断処理
+    handleDisconnect(client) {
+        log(`Client disconnected: ${client.displayName}`);
+
+        // PTT解放
+        this.pttManager.releaseFloor(client.clientId);
+
+        // WebRTC接続クローズ
+        if (client.pc) {
+            client.pc.close();
+        }
+
+        // クライアント削除
+        this.clients.delete(client.clientId);
+
+        // 他クライアントに通知
+        this.broadcastClientLeft(client);
+        this.broadcastPttStatus();
+    }
+
+    // PTTタイムアウトチェック
+    checkPttTimeout() {
+        const timedOut = this.pttManager.checkTimeout();
+        if (timedOut) {
+            log(`PTT timeout: ${timedOut}`);
+            this.broadcastPttStatus();
+
+            // スピーカー停止
+            if (ENABLE_LOCAL_AUDIO) {
+                this.stopSpeakerOutput();
+            }
+        }
+    }
+
+    // ========== ブロードキャスト ==========
+
+    broadcastPttStatus() {
+        let speakerName = null;
+        if (this.pttManager.currentSpeaker === this.serverClientId) {
+            speakerName = 'Server (PC Mic)';
+        } else {
+            const speaker = this.clients.get(this.pttManager.currentSpeaker);
+            speakerName = speaker ? speaker.displayName : null;
+        }
+
+        const msg = {
+            type: 'ptt_status',
+            state: this.pttManager.getState(),
+            speaker: this.pttManager.currentSpeaker,
+            speakerName: speakerName
+        };
+
+        for (const client of this.clients.values()) {
+            client.send(msg);
+        }
+    }
+
+    sendClientList(client) {
+        const clients = [];
+        for (const c of this.clients.values()) {
+            if (c.clientId !== client.clientId) {
+                clients.push({
+                    clientId: c.clientId,
+                    displayName: c.displayName
+                });
+            }
+        }
+        client.send({
+            type: 'client_list',
+            clients: clients
+        });
+    }
+
+    broadcastClientJoined(newClient) {
+        const msg = {
+            type: 'client_joined',
+            clientId: newClient.clientId,
+            displayName: newClient.displayName
+        };
+
+        for (const client of this.clients.values()) {
+            if (client.clientId !== newClient.clientId) {
+                client.send(msg);
+            }
+        }
+    }
+
+    broadcastClientLeft(leftClient) {
+        const msg = {
+            type: 'client_left',
+            clientId: leftClient.clientId
+        };
+
+        for (const client of this.clients.values()) {
+            client.send(msg);
+        }
+    }
+
+    // ========== P2P接続（サーバー↔クライアント）==========
+
+    async createP2PToClient(client) {
+        log(`Creating P2P connection to ${client.displayName}`);
+
+        const config = {
+            iceServers: iceServers.map(s => ({ urls: s.urls })),
+            headerExtensions: {
+                audio: [useSdesMid(), useAbsSendTime()]
+            }
+        };
+
+        const p2pPc = new RTCPeerConnection(config);
+
+        const connInfo = {
+            pc: p2pPc,
+            audioTrack: null,
+            pendingCandidates: [],
+            remoteDescriptionSet: false,
+            receivedFrameCount: 0
+        };
+        this.p2pConnections.set(client.clientId, connInfo);
+
+        // 接続状態
+        p2pPc.onconnectionstatechange = () => {
+            log(`P2P to ${client.displayName}: ${p2pPc.connectionState}`);
+            if (p2pPc.connectionState === 'failed' || p2pPc.connectionState === 'closed') {
+                this.p2pConnections.delete(client.clientId);
+            }
+        };
+
+        // ICE候補
+        p2pPc.onicecandidate = (candidate) => {
+            if (candidate) {
+                client.send({
+                    type: 'p2p_ice_candidate',
+                    from: this.serverClientId,
+                    candidate: {
+                        candidate: candidate.candidate,
+                        sdpMid: candidate.sdpMid,
+                        sdpMLineIndex: candidate.sdpMLineIndex
+                    }
+                });
+            }
+        };
+
+        // 音声受信（クライアントからの音声）
+        p2pPc.ontrack = (event) => {
+            log(`P2P received track from ${client.displayName}`);
+            const track = event.track;
+
+            track.onReceiveRtp.subscribe((rtp) => {
+                // PTTがreceivingの時のみ音声出力
+                const pttState = this.pttManager.getState();
+                if (pttState !== 'transmitting') return;
+                if (this.pttManager.currentSpeaker !== client.clientId) return;
+
+                connInfo.receivedFrameCount++;
+                if (connInfo.receivedFrameCount <= 3 || connInfo.receivedFrameCount % 100 === 0) {
+                    log(`Received audio from ${client.displayName}: frame ${connInfo.receivedFrameCount}`);
+                }
+
+                this.sendOpusToSpeaker(rtp.payload);
+            });
+        };
+
+        // 送信用トラック追加
+        const audioTrack = new MediaStreamTrack({ kind: 'audio' });
+        connInfo.audioTrack = audioTrack;
+        p2pPc.addTrack(audioTrack);
+
+        // Offer作成
+        const offer = await p2pPc.createOffer();
+        await p2pPc.setLocalDescription(offer);
+
+        // ICE gathering待機
+        await this.waitForIceGathering(p2pPc);
+
+        // Offer送信
+        client.send({
+            type: 'p2p_offer',
+            from: this.serverClientId,
+            sdp: p2pPc.localDescription.sdp
+        });
+    }
+
+    async handleP2PAnswer(client, sdp) {
+        const connInfo = this.p2pConnections.get(client.clientId);
+        if (!connInfo) return;
+
+        await connInfo.pc.setRemoteDescription(new RTCSessionDescription(sdp, 'answer'));
+        connInfo.remoteDescriptionSet = true;
+
+        for (const candidate of connInfo.pendingCandidates) {
+            try {
+                await connInfo.pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (e) {}
+        }
+        connInfo.pendingCandidates = [];
+
+        log(`P2P established with ${client.displayName}`);
+    }
+
+    async handleP2PIceCandidate(client, candidate) {
+        const connInfo = this.p2pConnections.get(client.clientId);
+        if (!connInfo) return;
+
+        const iceCandidate = {
+            candidate: candidate.candidate,
+            sdpMid: candidate.sdpMid,
+            sdpMLineIndex: candidate.sdpMLineIndex
+        };
+
+        if (connInfo.remoteDescriptionSet) {
+            try {
+                await connInfo.pc.addIceCandidate(new RTCIceCandidate(iceCandidate));
+            } catch (e) {}
+        } else {
+            connInfo.pendingCandidates.push(iceCandidate);
+        }
+    }
+
+    waitForIceGathering(pc, timeout = 5000) {
+        return new Promise((resolve) => {
+            if (pc.iceGatheringState === 'complete') {
+                resolve();
+                return;
+            }
+
+            const timer = setTimeout(() => resolve(), timeout);
+
+            pc.onicegatheringstatechange = () => {
+                if (pc.iceGatheringState === 'complete') {
+                    clearTimeout(timer);
+                    resolve();
+                }
+            };
+        });
+    }
+
+    // ========== マイク入力（送信）==========
+
+    startMicCapture() {
+        if (this.ffmpegProcess) return;
+
+        log(`Starting mic capture: ${MIC_DEVICE}`);
+
+        this.ffmpegProcess = spawn('ffmpeg', [
+            '-f', 'dshow',
+            '-i', `audio=${MIC_DEVICE}`,
+            '-ac', String(CHANNELS),
+            '-ar', String(SAMPLE_RATE),
+            '-c:a', 'libopus',
+            '-b:a', '24k',
+            '-frame_duration', String(FRAME_DURATION_MS),
+            '-application', 'voip',
+            '-vbr', 'off',
+            '-page_duration', '20000',
+            '-flush_packets', '1',
+            '-f', 'ogg',
+            'pipe:1'
+        ], {
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        this.ffmpegProcess.on('error', (err) => {
+            logError(`FFmpeg error: ${err.message}`);
+            this.ffmpegProcess = null;
+        });
+
+        this.ffmpegProcess.on('close', (code) => {
+            log(`FFmpeg closed with code ${code}`);
+            this.ffmpegProcess = null;
+        });
+
+        this.parseOggStream(this.ffmpegProcess.stdout);
+    }
+
+    stopMicCapture() {
+        if (this.ffmpegProcess) {
+            this.ffmpegProcess.kill();
+            this.ffmpegProcess = null;
+            log('Mic capture stopped');
+        }
+    }
+
+    parseOggStream(stream) {
+        let buffer = Buffer.alloc(0);
+        let headersParsed = false;
+
+        stream.on('data', (chunk) => {
+            buffer = Buffer.concat([buffer, chunk]);
+
+            while (buffer.length >= 27) {
+                if (buffer.toString('ascii', 0, 4) !== 'OggS') {
+                    buffer = buffer.slice(1);
+                    continue;
+                }
+
+                const numSegments = buffer.readUInt8(26);
+                if (buffer.length < 27 + numSegments) break;
+
+                let payloadSize = 0;
+                for (let i = 0; i < numSegments; i++) {
+                    payloadSize += buffer.readUInt8(27 + i);
+                }
+
+                const pageSize = 27 + numSegments + payloadSize;
+                if (buffer.length < pageSize) break;
+
+                const payload = buffer.slice(27 + numSegments, pageSize);
+
+                if (!headersParsed) {
+                    if (payload.toString('ascii', 0, 8) === 'OpusHead' ||
+                        payload.toString('ascii', 0, 8) === 'OpusTags') {
+                        // Skip headers
+                    } else {
+                        headersParsed = true;
+                        this.sendOpusToClients(payload);
+                    }
+                } else {
+                    this.sendOpusToClients(payload);
+                }
+
+                buffer = buffer.slice(pageSize);
+            }
+        });
+    }
+
+    createRtpBuffer(payload) {
+        const seq = this.rtpSequence++ & 0xFFFF;
+        const ts = this.rtpTimestamp >>> 0;
+
+        const header = Buffer.alloc(12);
+        header.writeUInt8(0x80, 0);
+        header.writeUInt8(OPUS_PAYLOAD_TYPE, 1);
+        header.writeUInt16BE(seq, 2);
+        header.writeUInt32BE(ts, 4);
+        header.writeUInt32BE(this.rtpSsrc, 8);
+
+        this.rtpTimestamp += 960;
+
+        return Buffer.concat([header, payload]);
+    }
+
+    sendOpusToClients(opusData) {
+        if (opusData.length === 0) return;
+
+        const rtpBuffer = this.createRtpBuffer(opusData);
+
+        for (const [clientId, connInfo] of this.p2pConnections) {
+            if (connInfo.audioTrack && connInfo.pc.connectionState === 'connected') {
+                try {
+                    connInfo.audioTrack.writeRtp(rtpBuffer);
+                } catch (e) {}
+            }
+        }
+    }
+
+    // ========== スピーカー出力（受信）==========
+
+    startSpeakerOutput() {
+        if (this.ffplayProcess) return;
+
+        this.ffplayProcess = spawn('ffplay', [
+            '-f', 'ogg',
+            '-i', 'pipe:0',
+            '-nodisp',
+            '-autoexit',
+            '-loglevel', 'error'
+        ], {
+            stdio: ['pipe', 'ignore', 'pipe']
+        });
+
+        this.ffplayProcess.on('error', (err) => {
+            logError(`FFplay error: ${err.message}`);
+            this.ffplayProcess = null;
+        });
+
+        this.ffplayProcess.on('close', (code) => {
+            log(`FFplay closed`);
+            this.ffplayProcess = null;
+            this.oggInitialized = false;
+            this.oggPageSequence = 0;
+            this.oggGranulePos = 0;
+        });
+
+        log('Speaker output started');
+    }
+
+    stopSpeakerOutput() {
+        if (this.ffplayProcess) {
+            try {
+                this.ffplayProcess.stdin.end();
+                this.ffplayProcess.kill();
+            } catch (e) {}
+            this.ffplayProcess = null;
+        }
+        this.oggInitialized = false;
+        this.oggPageSequence = 0;
+        this.oggGranulePos = 0;
+    }
+
+    sendOpusToSpeaker(opusPayload) {
+        if (!this.ffplayProcess || !this.ffplayProcess.stdin.writable) return;
+
+        try {
+            if (!this.oggInitialized) {
+                // OpusHead
+                const idHeader = this.createOpusIdHeader();
+                const idPage = this.createOggPage(idHeader, 0x02, 0);
+                this.ffplayProcess.stdin.write(idPage);
+
+                // OpusTags
+                const commentHeader = this.createOpusCommentHeader();
+                const commentPage = this.createOggPage(commentHeader, 0, 0);
+                this.ffplayProcess.stdin.write(commentPage);
+
+                this.oggInitialized = true;
+            }
+
+            this.oggGranulePos += 960;
+            const dataPage = this.createOggPage(opusPayload, 0, this.oggGranulePos);
+            this.ffplayProcess.stdin.write(dataPage);
+        } catch (e) {}
+    }
+
+    createOpusIdHeader() {
+        const header = Buffer.alloc(19);
+        header.write('OpusHead', 0);
+        header.writeUInt8(1, 8);
+        header.writeUInt8(CHANNELS, 9);
+        header.writeUInt16LE(0, 10);
+        header.writeUInt32LE(SAMPLE_RATE, 12);
+        header.writeInt16LE(OUTPUT_GAIN_DB * 256, 16);
+        header.writeUInt8(0, 18);
+        return header;
+    }
+
+    createOpusCommentHeader() {
+        const vendor = 'stream_server';
+        const header = Buffer.alloc(8 + 4 + vendor.length + 4);
+        header.write('OpusTags', 0);
+        header.writeUInt32LE(vendor.length, 8);
+        header.write(vendor, 12);
+        header.writeUInt32LE(0, 12 + vendor.length);
+        return header;
+    }
+
+    createOggPage(payload, headerType, granulePos) {
+        const segmentCount = Math.ceil(payload.length / 255) || 1;
+        const segmentTable = [];
+        let remaining = payload.length;
+        for (let i = 0; i < segmentCount; i++) {
+            const size = Math.min(remaining, 255);
+            segmentTable.push(size);
+            remaining -= size;
+        }
+
+        const headerSize = 27 + segmentTable.length;
+        const page = Buffer.alloc(headerSize + payload.length);
+
+        page.write('OggS', 0);
+        page.writeUInt8(0, 4);
+        page.writeUInt8(headerType, 5);
+        page.writeBigUInt64LE(BigInt(granulePos), 6);
+        page.writeUInt32LE(this.oggSerial, 14);
+        page.writeUInt32LE(this.oggPageSequence++, 18);
+        page.writeUInt32LE(0, 22);
+        page.writeUInt8(segmentTable.length, 26);
+
+        for (let i = 0; i < segmentTable.length; i++) {
+            page.writeUInt8(segmentTable[i], 27 + i);
+        }
+
+        payload.copy(page, headerSize);
+
+        const crc = this.crc32Ogg(page);
+        page.writeUInt32LE(crc, 22);
+
+        return page;
+    }
+
+    crc32Ogg(data) {
+        const table = StreamServer.crcTable;
+        let crc = 0;
+        for (let i = 0; i < data.length; i++) {
+            crc = ((crc << 8) ^ table[((crc >>> 24) ^ data[i]) & 0xFF]) >>> 0;
+        }
+        return crc;
+    }
+
+    static crcTable = (() => {
+        const table = new Uint32Array(256);
+        for (let i = 0; i < 256; i++) {
+            let r = i << 24;
+            for (let j = 0; j < 8; j++) {
+                r = (r << 1) ^ ((r & 0x80000000) ? 0x04C11DB7 : 0);
+            }
+            table[i] = r >>> 0;
+        }
+        return table;
+    })();
+}
+
+// ========== ユーティリティ ==========
+function log(msg) {
+    const time = new Date().toLocaleTimeString();
+    console.log(`[${time}] ${msg}`);
+}
+
+function logError(msg) {
+    const time = new Date().toLocaleTimeString();
+    console.error(`[${time}] ERROR: ${msg}`);
+}
+
+// ========== メイン ==========
+console.log('='.repeat(50));
+console.log('  Stream Server (Node.js)');
+console.log('='.repeat(50));
+
+const server = new StreamServer();
+server.start();
+
+// キーボード入力でサーバーマイク制御
+if (ENABLE_SERVER_MIC) {
+    try {
+        const readline = require('readline');
+        readline.emitKeypressEvents(process.stdin);
+        if (process.stdin.setRawMode) {
+            process.stdin.setRawMode(true);
+        }
+
+        console.log('');
+        console.log('Controls:');
+        console.log('  [SPACE] - Toggle mic transmission');
+        console.log('  [q]     - Quit');
+        console.log('');
+
+    let serverTransmitting = false;
+
+    process.stdin.on('keypress', (str, key) => {
+        if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
+            log('Shutting down...');
+            server.stopMicCapture();
+            server.stopSpeakerOutput();
+            process.exit(0);
+        }
+
+        if (key.name === 'space') {
+            if (!serverTransmitting) {
+                // サーバーがPTT取得
+                if (server.pttManager.requestFloor(server.serverClientId)) {
+                    serverTransmitting = true;
+                    log('Server PTT ON - transmitting mic audio');
+                    server.startMicCapture();
+                    server.broadcastPttStatus();
+                } else {
+                    log('PTT denied - someone else is transmitting');
+                }
+            } else {
+                // サーバーがPTTリリース
+                server.pttManager.releaseFloor(server.serverClientId);
+                serverTransmitting = false;
+                log('Server PTT OFF');
+                server.stopMicCapture();
+                server.broadcastPttStatus();
+            }
+        }
+    });
+    } catch (e) {
+        console.log('Keyboard input not available');
+    }
+}

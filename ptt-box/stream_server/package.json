@@ -1,0 +1,17 @@
+{
+  "name": "stream-server",
+  "version": "1.0.0",
+  "description": "Web Transceiver Server - Node.js version",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test-send": "node test_send.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0",
+    "werift": "^0.20.0",
+    "dotenv": "^16.4.7",
+    "uuid": "^11.0.0"
+  }
+}
