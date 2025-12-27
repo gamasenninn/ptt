@@ -28,7 +28,7 @@ const {
 
 // 設定
 const HTTP_PORT = parseInt(process.env.HTTP_PORT) || 9320;
-const PTT_TIMEOUT = parseInt(process.env.PTT_TIMEOUT) || 300000;  // 5分（0で無効化）
+const PTT_TIMEOUT = process.env.PTT_TIMEOUT !== undefined ? parseInt(process.env.PTT_TIMEOUT) : 300000;  // 5分（0で無効化）
 const STUN_SERVER = process.env.STUN_SERVER || 'stun:stun.l.google.com:19302';
 const MIC_DEVICE = process.env.MIC_DEVICE || 'CABLE Output (VB-Audio Virtual Cable)';
 const ENABLE_LOCAL_AUDIO = process.env.ENABLE_LOCAL_AUDIO !== 'false';  // デフォルト有効
@@ -146,6 +146,15 @@ class StreamServer {
 
         // PTTタイムアウトチェッカー
         setInterval(() => this.checkPttTimeout(), 1000);
+
+        // WebSocketハートビート（30秒ごとにping）
+        setInterval(() => {
+            for (const client of this.clients.values()) {
+                if (client.ws.readyState === WebSocket.OPEN) {
+                    client.ws.ping();
+                }
+            }
+        }, 30000);
     }
 
     start() {
