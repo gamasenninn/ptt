@@ -8,6 +8,23 @@ WebRTCを使用したPTT（Push-To-Talk）双方向通信システムの実装�
 
 ## アーキテクチャ
 
+### Node.js版（現行）
+
+```
+stream_server/ (Node.js/werift)
+├── server.js        メインサーバー
+├── package.json     依存関係
+└── .env             設定ファイル
+
+stream_client/
+├── index.html       メインUI（タブ構成）
+├── js/stream.js     WebRTC/PTT/P2P機能
+├── js/history.js    SRT履歴機能
+└── js/monitor.js    モニター機能
+```
+
+### Python版（旧）
+
 ```
 stream_server.py (Python/aiohttp)
 ├── /ws              WebSocket (PTT/P2Pシグナリング)
@@ -15,12 +32,6 @@ stream_server.py (Python/aiohttp)
 ├── /                静的ファイル配信
 ├── /api/srt/*       SRT API (list/get/save)
 └── /api/audio       WAV配信
-
-stream_client/
-├── index.html       メインUI（タブ構成）
-├── js/stream.js     WebRTC/PTT機能
-├── js/history.js    SRT履歴機能
-└── js/monitor.js    モニター機能
 ```
 
 ---
@@ -244,3 +255,156 @@ if not re.match(r'^[\w\-]+\.wav$', filename):
 - [x] 接続トグルボタン
 - [x] SRT履歴統合（タブUI）
 - [x] 音声再生・SRT編集機能
+- [x] Node.js版サーバー移行
+- [x] P2P音声レベルメーター
+
+---
+
+## Python → Node.js移行の知見
+
+### 1. 移行の動機
+
+Python版（aiortc）ではサーバーマイク音声の送信に問題があった：
+- aiortcの`MediaPlayer`でマイク入力を取得しようとしたが、音声が届かない問題が発生
+- 原因特定が困難で、ライブラリの成熟度に不安
+
+Node.js版（werift）を選択した理由：
+- weriftはより活発にメンテナンスされている
+- FFmpegを使ったマイク入力が直接的に扱える
+- TypeScript対応で型安全
+
+### 2. werift + FFmpegによるマイク送信
+
+```javascript
+const { spawn } = require('child_process');
+
+// FFmpegでマイク入力をOpusエンコード
+const ffmpeg = spawn('ffmpeg', [
+    '-f', 'dshow',
+    '-i', `audio=${MIC_DEVICE}`,
+    '-acodec', 'libopus',
+    '-ar', '48000',
+    '-ac', '1',
+    '-application', 'voip',
+    '-frame_duration', '20',
+    '-f', 'opus',
+    '-'
+]);
+
+// Opusパケットを読み取ってRTPで送信
+const opusReader = new OpusRtpConverter();
+ffmpeg.stdout.pipe(opusReader);
+opusReader.on('rtp', (packet) => {
+    audioTrack.writeRtp(packet);
+});
+```
+
+### 3. 環境変数の0値処理
+
+JavaScriptの`||`演算子は0をfalsyとして扱うため、タイムアウト値=0（無効化）が機能しない。
+
+```javascript
+// NG: 0が300000に置き換わる
+const PTT_TIMEOUT = parseInt(process.env.PTT_TIMEOUT) || 300000;
+
+// OK: undefinedの場合のみデフォルト値を使用
+const PTT_TIMEOUT = process.env.PTT_TIMEOUT !== undefined
+    ? parseInt(process.env.PTT_TIMEOUT)
+    : 300000;
+```
+
+### 4. WebSocketハートビート
+
+WebSocket接続が約1分で切断される問題が発生。ブラウザやプロキシのタイムアウト対策として30秒間隔のpingを追加。
+
+```javascript
+// サーバー側: 30秒ごとにping送信
+setInterval(() => {
+    for (const client of this.clients.values()) {
+        if (client.ws.readyState === WebSocket.OPEN) {
+            client.ws.ping();
+        }
+    }
+}, 30000);
+```
+
+### 5. サーバーマイクモードの選択
+
+2つの動作モードを環境変数で切り替え可能に：
+
+```env
+# 常時送信モード（DTXで無音時は自動停止）
+SERVER_MIC_MODE=always
+
+# PTTモード（SPACEキーで送信制御）
+SERVER_MIC_MODE=ptt
+```
+
+alwaysモードではFFmpegを常時起動し、OpusのDTX（Discontinuous Transmission）機能で無音時のパケット送信を抑制。
+
+---
+
+## P2P音声レベルメーターの知見
+
+### 1. 課題
+
+Python版ではサーバーからの音声が`pc.ontrack`で受信され、既存の`setupVolumeMeter()`が動作した。
+Node.js版ではP2P接続経由で音声が配信されるため、別のaudio要素に接続され既存のメーターでは測定できなかった。
+
+### 2. 複数ソースの集約
+
+各P2P接続ごとにAnalyserNodeを作成し、Mapで管理。全ソースの最大レベルをメーターに表示。
+
+```javascript
+let p2pMeterSources = new Map();  // clientId -> { source, analyser }
+
+function setupP2PVolumeMeter(stream, clientId) {
+    const source = p2pAudioContext.createMediaStreamSource(stream);
+    const analyser = p2pAudioContext.createAnalyser();
+    analyser.fftSize = 256;
+    source.connect(analyser);
+
+    p2pMeterSources.set(clientId, { source, analyser });
+}
+
+function startP2PMeterLoop() {
+    function updateP2PMeter() {
+        let maxLevel = 0;
+
+        p2pMeterSources.forEach(({ analyser }) => {
+            analyser.getByteFrequencyData(dataArray);
+            const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+            if (average > maxLevel) maxLevel = average;
+        });
+
+        // 最大レベルを表示
+        bar.style.width = (maxLevel / 128 * 100) + '%';
+        requestAnimationFrame(updateP2PMeter);
+    }
+    updateP2PMeter();
+}
+```
+
+### 3. フレームごとのAnalyser再接続の問題
+
+当初、ループ内で毎フレームsource.connect/disconnectしていたが、一度disconnectしたsourceは再接続できない。
+Analyserは接続を維持したまま、getByteFrequencyDataのみを呼び出す設計に変更。
+
+### 4. クリーンアップ
+
+P2P切断時とWebSocket切断時にリソースを解放：
+
+```javascript
+function cleanupP2PConnection(clientId) {
+    // ...
+    removeP2PVolumeMeterSource(clientId);  // メーターソース削除
+}
+
+function cleanupConnection() {
+    p2pMeterRunning = false;
+    p2pMeterSources.clear();
+    if (p2pAudioContext) {
+        p2pAudioContext.close();
+        p2pAudioContext = null;
+    }
+}
