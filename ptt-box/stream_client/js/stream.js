@@ -547,13 +547,21 @@ function forceOpusMono(sdp) {
 function setVolume(value) {
     const audio = document.getElementById('audio');
     const volumeValue = document.getElementById('volumeValue');
+    const vol = value / 100;
 
     if (audio) {
-        audio.volume = value / 100;
+        audio.volume = vol;
     }
     if (volumeValue) {
         volumeValue.textContent = value + '%';
     }
+
+    // P2P接続の音声要素も更新
+    p2pConnections.forEach((connInfo) => {
+        if (connInfo.audioElement) {
+            connInfo.audioElement.volume = vol;
+        }
+    });
 }
 
 // マイクゲイン調整

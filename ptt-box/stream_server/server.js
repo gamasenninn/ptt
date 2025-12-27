@@ -33,6 +33,7 @@ const STUN_SERVER = process.env.STUN_SERVER || 'stun:stun.l.google.com:19302';
 const MIC_DEVICE = process.env.MIC_DEVICE || 'CABLE Output (VB-Audio Virtual Cable)';
 const ENABLE_LOCAL_AUDIO = process.env.ENABLE_LOCAL_AUDIO !== 'false';  // デフォルト有効
 const ENABLE_SERVER_MIC = process.env.ENABLE_SERVER_MIC !== 'false';  // デフォルト有効
+const SERVER_MIC_MODE = process.env.SERVER_MIC_MODE || 'always';  // 'always' or 'ptt'
 
 // 音声設定
 const SAMPLE_RATE = 48000;
@@ -547,6 +548,12 @@ class StreamServer {
         connInfo.pendingCandidates = [];
 
         log(`P2P established with ${client.displayName}`);
+
+        // 常時送信モードの場合、最初のP2P接続でマイクを開始
+        if (SERVER_MIC_MODE === 'always' && !this.ffmpegProcess) {
+            log('Starting always-on mic transmission (DTX enabled)');
+            this.startMicCapture();
+        }
     }
 
     async handleP2PIceCandidate(client, candidate) {
@@ -594,15 +601,22 @@ class StreamServer {
         log(`Starting mic capture: ${MIC_DEVICE}`);
 
         this.ffmpegProcess = spawn('ffmpeg', [
+            // 入力の低遅延設定
+            '-fflags', '+nobuffer+flush_packets',
+            '-flags', 'low_delay',
+            // 入力デバイス
             '-f', 'dshow',
+            '-audio_buffer_size', '50',  // 50msバッファ（20msだと音割れ）
             '-i', `audio=${MIC_DEVICE}`,
+            // 出力設定
             '-ac', String(CHANNELS),
             '-ar', String(SAMPLE_RATE),
             '-c:a', 'libopus',
             '-b:a', '24k',
             '-frame_duration', String(FRAME_DURATION_MS),
             '-application', 'voip',
-            '-vbr', 'off',
+            '-vbr', 'on',           // 可変ビットレート（DTX有効化に必要）
+            '-packet_loss', '10',   // パケットロス耐性
             '-page_duration', '20000',
             '-flush_packets', '1',
             '-f', 'ogg',
@@ -870,8 +884,16 @@ console.log('='.repeat(50));
 const server = new StreamServer();
 server.start();
 
-// キーボード入力でサーバーマイク制御
+// サーバーマイクモード表示とキーボード制御
 if (ENABLE_SERVER_MIC) {
+    console.log('');
+    if (SERVER_MIC_MODE === 'always') {
+        console.log('Mic mode: ALWAYS ON (DTX enabled - silent when no audio)');
+        console.log('  Mic will start automatically when first client connects');
+    } else {
+        console.log('Mic mode: PTT (press SPACE to transmit)');
+    }
+
     try {
         const readline = require('readline');
         readline.emitKeypressEvents(process.stdin);
@@ -881,41 +903,44 @@ if (ENABLE_SERVER_MIC) {
 
         console.log('');
         console.log('Controls:');
-        console.log('  [SPACE] - Toggle mic transmission');
+        if (SERVER_MIC_MODE === 'ptt') {
+            console.log('  [SPACE] - Toggle mic transmission');
+        }
         console.log('  [q]     - Quit');
         console.log('');
 
-    let serverTransmitting = false;
+        let serverTransmitting = false;
 
-    process.stdin.on('keypress', (str, key) => {
-        if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
-            log('Shutting down...');
-            server.stopMicCapture();
-            server.stopSpeakerOutput();
-            process.exit(0);
-        }
-
-        if (key.name === 'space') {
-            if (!serverTransmitting) {
-                // サーバーがPTT取得
-                if (server.pttManager.requestFloor(server.serverClientId)) {
-                    serverTransmitting = true;
-                    log('Server PTT ON - transmitting mic audio');
-                    server.startMicCapture();
-                    server.broadcastPttStatus();
-                } else {
-                    log('PTT denied - someone else is transmitting');
-                }
-            } else {
-                // サーバーがPTTリリース
-                server.pttManager.releaseFloor(server.serverClientId);
-                serverTransmitting = false;
-                log('Server PTT OFF');
+        process.stdin.on('keypress', (str, key) => {
+            if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
+                log('Shutting down...');
                 server.stopMicCapture();
-                server.broadcastPttStatus();
+                server.stopSpeakerOutput();
+                process.exit(0);
             }
-        }
-    });
+
+            // PTTモードの時のみスペースキーで制御
+            if (SERVER_MIC_MODE === 'ptt' && key.name === 'space') {
+                if (!serverTransmitting) {
+                    // サーバーがPTT取得
+                    if (server.pttManager.requestFloor(server.serverClientId)) {
+                        serverTransmitting = true;
+                        log('Server PTT ON - transmitting mic audio');
+                        server.startMicCapture();
+                        server.broadcastPttStatus();
+                    } else {
+                        log('PTT denied - someone else is transmitting');
+                    }
+                } else {
+                    // サーバーがPTTリリース
+                    server.pttManager.releaseFloor(server.serverClientId);
+                    serverTransmitting = false;
+                    log('Server PTT OFF');
+                    server.stopMicCapture();
+                    server.broadcastPttStatus();
+                }
+            }
+        });
     } catch (e) {
         console.log('Keyboard input not available');
     }
