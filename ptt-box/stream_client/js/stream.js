@@ -28,6 +28,11 @@ const MIC_GAIN = 1.0;  // 増幅なし（将来の調整用に残す）
 // P2P接続管理
 const p2pConnections = new Map();  // clientId -> { pc, audioSender, audioElement }
 
+// P2P音声レベルメーター用
+let p2pAudioContext = null;
+let p2pMeterSources = new Map();  // clientId -> { source, analyser }
+let p2pMeterRunning = false;
+
 function debugLog(msg) {
     console.log(msg);
     const debugEl = document.getElementById('debug');
@@ -430,6 +435,81 @@ function setupVolumeMeter(stream) {
     }
 }
 
+// P2P音声レベルメーター（複数ストリーム対応）
+function setupP2PVolumeMeter(stream, clientId) {
+    try {
+        // AudioContextがなければ作成
+        if (!p2pAudioContext) {
+            p2pAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        // 既存のソースがあれば切断
+        if (p2pMeterSources.has(clientId)) {
+            const old = p2pMeterSources.get(clientId);
+            try { old.source.disconnect(); } catch (e) {}
+        }
+
+        // 新しいソースとAnalyserを作成して接続
+        const source = p2pAudioContext.createMediaStreamSource(stream);
+        const analyser = p2pAudioContext.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+
+        p2pMeterSources.set(clientId, { source, analyser });
+
+        // メーター更新ループが動いていなければ開始
+        if (!p2pMeterRunning) {
+            p2pMeterRunning = true;
+            startP2PMeterLoop();
+        }
+
+        debugLog('P2P volume meter added: ' + clientId);
+    } catch (e) {
+        console.warn('P2P volume meter setup failed:', e);
+    }
+}
+
+function startP2PMeterLoop() {
+    const dataArray = new Uint8Array(128);  // fftSize 256 → frequencyBinCount 128
+
+    function updateP2PMeter() {
+        if (!p2pMeterRunning) return;
+
+        let maxLevel = 0;
+
+        // 各ストリームの音量を計測
+        p2pMeterSources.forEach(({ analyser }) => {
+            try {
+                analyser.getByteFrequencyData(dataArray);
+                const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+
+                if (average > maxLevel) {
+                    maxLevel = average;
+                }
+            } catch (e) {}
+        });
+
+        const percentage = Math.min(100, (maxLevel / 128) * 100);
+        const bar = document.getElementById('p2pVolumeBar');
+        if (bar) {
+            bar.style.width = percentage + '%';
+        }
+
+        requestAnimationFrame(updateP2PMeter);
+    }
+
+    updateP2PMeter();
+}
+
+function removeP2PVolumeMeterSource(clientId) {
+    if (p2pMeterSources.has(clientId)) {
+        const { source } = p2pMeterSources.get(clientId);
+        try { source.disconnect(); } catch (e) {}
+        p2pMeterSources.delete(clientId);
+        debugLog('P2P volume meter removed: ' + clientId);
+    }
+}
+
 function disconnect() {
     autoReconnect = false;  // 手動切断時は自動再接続しない
     reconnectAttempts = 0;
@@ -455,6 +535,14 @@ function cleanupConnection() {
         analyser = null;
     }
 
+    // P2P音声レベルメーター用AudioContextをクリーンアップ
+    p2pMeterRunning = false;
+    p2pMeterSources.clear();
+    if (p2pAudioContext) {
+        p2pAudioContext.close();
+        p2pAudioContext = null;
+    }
+
     // マイクゲイン用AudioContextをクリーンアップ
     if (micAudioContext) {
         micAudioContext.close();
@@ -478,6 +566,7 @@ function cleanupConnection() {
         audio.srcObject = null;
     }
     document.getElementById('volumeBar').style.width = '0%';
+    document.getElementById('p2pVolumeBar').style.width = '0%';
 
     // PTT状態リセット
     updatePttState('idle', null);
@@ -858,6 +947,12 @@ async function createP2PConnection(remoteClientId, isOfferer) {
 
         // 再生を試みる
         audio.play().catch(e => debugLog('P2P audio play error: ' + e.message));
+
+        // P2P音声のレベルメーターを設定（すべてのP2P接続で有効）
+        const stream = audio.srcObject;
+        if (stream) {
+            setupP2PVolumeMeter(stream, remoteClientId);
+        }
     };
 
     // ICE候補をサーバー経由で送信
@@ -1017,6 +1112,10 @@ function cleanupP2PConnection(clientId) {
             connInfo.audioElement.remove();
         }
         p2pConnections.delete(clientId);
+
+        // レベルメーターのソースもクリーンアップ
+        removeP2PVolumeMeterSource(clientId);
+
         debugLog('P2P cleanup: ' + clientId);
     }
 }
