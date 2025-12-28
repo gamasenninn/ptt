@@ -33,6 +33,10 @@ let p2pAudioContext = null;
 let p2pMeterSources = new Map();  // clientId -> { source, analyser }
 let p2pMeterRunning = false;
 
+// プッシュ通知用
+let pushSubscription = null;
+let vapidPublicKey = null;
+
 function debugLog(msg) {
     console.log(msg);
     const debugEl = document.getElementById('debug');
@@ -188,9 +192,15 @@ async function connect() {
                 // サーバーからICE設定とクライアントIDを受信
                 iceServers = data.iceServers;
                 myClientId = data.clientId;
+                vapidPublicKey = data.vapidPublicKey;
                 debugLog('Client ID: ' + myClientId);
                 debugLog('ICE servers: ' + JSON.stringify(iceServers.map(s => s.urls)));
                 await setupWebRTC();
+
+                // プッシュ通知をセットアップ
+                if (vapidPublicKey) {
+                    setupPushNotifications();
+                }
             } else if (data.type === 'answer') {
                 await pc.setRemoteDescription(new RTCSessionDescription({
                     type: 'answer',
@@ -1141,4 +1151,75 @@ async function waitForP2PIceGathering(p2pPc) {
             }
         });
     });
+}
+
+// ========== プッシュ通知 ==========
+
+// VAPID公開鍵をUint8Arrayに変換
+function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding)
+        .replace(/-/g, '+')
+        .replace(/_/g, '/');
+
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+
+    for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+}
+
+// プッシュ通知セットアップ
+async function setupPushNotifications() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        debugLog('Push notifications not supported');
+        return;
+    }
+
+    try {
+        const registration = await navigator.serviceWorker.ready;
+        debugLog('SW ready for push');
+
+        // 既存のsubscriptionを確認
+        let subscription = await registration.pushManager.getSubscription();
+
+        if (!subscription) {
+            // 通知許可を確認
+            const permission = await Notification.requestPermission();
+            if (permission !== 'granted') {
+                debugLog('Notification permission denied');
+                return;
+            }
+
+            // 新しいsubscriptionを作成
+            subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+            });
+            debugLog('Push subscribed');
+        } else {
+            debugLog('Push already subscribed');
+        }
+
+        pushSubscription = subscription;
+
+        // サーバーにsubscriptionを送信
+        sendPushSubscription(subscription);
+
+    } catch (error) {
+        debugLog('Push setup error: ' + error.message);
+    }
+}
+
+// サーバーにsubscriptionを送信
+function sendPushSubscription(subscription) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    ws.send(JSON.stringify({
+        type: 'push_subscribe',
+        subscription: subscription.toJSON()
+    }));
+    debugLog('Push subscription sent to server');
 }

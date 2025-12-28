@@ -17,6 +17,7 @@ const path = require('path');
 const WebSocket = require('ws');
 const { spawn } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
+const webpush = require('web-push');
 const {
     RTCPeerConnection,
     RTCSessionDescription,
@@ -34,6 +35,16 @@ const MIC_DEVICE = process.env.MIC_DEVICE || 'CABLE Output (VB-Audio Virtual Cab
 const ENABLE_LOCAL_AUDIO = process.env.ENABLE_LOCAL_AUDIO !== 'false';  // デフォルト有効
 const ENABLE_SERVER_MIC = process.env.ENABLE_SERVER_MIC !== 'false';  // デフォルト有効
 const SERVER_MIC_MODE = process.env.SERVER_MIC_MODE || 'always';  // 'always' or 'ptt'
+
+// VAPID設定（Web Push）
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
+
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+    webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+    console.log('Web Push configured');
+}
 
 // 音声設定
 const SAMPLE_RATE = 48000;
@@ -113,6 +124,7 @@ class StreamServer {
     constructor() {
         this.clients = new Map();  // clientId -> ClientConnection
         this.pttManager = new PTTManager();
+        this.pushSubscriptions = new Map();  // clientId -> subscription
 
         // P2P接続（サーバーがクライアントとして参加）
         this.p2pConnections = new Map();  // clientId -> { pc, audioTrack }
@@ -176,7 +188,8 @@ class StreamServer {
         client.send({
             type: 'config',
             clientId: clientId,
-            iceServers: iceServers
+            iceServers: iceServers,
+            vapidPublicKey: VAPID_PUBLIC_KEY || null
         });
 
         // メッセージハンドラ
@@ -244,6 +257,62 @@ class StreamServer {
                     this.relayP2PMessage(client, msg);
                 }
                 break;
+
+            case 'push_subscribe':
+                this.handlePushSubscribe(client, msg.subscription);
+                break;
+        }
+    }
+
+    // プッシュ通知subscription登録
+    handlePushSubscribe(client, subscription) {
+        if (!subscription) return;
+        this.pushSubscriptions.set(client.clientId, subscription);
+        log(`Push subscription registered: ${client.displayName} (${client.clientId})`);
+    }
+
+    // プッシュ通知送信（PTT開始時に他クライアントに通知）
+    async sendPushNotification(speakerClientId, speakerName) {
+        if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+
+        const payload = JSON.stringify({
+            title: 'Webトランシーバー',
+            body: `${speakerName} が話しています`,
+            url: '/'
+        });
+
+        // 接続中のクライアントのendpointを収集（通知不要）
+        const connectedEndpoints = new Set();
+        for (const [clientId, client] of this.clients) {
+            const subscription = this.pushSubscriptions.get(clientId);
+            if (subscription) {
+                connectedEndpoints.add(subscription.endpoint);
+            }
+        }
+
+        // 送信済みendpointを追跡（重複送信防止）
+        const sentEndpoints = new Set();
+
+        // 接続中でないクライアントにのみ通知
+        for (const [clientId, subscription] of this.pushSubscriptions) {
+            // 接続中のクライアントはスキップ
+            if (connectedEndpoints.has(subscription.endpoint)) continue;
+            // 同じendpoint（同じブラウザ）には送信しない
+            if (sentEndpoints.has(subscription.endpoint)) continue;
+            sentEndpoints.add(subscription.endpoint);
+
+            try {
+                await webpush.sendNotification(subscription, payload);
+                log(`Push sent to ${clientId}`);
+            } catch (error) {
+                if (error.statusCode === 410 || error.statusCode === 404) {
+                    // subscription無効 → 削除
+                    this.pushSubscriptions.delete(clientId);
+                    log(`Push subscription removed (expired): ${clientId}`);
+                } else {
+                    logError(`Push error: ${error.message}`);
+                }
+            }
         }
     }
 
@@ -322,6 +391,9 @@ class StreamServer {
             if (ENABLE_LOCAL_AUDIO) {
                 this.startSpeakerOutput();
             }
+
+            // プッシュ通知送信（他のクライアントに通知）
+            this.sendPushNotification(client.clientId, client.displayName);
         } else {
             const speaker = this.clients.get(this.pttManager.currentSpeaker);
             client.send({
@@ -372,6 +444,9 @@ class StreamServer {
 
         // クライアント削除
         this.clients.delete(client.clientId);
+
+        // Push subscription削除（WebSocket切断してもsubscriptionは有効なので削除しない）
+        // this.pushSubscriptions.delete(client.clientId);
 
         // 他クライアントに通知
         this.broadcastClientLeft(client);
