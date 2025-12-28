@@ -93,9 +93,33 @@ class WavHandler(FileSystemEventHandler):
         if event.is_directory:
             return
         if event.src_path.endswith(".wav"):
-            # ファイル書き込み完了を待つ
-            time.sleep(1)
+            # ファイル書き込み完了を待つ（サイズが安定するまで）
+            self.wait_for_file_complete(event.src_path)
             transcribe_to_srt(event.src_path)
+
+    def wait_for_file_complete(self, filepath, timeout=60):
+        """ファイルの書き込みが完了するまで待つ"""
+        import os
+        last_size = -1
+        stable_count = 0
+        elapsed = 0
+
+        while elapsed < timeout:
+            try:
+                current_size = os.path.getsize(filepath)
+                if current_size == last_size and current_size > 0:
+                    stable_count += 1
+                    if stable_count >= 2:  # 2秒間サイズ変化なし
+                        return
+                else:
+                    stable_count = 0
+                last_size = current_size
+            except OSError:
+                pass
+            time.sleep(1)
+            elapsed += 1
+
+        print(f"  警告: ファイル完了待ちタイムアウト: {filepath}")
 
 def main():
     print("=" * 50)

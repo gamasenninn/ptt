@@ -91,15 +91,15 @@ class SrtService
     /**
      * ファイル名から日時を抽出
      *
-     * @param string $filename rec_YYYYMMDD_HHMMSS.srt 形式
+     * @param string $filename rec_YYYYMMDD_HHMMSS.srt または web_YYYYMMDD_HHMMSS.srt 形式
      * @return string|null YYYY-MM-DD HH:MM:SS形式、抽出できない場合はnull
      */
     public function extractDatetimeFromFilename($filename)
     {
         $basename = basename($filename, '.srt');
 
-        // rec_YYYYMMDD_HHMMSS パターンにマッチ
-        if (preg_match('/rec_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/', $basename, $matches)) {
+        // rec_YYYYMMDD_HHMMSS または web_YYYYMMDD_HHMMSS パターンにマッチ
+        if (preg_match('/(?:rec|web)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/', $basename, $matches)) {
             return sprintf(
                 '%s-%s-%s %s:%s:%s',
                 $matches[1], $matches[2], $matches[3],

@@ -35,11 +35,30 @@ class SrtRepository
         // ファイル名のみを抽出
         $fileNames = array_map('basename', $files);
 
-        // 日時降順でソート（ファイル名に日時が含まれている前提）
-        rsort($fileNames);
+        // 日時部分でソート（rec_YYYYMMDD_HHMMSS または web_YYYYMMDD_HHMMSS）
+        usort($fileNames, function($a, $b) {
+            $dateA = $this->extractDatetimeForSort($a);
+            $dateB = $this->extractDatetimeForSort($b);
+            // 降順（新しい順）
+            return strcmp($dateB, $dateA);
+        });
 
         // 件数制限
         return array_slice($fileNames, 0, $limit);
+    }
+
+    /**
+     * ファイル名から日時文字列を抽出（ソート用）
+     *
+     * @param string $filename ファイル名
+     * @return string YYYYMMDD_HHMMSS形式、抽出できない場合は空文字
+     */
+    private function extractDatetimeForSort($filename)
+    {
+        if (preg_match('/(?:rec|web)_(\d{8}_\d{6})/', $filename, $matches)) {
+            return $matches[1];
+        }
+        return '';
     }
 
     /**

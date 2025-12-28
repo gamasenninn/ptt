@@ -143,6 +143,14 @@ class StreamServer {
         this.oggGranulePos = 0;
         this.oggSerial = 0x12345678;
 
+        // 録音（WAVファイル保存）
+        this.recordingProcess = null;
+        this.recordingFilename = null;
+        this.recordingOggInitialized = false;
+        this.recordingOggPageSequence = 0;
+        this.recordingOggGranulePos = 0;
+        this.recordingOggSerial = 0x87654321;
+
         // Express設定
         this.app = express();
         this.server = http.createServer(this.app);
@@ -394,6 +402,9 @@ class StreamServer {
 
             // プッシュ通知送信（他のクライアントに通知）
             this.sendPushNotification(client.clientId, client.displayName);
+
+            // 録音開始
+            this.startRecording(client.displayName);
         } else {
             const speaker = this.clients.get(this.pttManager.currentSpeaker);
             client.send({
@@ -414,6 +425,9 @@ class StreamServer {
             if (ENABLE_LOCAL_AUDIO) {
                 this.stopSpeakerOutput();
             }
+
+            // 録音停止
+            this.stopRecording();
         }
     }
 
@@ -464,6 +478,9 @@ class StreamServer {
             if (ENABLE_LOCAL_AUDIO) {
                 this.stopSpeakerOutput();
             }
+
+            // 録音停止
+            this.stopRecording();
         }
     }
 
@@ -594,6 +611,9 @@ class StreamServer {
                 }
 
                 this.sendOpusToSpeaker(rtp.payload);
+
+                // 録音にも書き込み
+                this.writeToRecording(rtp.payload);
             });
         };
 
@@ -845,6 +865,158 @@ class StreamServer {
         this.oggInitialized = false;
         this.oggPageSequence = 0;
         this.oggGranulePos = 0;
+    }
+
+    // ========== 録音（WAVファイル保存）==========
+
+    startRecording(displayName) {
+        if (this.recordingProcess) return;
+
+        const fs = require('fs');
+        const recordingsDir = path.join(__dirname, '..', 'recordings');
+        const tempDir = path.join(__dirname, '..', 'recordings_temp');
+
+        // ディレクトリを作成
+        if (!fs.existsSync(recordingsDir)) {
+            fs.mkdirSync(recordingsDir, { recursive: true });
+        }
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+
+        // ファイル名生成: web_YYYYMMDD_HHMMSS.wav
+        const now = new Date();
+        const timestamp = now.getFullYear().toString() +
+            String(now.getMonth() + 1).padStart(2, '0') +
+            String(now.getDate()).padStart(2, '0') + '_' +
+            String(now.getHours()).padStart(2, '0') +
+            String(now.getMinutes()).padStart(2, '0') +
+            String(now.getSeconds()).padStart(2, '0');
+        this.recordingFilename = `web_${timestamp}.wav`;
+        this.recordingTempPath = path.join(tempDir, `recording_${timestamp}.wav`);
+        this.recordingFinalPath = path.join(recordingsDir, this.recordingFilename);
+
+        log(`Recording started: ${this.recordingFilename} (speaker: ${displayName})`);
+
+        this.recordingProcess = spawn('ffmpeg', [
+            '-y',  // 上書き許可
+            '-f', 'ogg',
+            '-i', 'pipe:0',
+            '-ar', '44100',
+            '-ac', '1',
+            '-acodec', 'pcm_s16le',
+            this.recordingTempPath  // 一時ディレクトリに保存
+        ], {
+            stdio: ['pipe', 'ignore', 'pipe']
+        });
+
+        this.recordingProcess.on('error', (err) => {
+            logError(`Recording FFmpeg error: ${err.message}`);
+            this.recordingProcess = null;
+        });
+
+        this.recordingProcess.on('close', (code) => {
+            log(`Recording FFmpeg closed (code: ${code})`);
+            // PTT終了時にリネームするので、ここではプロセスのクリアのみ
+            this.recordingProcess = null;
+        });
+
+        // OGG状態リセット
+        this.recordingOggInitialized = false;
+        this.recordingOggPageSequence = 0;
+        this.recordingOggGranulePos = 0;
+    }
+
+    stopRecording() {
+        const tempPath = this.recordingTempPath;
+        const finalPath = this.recordingFinalPath;
+        const filename = this.recordingFilename;
+
+        if (this.recordingProcess) {
+            const process = this.recordingProcess;
+            try {
+                process.stdin.end();
+            } catch (e) {}
+
+            // ffmpegプロセス終了後に移動
+            process.on('close', () => {
+                const fs = require('fs');
+                if (tempPath && finalPath && fs.existsSync(tempPath)) {
+                    try {
+                        fs.copyFileSync(tempPath, finalPath);
+                        fs.unlinkSync(tempPath);
+                        log(`Recording saved: ${filename}`);
+                    } catch (e) {
+                        logError(`Failed to move recording: ${e.message}`);
+                    }
+                }
+            });
+        }
+
+        this.recordingOggInitialized = false;
+        this.recordingOggPageSequence = 0;
+        this.recordingOggGranulePos = 0;
+        this.recordingTempPath = null;
+        this.recordingFinalPath = null;
+        this.recordingFilename = null;
+    }
+
+    writeToRecording(opusPayload) {
+        if (!this.recordingProcess || !this.recordingProcess.stdin.writable) return;
+
+        try {
+            if (!this.recordingOggInitialized) {
+                // OpusHead
+                const idHeader = this.createOpusIdHeader();
+                const idPage = this.createRecordingOggPage(idHeader, 0x02, 0);
+                this.recordingProcess.stdin.write(idPage);
+
+                // OpusTags
+                const commentHeader = this.createOpusCommentHeader();
+                const commentPage = this.createRecordingOggPage(commentHeader, 0, 0);
+                this.recordingProcess.stdin.write(commentPage);
+
+                this.recordingOggInitialized = true;
+            }
+
+            this.recordingOggGranulePos += 960;
+            const dataPage = this.createRecordingOggPage(opusPayload, 0, this.recordingOggGranulePos);
+            this.recordingProcess.stdin.write(dataPage);
+        } catch (e) {}
+    }
+
+    createRecordingOggPage(payload, headerType, granulePos) {
+        const segmentCount = Math.ceil(payload.length / 255) || 1;
+        const segmentTable = [];
+        let remaining = payload.length;
+        for (let i = 0; i < segmentCount; i++) {
+            const size = Math.min(remaining, 255);
+            segmentTable.push(size);
+            remaining -= size;
+        }
+
+        const headerSize = 27 + segmentTable.length;
+        const page = Buffer.alloc(headerSize + payload.length);
+
+        page.write('OggS', 0);
+        page.writeUInt8(0, 4);
+        page.writeUInt8(headerType, 5);
+        page.writeBigUInt64LE(BigInt(granulePos), 6);
+        page.writeUInt32LE(this.recordingOggSerial, 14);
+        page.writeUInt32LE(this.recordingOggPageSequence++, 18);
+        page.writeUInt32LE(0, 22);
+        page.writeUInt8(segmentTable.length, 26);
+
+        for (let i = 0; i < segmentTable.length; i++) {
+            page.writeUInt8(segmentTable[i], 27 + i);
+        }
+
+        payload.copy(page, headerSize);
+
+        const crc = this.crc32Ogg(page);
+        page.writeUInt32LE(crc, 22);
+
+        return page;
     }
 
     sendOpusToSpeaker(opusPayload) {

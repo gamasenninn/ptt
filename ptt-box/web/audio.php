@@ -8,9 +8,9 @@ $recordingsDir = getenv('RECORDINGS_DIR') ?: __DIR__ . '/../recordings';
 
 $file = isset($_GET['file']) ? $_GET['file'] : '';
 
-// Security: only allow .wav files and prevent directory traversal
+// Security: only allow rec_*.wav and web_*.wav files and prevent directory traversal
 $file = basename($file);
-if (!preg_match('/^[\w\-]+\.wav$/i', $file)) {
+if (!preg_match('/^(?:rec|web)_[\w\-]+\.wav$/i', $file)) {
     http_response_code(400);
     exit('Invalid file name');
 }

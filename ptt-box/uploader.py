@@ -38,20 +38,20 @@ def mark_uploaded(file_path):
 
 
 def extract_datetime_from_filename(filename):
-    """ファイル名から日時文字列を抽出 (rec_YYYYMMDD_HHMMSS.wav -> YYYYMMDD_HHMMSS)"""
+    """ファイル名から日時文字列を抽出 (rec_YYYYMMDD_HHMMSS.wav or web_YYYYMMDD_HHMMSS.wav -> YYYYMMDD_HHMMSS)"""
     import re
-    match = re.search(r'rec_(\d{8}_\d{6})', filename)
+    match = re.search(r'(?:rec|web)_(\d{8}_\d{6})', filename)
     if match:
         return match.group(1)
     return "00000000_000000"
 
 
 def get_remote_wav_files(ftp):
-    """リモートのrec_*.wavファイル一覧を取得"""
+    """リモートのrec_*.wavおよびweb_*.wavファイル一覧を取得"""
     try:
         ftp.cwd(REMOTE_FILE_DIR)
         files = ftp.nlst()
-        wav_files = [f for f in files if f.startswith("rec_") and f.endswith(".wav")]
+        wav_files = [f for f in files if (f.startswith("rec_") or f.startswith("web_")) and f.endswith(".wav")]
         return wav_files
     except Exception as e:
         print(f"  リモートファイル一覧取得失敗: {e}")
@@ -167,10 +167,34 @@ class UploadHandler(FileSystemEventHandler):
         if src_path.endswith(".updone"):
             return
 
-        # ファイル書き込み完了を待つ
-        time.sleep(1)
+        # ファイル書き込み完了を待つ（サイズが安定するまで）
+        self.wait_for_file_complete(src_path)
 
         upload_file(src_path)
+
+    def wait_for_file_complete(self, filepath, timeout=60):
+        """ファイルの書き込みが完了するまで待つ"""
+        import os
+        last_size = -1
+        stable_count = 0
+        elapsed = 0
+
+        while elapsed < timeout:
+            try:
+                current_size = os.path.getsize(filepath)
+                if current_size == last_size and current_size > 0:
+                    stable_count += 1
+                    if stable_count >= 2:  # 2秒間サイズ変化なし
+                        return
+                else:
+                    stable_count = 0
+                last_size = current_size
+            except OSError:
+                pass
+            time.sleep(1)
+            elapsed += 1
+
+        print(f"  警告: ファイル完了待ちタイムアウト: {filepath}")
 
 
 def check_config():
