@@ -14,6 +14,7 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const WebSocket = require('ws');
 const { spawn } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
@@ -160,6 +161,12 @@ class StreamServer {
         this.app.use(express.static(clientPath));
         log(`Static files: ${clientPath}`);
 
+        // JSONパーサー
+        this.app.use(express.json());
+
+        // History API設定
+        this.setupHistoryApi();
+
         // WebSocket設定
         this.wss = new WebSocket.Server({ server: this.server, path: '/ws' });
         this.wss.on('connection', (ws) => this.handleConnection(ws));
@@ -181,6 +188,210 @@ class StreamServer {
         this.server.listen(HTTP_PORT, () => {
             log(`Server started on http://localhost:${HTTP_PORT}`);
         });
+    }
+
+    // History API設定
+    setupHistoryApi() {
+        const recordingsDir = path.join(__dirname, '..', 'recordings');
+        const historyDir = path.join(recordingsDir, 'history');
+
+        // GET /api/srt/list - SRTファイル一覧
+        this.app.get('/api/srt/list', async (req, res) => {
+            try {
+                const files = await this.getSrtFileList(recordingsDir);
+                res.json({ success: true, files });
+            } catch (e) {
+                log(`Error listing SRT files: ${e.message}`);
+                res.status(500).json({ success: false, error: e.message });
+            }
+        });
+
+        // GET /api/srt/get - SRTファイル内容取得
+        this.app.get('/api/srt/get', async (req, res) => {
+            try {
+                const filename = req.query.file;
+                if (!filename) {
+                    return res.status(400).json({ success: false, error: 'file parameter required' });
+                }
+
+                const filepath = path.join(recordingsDir, filename);
+                if (!fs.existsSync(filepath)) {
+                    return res.status(404).json({ success: false, error: 'File not found' });
+                }
+
+                const content = fs.readFileSync(filepath, 'utf-8');
+                const wavFile = filename.replace('.srt', '.wav');
+
+                res.json({
+                    success: true,
+                    file: {
+                        filename,
+                        content,
+                        wavFile
+                    }
+                });
+            } catch (e) {
+                log(`Error getting SRT file: ${e.message}`);
+                res.status(500).json({ success: false, error: e.message });
+            }
+        });
+
+        // POST /api/srt/save - SRTファイル保存
+        this.app.post('/api/srt/save', async (req, res) => {
+            try {
+                const { file, content } = req.body;
+                if (!file || content === undefined) {
+                    return res.status(400).json({ success: false, error: 'file and content required' });
+                }
+
+                const filepath = path.join(recordingsDir, file);
+
+                // バックアップ作成
+                if (fs.existsSync(filepath)) {
+                    if (!fs.existsSync(historyDir)) {
+                        fs.mkdirSync(historyDir, { recursive: true });
+                    }
+                    const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').split('.')[0];
+                    const backupName = file.replace('.srt', `_${timestamp}.srt`);
+                    fs.copyFileSync(filepath, path.join(historyDir, backupName));
+                }
+
+                fs.writeFileSync(filepath, content, 'utf-8');
+                res.json({ success: true });
+            } catch (e) {
+                log(`Error saving SRT file: ${e.message}`);
+                res.status(500).json({ success: false, error: e.message });
+            }
+        });
+
+        // GET /api/audio - WAVファイル配信（Range対応）
+        this.app.get('/api/audio', async (req, res) => {
+            try {
+                const filename = req.query.file;
+                if (!filename) {
+                    return res.status(400).json({ success: false, error: 'file parameter required' });
+                }
+
+                const filepath = path.join(recordingsDir, filename);
+                if (!fs.existsSync(filepath)) {
+                    return res.status(404).json({ success: false, error: 'File not found' });
+                }
+
+                const stat = fs.statSync(filepath);
+                const fileSize = stat.size;
+                const range = req.headers.range;
+
+                if (range) {
+                    const parts = range.replace(/bytes=/, '').split('-');
+                    const start = parseInt(parts[0], 10);
+                    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+                    const chunkSize = end - start + 1;
+
+                    res.writeHead(206, {
+                        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                        'Accept-Ranges': 'bytes',
+                        'Content-Length': chunkSize,
+                        'Content-Type': 'audio/wav'
+                    });
+
+                    fs.createReadStream(filepath, { start, end }).pipe(res);
+                } else {
+                    res.writeHead(200, {
+                        'Content-Length': fileSize,
+                        'Content-Type': 'audio/wav'
+                    });
+                    fs.createReadStream(filepath).pipe(res);
+                }
+            } catch (e) {
+                log(`Error streaming audio: ${e.message}`);
+                res.status(500).json({ success: false, error: e.message });
+            }
+        });
+    }
+
+    // SRTファイル一覧取得
+    async getSrtFileList(recordingsDir) {
+        if (!fs.existsSync(recordingsDir)) {
+            return [];
+        }
+
+        const files = fs.readdirSync(recordingsDir)
+            .filter(f => f.endsWith('.srt'))
+            .map(filename => {
+                const filepath = path.join(recordingsDir, filename);
+                const content = fs.readFileSync(filepath, 'utf-8');
+                const preview = this.getSrtPreview(content);
+                const { datetime, datetimeShort } = this.extractDatetimeFromFilename(filename);
+                const { source, clientId } = this.extractSourceInfo(filename);
+
+                return {
+                    filename,
+                    datetime,
+                    datetimeShort,
+                    wavFile: filename.replace('.srt', '.wav'),
+                    preview,
+                    source,
+                    clientId,
+                    sortKey: this.extractDatetimeForSort(filename)
+                };
+            })
+            .sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+
+        return files;
+    }
+
+    // ファイル名から日時を抽出
+    extractDatetimeFromFilename(filename) {
+        // web_20251229_143000_abc123.srt or rec_20251229_143000.srt
+        const match = filename.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+        if (match) {
+            const [, year, month, day, hour, min, sec] = match;
+            return {
+                datetime: `${year}-${month}-${day} ${hour}:${min}:${sec}`,
+                datetimeShort: `${month}/${day} ${hour}:${min}`
+            };
+        }
+        return { datetime: '-', datetimeShort: '-' };
+    }
+
+    // ソート用日時文字列を抽出
+    extractDatetimeForSort(filename) {
+        const match = filename.match(/(\d{8}_\d{6})/);
+        return match ? match[1] : '00000000_000000';
+    }
+
+    // ソース情報抽出（web/analog, clientId）
+    extractSourceInfo(filename) {
+        if (filename.startsWith('web_')) {
+            // web_20251229_143000_abc123.srt
+            const match = filename.match(/web_\d{8}_\d{6}_([^.]+)\.srt/);
+            return {
+                source: 'web',
+                clientId: match ? match[1] : null
+            };
+        } else if (filename.startsWith('rec_')) {
+            return { source: 'analog', clientId: null };
+        }
+        return { source: 'unknown', clientId: null };
+    }
+
+    // SRTからプレビュー文字列を取得
+    getSrtPreview(content) {
+        if (!content) return '';
+
+        const lines = content.split('\n');
+        const textLines = [];
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            // 数字のみの行（シーケンス番号）とタイムスタンプ行をスキップ
+            if (!trimmed) continue;
+            if (/^\d+$/.test(trimmed)) continue;
+            if (/^\d{2}:\d{2}:\d{2}/.test(trimmed)) continue;
+            textLines.push(trimmed);
+        }
+
+        return textLines.join(' ').substring(0, 100);
     }
 
     // 新規接続

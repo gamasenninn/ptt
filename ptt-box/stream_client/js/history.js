@@ -59,15 +59,20 @@ function renderHistoryList() {
         const isPlaying = currentPlayingFile === file.wavFile;
         const playingClass = isPlaying ? 'playing' : '';
         const playIcon = isPlaying ? '⏹' : '▶';
+        const sourceIcon = file.source === 'analog' ? '📻' : '📱';
 
         html += `
             <div class="history-item ${playingClass}" data-wav="${file.wavFile}" data-filename="${file.filename}" onclick="playHistoryAudio('${file.wavFile}')">
-                <span class="history-play-icon">${playIcon}</span>
-                <div class="history-info">
-                    <div class="history-datetime">${file.datetimeShort || file.datetime || '-'}</div>
-                    <div class="history-preview">${escapeHtml(file.preview) || '(内容なし)'}</div>
+                <div class="history-row1">
+                    <span class="history-play-icon">${playIcon}</span>
+                    <span class="source-badge" title="${file.source === 'analog' ? 'アナログ' : 'Web'}">${sourceIcon}</span>
+                    <span class="history-datetime">${file.datetimeShort || file.datetime || '-'}</span>
+                    ${file.clientId ? `<span class="client-id">${escapeHtml(file.clientId)}</span>` : ''}
+                    <button class="history-edit-btn" onclick="event.stopPropagation(); openEditor('${file.filename}', '${file.wavFile}')">編集</button>
                 </div>
-                <button class="history-edit-btn" onclick="event.stopPropagation(); openEditor('${file.filename}', '${file.wavFile}')">編集</button>
+                <div class="history-row2">
+                    <span class="history-preview">${escapeHtml(file.preview) || '(内容なし)'}</span>
+                </div>
             </div>
         `;
     }
