@@ -45,11 +45,25 @@ function renderFileList(files) {
     for (var i = 0; i < files.length; i++) {
         var file = files[i];
         html += '<div class="file-item" data-filename="' + escapeHtml(file.filename) + '" onclick="playAudio(\'' + escapeHtml(file.wavFile) + '\')">';
-        html += '<span class="file-datetime">' + (file.datetime || '-') + '</span>';
-        html += '<span class="file-preview">' + escapeHtml(file.preview || '-') + '</span>';
+
+        // 1段目: アイコン + 日付 + clientId + 編集ボタン
+        html += '<div class="file-item-row1">';
+        var sourceIcon = file.source === 'analog' ? '📻' : '📱';
+        html += '<span class="source-badge ' + (file.source || 'unknown') + '" title="' + (file.source === 'analog' ? 'アナログ' : 'Web') + '">' + sourceIcon + '</span>';
+        html += '<span class="file-datetime">' + (file.datetimeShort || '-') + '</span>';
+        if (file.clientId) {
+            html += '<span class="client-id">' + escapeHtml(file.clientId) + '</span>';
+        }
         html += '<div class="file-actions">';
         html += '<button class="btn-icon" onclick="event.stopPropagation(); openEditor(\'' + escapeHtml(file.filename) + '\')" title="編集">✏️</button>';
         html += '</div>';
+        html += '</div>';
+
+        // 2段目: 内容プレビュー
+        html += '<div class="file-item-row2">';
+        html += '<span class="file-preview">' + escapeHtml(file.preview || '-') + '</span>';
+        html += '</div>';
+
         html += '</div>';
     }
 

@@ -38,7 +38,15 @@ def mark_uploaded(file_path):
 
 
 def extract_datetime_from_filename(filename):
-    """ファイル名から日時文字列を抽出 (rec_YYYYMMDD_HHMMSS.wav or web_YYYYMMDD_HHMMSS.wav -> YYYYMMDD_HHMMSS)"""
+    """ファイル名から日時文字列を抽出
+
+    対応形式:
+    - rec_YYYYMMDD_HHMMSS.wav（アナログトランシーバー）
+    - web_YYYYMMDD_HHMMSS.wav（Webトランシーバー、後方互換）
+    - web_YYYYMMDD_HHMMSS_CLIENTID.wav（Webトランシーバー）
+
+    Returns: YYYYMMDD_HHMMSS
+    """
     import re
     match = re.search(r'(?:rec|web)_(\d{8}_\d{6})', filename)
     if match:

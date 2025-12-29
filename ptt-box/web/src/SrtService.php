@@ -27,12 +27,15 @@ class SrtService
 
         foreach ($files as $filename) {
             $datetime = $this->extractDatetimeFromFilename($filename);
+            $sourceInfo = $this->extractSourceInfo($filename);
             $result[] = array(
                 'filename' => $filename,
                 'datetime' => $datetime,
                 'datetimeShort' => $this->formatShortDatetime($datetime),
                 'wavFile' => $this->repository->getWavPath($filename),
                 'preview' => $this->getPreview($filename),
+                'source' => $sourceInfo['source'],
+                'clientId' => $sourceInfo['clientId'],
             );
         }
 
@@ -86,6 +89,34 @@ class SrtService
         }
 
         return $datetime;
+    }
+
+    /**
+     * ファイル名からソース種別とclientIdを抽出
+     *
+     * @param string $filename ファイル名
+     * @return array ['source' => 'analog'|'web'|'unknown', 'clientId' => string|null]
+     */
+    public function extractSourceInfo($filename)
+    {
+        $basename = basename($filename);
+
+        // アナログトランシーバー: rec_YYYYMMDD_HHMMSS
+        if (preg_match('/^rec_/', $basename)) {
+            return array('source' => 'analog', 'clientId' => null);
+        }
+
+        // Webトランシーバー: web_YYYYMMDD_HHMMSS_CLIENTID
+        if (preg_match('/^web_\d{8}_\d{6}_(\w+)/', $basename, $matches)) {
+            return array('source' => 'web', 'clientId' => $matches[1]);
+        }
+
+        // Webトランシーバー（clientIdなし、後方互換）: web_YYYYMMDD_HHMMSS
+        if (preg_match('/^web_/', $basename)) {
+            return array('source' => 'web', 'clientId' => null);
+        }
+
+        return array('source' => 'unknown', 'clientId' => null);
     }
 
     /**

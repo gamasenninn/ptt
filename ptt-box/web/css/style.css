@@ -65,11 +65,23 @@ h1 {
 
 .file-item {
     display: flex;
-    align-items: center;
-    padding: 15px 20px;
+    flex-direction: column;
+    padding: 12px 20px;
     border-bottom: 1px solid #eee;
-    gap: 15px;
+    gap: 6px;
     cursor: pointer;
+}
+
+.file-item-row1 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.file-item-row2 {
+    display: flex;
+    align-items: center;
+    padding-left: 26px;
 }
 
 .file-item:last-child {
@@ -84,17 +96,33 @@ h1 {
     background-color: #d5f5e3;
 }
 
+/* Source Badge */
+.source-badge {
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+.client-id {
+    font-size: 0.75em;
+    color: #3498db;
+    background: #e8f4fc;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+    flex-shrink: 0;
+}
+
 .file-datetime {
-    min-width: 150px;
+    min-width: 100px;
     color: #666;
     font-size: 0.9em;
     white-space: nowrap;
 }
 
 .file-preview {
-    flex: 2;
-    color: #888;
-    font-size: 0.9em;
+    flex: 1;
+    color: #666;
+    font-size: 0.85em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -103,6 +131,7 @@ h1 {
 .file-actions {
     display: flex;
     gap: 10px;
+    margin-left: auto;
 }
 
 /* Buttons */

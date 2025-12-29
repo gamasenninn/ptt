@@ -55,6 +55,7 @@ class SrtRepository
      */
     private function extractDatetimeForSort($filename)
     {
+        // rec_YYYYMMDD_HHMMSS または web_YYYYMMDD_HHMMSS または web_YYYYMMDD_HHMMSS_CLIENTID
         if (preg_match('/(?:rec|web)_(\d{8}_\d{6})/', $filename, $matches)) {
             return $matches[1];
         }

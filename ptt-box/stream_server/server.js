@@ -404,7 +404,7 @@ class StreamServer {
             this.sendPushNotification(client.clientId, client.displayName);
 
             // 録音開始
-            this.startRecording(client.displayName);
+            this.startRecording(client.clientId, client.displayName);
         } else {
             const speaker = this.clients.get(this.pttManager.currentSpeaker);
             client.send({
@@ -869,7 +869,7 @@ class StreamServer {
 
     // ========== 録音（WAVファイル保存）==========
 
-    startRecording(displayName) {
+    startRecording(clientId, displayName) {
         if (this.recordingProcess) return;
 
         const fs = require('fs');
@@ -884,7 +884,7 @@ class StreamServer {
             fs.mkdirSync(tempDir, { recursive: true });
         }
 
-        // ファイル名生成: web_YYYYMMDD_HHMMSS.wav
+        // ファイル名生成: web_YYYYMMDD_HHMMSS_CLIENTID.wav
         const now = new Date();
         const timestamp = now.getFullYear().toString() +
             String(now.getMonth() + 1).padStart(2, '0') +
@@ -892,8 +892,8 @@ class StreamServer {
             String(now.getHours()).padStart(2, '0') +
             String(now.getMinutes()).padStart(2, '0') +
             String(now.getSeconds()).padStart(2, '0');
-        this.recordingFilename = `web_${timestamp}.wav`;
-        this.recordingTempPath = path.join(tempDir, `recording_${timestamp}.wav`);
+        this.recordingFilename = `web_${timestamp}_${clientId}.wav`;
+        this.recordingTempPath = path.join(tempDir, `recording_${timestamp}_${clientId}.wav`);
         this.recordingFinalPath = path.join(recordingsDir, this.recordingFilename);
 
         log(`Recording started: ${this.recordingFilename} (speaker: ${displayName})`);
