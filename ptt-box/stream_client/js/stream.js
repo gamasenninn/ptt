@@ -68,6 +68,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
     // LINEなどの内蔵ブラウザを検出
     checkInAppBrowser();
+
+    // キーボードショートカット設定
+    setupKeyboardShortcuts();
 });
 
 // 内蔵ブラウザ検出
@@ -673,6 +676,42 @@ function setMicGain(value) {
     if (gainValue) {
         gainValue.textContent = gain.toFixed(1) + 'x';
     }
+}
+
+// ========== キーボードショートカット ==========
+
+let pttKeyActive = false;  // キーボードからPTTが有効か
+
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (event) => {
+        // Ctrl+Space でPTT開始
+        if (event.ctrlKey && event.code === 'Space') {
+            event.preventDefault();
+            if (!pttKeyActive) {
+                pttKeyActive = true;
+                pttStart(event);
+            }
+        }
+    });
+
+    document.addEventListener('keyup', (event) => {
+        // SpaceキーまたはCtrlキーが離されたらPTT終了
+        if (pttKeyActive && (event.code === 'Space' || event.key === 'Control')) {
+            event.preventDefault();
+            pttKeyActive = false;
+            pttEnd(event);
+        }
+    });
+
+    // ウィンドウがフォーカスを失ったらPTT終了
+    window.addEventListener('blur', () => {
+        if (pttKeyActive) {
+            pttKeyActive = false;
+            pttEnd(new Event('blur'));
+        }
+    });
+
+    debugLog('Keyboard shortcut: Ctrl+Space for PTT');
 }
 
 // ========== PTT機能 ==========
