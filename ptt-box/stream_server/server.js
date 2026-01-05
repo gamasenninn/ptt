@@ -667,6 +667,16 @@ class StreamServer {
             client.pc.close();
         }
 
+        // P2P接続クリーンアップ
+        const p2pConn = this.p2pConnections.get(client.clientId);
+        if (p2pConn) {
+            if (p2pConn.pc) {
+                p2pConn.pc.close();
+            }
+            this.p2pConnections.delete(client.clientId);
+            log(`P2P connection cleaned up: ${client.clientId}`);
+        }
+
         // クライアント削除
         this.clients.delete(client.clientId);
 
