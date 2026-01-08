@@ -394,6 +394,103 @@
             color: #eee;
             border: none;
         }
+
+        /* Clients Badge */
+        .clients-badge {
+            padding: 15px 12px;
+            background: #0f3460;
+            border: none;
+            border-radius: 8px;
+            color: #60efff;
+            font-size: 14px;
+            cursor: pointer;
+            display: none;
+        }
+        .clients-badge:hover {
+            background: #1a4a7a;
+        }
+        .clients-badge.visible {
+            display: inline-block;
+        }
+
+        /* Clients Popup */
+        .clients-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #16213e;
+            border-radius: 12px;
+            min-width: 250px;
+            max-width: 90%;
+            max-height: 60vh;
+            z-index: 1001;
+            display: none;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+        .clients-popup.active {
+            display: block;
+        }
+        .clients-popup-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid #0f3460;
+        }
+        .clients-popup-title {
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .clients-popup-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        .clients-popup-body {
+            padding: 8px 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .client-item-popup {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+        }
+        .client-item-popup:hover {
+            background: #0f3460;
+        }
+        .client-icon {
+            font-size: 16px;
+        }
+        .client-name-popup {
+            font-size: 14px;
+            color: #eee;
+        }
+        .no-clients-popup {
+            padding: 20px;
+            text-align: center;
+            color: #888;
+            font-size: 14px;
+        }
+        .clients-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            display: none;
+        }
+        .clients-overlay.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -407,10 +504,13 @@
         <!-- Transceiver Tab -->
         <div id="tab-transceiver" class="tab-content active">
             <!-- Connection Toggle -->
-            <button id="connectionToggle" class="connection-toggle disconnected" onclick="toggleConnection()">
-                <span class="connection-indicator"></span>
-                <span class="connection-text">未接続 - タップで接続</span>
-            </button>
+            <div style="display: flex; gap: 10px; align-items: stretch;">
+                <button id="connectionToggle" class="connection-toggle disconnected" onclick="toggleConnection()" style="flex: 1;">
+                    <span class="connection-indicator"></span>
+                    <span class="connection-text">未接続 - タップで接続</span>
+                </button>
+                <button id="clientsBadge" class="clients-badge" onclick="showClientsPopup()">0人</button>
+            </div>
 
             <!-- Speaker Status -->
             <div id="speakerStatus" class="speaker-status">
@@ -519,6 +619,18 @@
             <div class="modal-footer">
                 <button class="modal-btn modal-btn-secondary" onclick="closeSettings()">閉じる</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Clients Popup -->
+    <div id="clientsOverlay" class="clients-overlay" onclick="hideClientsPopup()"></div>
+    <div id="clientsPopup" class="clients-popup">
+        <div class="clients-popup-header">
+            <span class="clients-popup-title">接続中 (<span id="clientsPopupCount">0</span>)</span>
+            <button class="clients-popup-close" onclick="hideClientsPopup()">&times;</button>
+        </div>
+        <div id="clientsPopupBody" class="clients-popup-body">
+            <div class="no-clients-popup">接続中のクライアントはいません</div>
         </div>
     </div>
 

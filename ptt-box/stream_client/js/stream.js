@@ -28,6 +28,9 @@ const MIC_GAIN = 1.0;  // 増幅なし（将来の調整用に残す）
 // P2P接続管理
 const p2pConnections = new Map();  // clientId -> { pc, audioSender, audioElement }
 
+// 接続中クライアント一覧
+const connectedClients = new Map();  // clientId -> { clientId, displayName }
+
 // P2P音声レベルメーター用
 let p2pAudioContext = null;
 let p2pMeterSources = new Map();  // clientId -> { source, analyser }
@@ -230,6 +233,11 @@ async function connect() {
             } else if (data.type === 'client_joined') {
                 // 新規クライアント参加 → P2P接続確立（相手からofferが来る）
                 debugLog('Client joined: ' + data.clientId);
+                connectedClients.set(data.clientId, {
+                    clientId: data.clientId,
+                    displayName: data.displayName
+                });
+                updateClientsBadge();
             } else if (data.type === 'client_left') {
                 // クライアント切断 → P2P接続クリーンアップ
                 handleClientLeft(data.clientId);
@@ -537,6 +545,10 @@ function disconnect() {
 function cleanupConnection() {
     // 全P2P接続をクリーンアップ
     cleanupAllP2PConnections();
+
+    // クライアント一覧クリア
+    connectedClients.clear();
+    updateClientsBadge();
 
     if (pc) {
         pc.close();
@@ -1073,11 +1085,19 @@ function updatePttState(state, speakerName) {
 async function handleClientList(clients) {
     debugLog('Client list received: ' + clients.length + ' clients');
 
+    // クライアント一覧を更新
+    connectedClients.clear();
     for (const client of clients) {
+        connectedClients.set(client.clientId, {
+            clientId: client.clientId,
+            displayName: client.displayName
+        });
+
         if (!p2pConnections.has(client.clientId)) {
             await createP2PConnection(client.clientId, true);  // offerer
         }
     }
+    updateClientsBadge();
 }
 
 // P2P接続作成
@@ -1292,6 +1312,8 @@ async function handleP2PIceCandidate(fromClientId, candidate) {
 // クライアント切断時
 function handleClientLeft(clientId) {
     debugLog('Client left: ' + clientId);
+    connectedClients.delete(clientId);
+    updateClientsBadge();
     cleanupP2PConnection(clientId);
 }
 
@@ -1336,6 +1358,87 @@ async function waitForP2PIceGathering(p2pPc) {
             }
         });
     });
+}
+
+// ========== クライアント一覧UI ==========
+
+// バッジ更新
+function updateClientsBadge() {
+    const badge = document.getElementById('clientsBadge');
+    const count = connectedClients.size;
+
+    if (badge) {
+        badge.textContent = count + '人';
+        if (count > 0) {
+            badge.classList.add('visible');
+        } else {
+            badge.classList.remove('visible');
+        }
+    }
+
+    // ポップアップが開いていたら更新
+    const popup = document.getElementById('clientsPopup');
+    if (popup && popup.classList.contains('active')) {
+        renderClientsPopup();
+    }
+}
+
+// ポップアップ表示
+function showClientsPopup() {
+    const popup = document.getElementById('clientsPopup');
+    const overlay = document.getElementById('clientsOverlay');
+
+    if (popup && overlay) {
+        renderClientsPopup();
+        popup.classList.add('active');
+        overlay.classList.add('active');
+    }
+}
+
+// ポップアップ非表示
+function hideClientsPopup() {
+    const popup = document.getElementById('clientsPopup');
+    const overlay = document.getElementById('clientsOverlay');
+
+    if (popup) popup.classList.remove('active');
+    if (overlay) overlay.classList.remove('active');
+}
+
+// ポップアップ内容描画
+function renderClientsPopup() {
+    const body = document.getElementById('clientsPopupBody');
+    const countEl = document.getElementById('clientsPopupCount');
+
+    if (countEl) {
+        countEl.textContent = connectedClients.size;
+    }
+
+    if (!body) return;
+
+    if (connectedClients.size === 0) {
+        body.innerHTML = '<div class="no-clients-popup">接続中のクライアントはいません</div>';
+        return;
+    }
+
+    let html = '';
+    connectedClients.forEach((client) => {
+        const name = client.displayName || client.clientId;
+        html += `
+            <div class="client-item-popup">
+                <span class="client-icon">📱</span>
+                <span class="client-name-popup">${escapeHtmlForClients(name)}</span>
+            </div>
+        `;
+    });
+    body.innerHTML = html;
+}
+
+// HTMLエスケープ（クライアント一覧用）
+function escapeHtmlForClients(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // ========== プッシュ通知 ==========
