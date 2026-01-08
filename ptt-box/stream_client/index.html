@@ -463,6 +463,10 @@
 
             <div id="debug" style="margin-top: 10px; font-size: 12px; color: #aaa; text-align: left; max-height: 200px; overflow-y: auto; background: #0a0a15; padding: 12px; border-radius: 6px; word-break: break-all; display: none;">
             </div>
+
+            <div style="margin-top: 15px;">
+                <button onclick="openSettings()" style="background: #3d405b; padding: 8px 16px; font-size: 14px; width: 100%;">⚙️ 設定</button>
+            </div>
         </div>
 
         <!-- History Tab -->
@@ -491,6 +495,29 @@
             <div class="modal-footer">
                 <button class="modal-btn modal-btn-secondary" onclick="closeEditor()">キャンセル</button>
                 <button class="modal-btn modal-btn-primary" onclick="saveSrt()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal-overlay">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <span class="modal-title">設定</span>
+                <button class="modal-close" onclick="closeSettings()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 20px;">
+                    <div style="margin-bottom: 10px; font-weight: 500;">PTTショートカットキー</div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <div id="pttKeyDisplay" style="flex: 1; padding: 12px; background: #0a0a15; border-radius: 6px; text-align: center; font-family: monospace;">Ctrl+Space</div>
+                        <button onclick="startKeyRegistration()" id="registerKeyBtn" style="padding: 12px 20px; background: #3d405b; border: none; color: #eee; border-radius: 6px; cursor: pointer;">登録</button>
+                    </div>
+                    <div id="keyRegistrationHint" style="margin-top: 10px; font-size: 12px; color: #888; display: none;">キーを押してください...</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn modal-btn-secondary" onclick="closeSettings()">閉じる</button>
             </div>
         </div>
     </div>

@@ -681,11 +681,147 @@ function setMicGain(value) {
 // ========== キーボードショートカット ==========
 
 let pttKeyActive = false;  // キーボードからPTTが有効か
+let pttKeyConfig = { ctrlKey: true, code: 'Space' };  // デフォルト: Ctrl+Space
+let isKeyRegistrationMode = false;  // キー登録モード
+
+// 設定をlocalStorageから読み込み
+function loadPttKeyConfig() {
+    const saved = localStorage.getItem('pttKeyConfig');
+    if (saved) {
+        try {
+            pttKeyConfig = JSON.parse(saved);
+            debugLog('PTT key loaded: ' + getPttKeyDisplayName());
+        } catch (e) {
+            debugLog('Failed to load PTT key config');
+        }
+    }
+}
+
+// 設定をlocalStorageに保存
+function savePttKeyConfig() {
+    localStorage.setItem('pttKeyConfig', JSON.stringify(pttKeyConfig));
+}
+
+// PTTキーの表示名を取得
+function getPttKeyDisplayName() {
+    let name = '';
+    if (pttKeyConfig.ctrlKey) name += 'Ctrl+';
+    if (pttKeyConfig.altKey) name += 'Alt+';
+    if (pttKeyConfig.shiftKey) name += 'Shift+';
+    name += pttKeyConfig.code.replace('Key', '').replace('Digit', '');
+    return name;
+}
+
+// 設定画面を開く
+function openSettings() {
+    const modal = document.getElementById('settingsModal');
+    if (modal) {
+        modal.classList.add('active');
+        updatePttKeyDisplay();
+    }
+}
+
+// 設定画面を閉じる
+function closeSettings() {
+    const modal = document.getElementById('settingsModal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+    cancelKeyRegistration();
+}
+
+// PTTキー表示を更新
+function updatePttKeyDisplay() {
+    const display = document.getElementById('pttKeyDisplay');
+    if (display) {
+        display.textContent = getPttKeyDisplayName();
+    }
+}
+
+// キー登録モード開始
+function startKeyRegistration() {
+    isKeyRegistrationMode = true;
+    const hint = document.getElementById('keyRegistrationHint');
+    const btn = document.getElementById('registerKeyBtn');
+    if (hint) hint.style.display = 'block';
+    if (btn) {
+        btn.textContent = 'キャンセル';
+        btn.onclick = cancelKeyRegistration;
+    }
+}
+
+// キー登録キャンセル
+function cancelKeyRegistration() {
+    isKeyRegistrationMode = false;
+    const hint = document.getElementById('keyRegistrationHint');
+    const btn = document.getElementById('registerKeyBtn');
+    if (hint) hint.style.display = 'none';
+    if (btn) {
+        btn.textContent = '登録';
+        btn.onclick = startKeyRegistration;
+    }
+}
+
+// キー登録処理
+function registerPttKey(event) {
+    if (!isKeyRegistrationMode) return false;
+
+    // Escapeでキャンセル
+    if (event.code === 'Escape') {
+        cancelKeyRegistration();
+        return true;
+    }
+
+    // 修飾キーのみは無視
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) {
+        return true;
+    }
+
+    pttKeyConfig = {
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        code: event.code
+    };
+
+    savePttKeyConfig();
+    updatePttKeyDisplay();
+    cancelKeyRegistration();
+    debugLog('PTT key registered: ' + getPttKeyDisplayName());
+    return true;
+}
+
+// PTTキーが押されたか判定
+function isPttKeyPressed(event) {
+    return (!!pttKeyConfig.ctrlKey === event.ctrlKey) &&
+           (!!pttKeyConfig.altKey === event.altKey) &&
+           (!!pttKeyConfig.shiftKey === event.shiftKey) &&
+           (pttKeyConfig.code === event.code);
+}
+
+// PTTキーが離されたか判定（修飾キーまたはメインキーが離された）
+function isPttKeyReleased(event) {
+    if (pttKeyConfig.code === event.code) return true;
+    if (pttKeyConfig.ctrlKey && event.key === 'Control') return true;
+    if (pttKeyConfig.altKey && event.key === 'Alt') return true;
+    if (pttKeyConfig.shiftKey && event.key === 'Shift') return true;
+    return false;
+}
 
 function setupKeyboardShortcuts() {
+    // 保存された設定を読み込み
+    loadPttKeyConfig();
+
     document.addEventListener('keydown', (event) => {
-        // Ctrl+Space でPTT開始
-        if (event.ctrlKey && event.code === 'Space') {
+        // キー登録モード
+        if (isKeyRegistrationMode) {
+            event.preventDefault();
+            registerPttKey(event);
+            return;
+        }
+
+        // PTTキーでPTT開始
+        if (isPttKeyPressed(event)) {
             event.preventDefault();
             if (!pttKeyActive) {
                 pttKeyActive = true;
@@ -695,8 +831,8 @@ function setupKeyboardShortcuts() {
     });
 
     document.addEventListener('keyup', (event) => {
-        // SpaceキーまたはCtrlキーが離されたらPTT終了
-        if (pttKeyActive && (event.code === 'Space' || event.key === 'Control')) {
+        // PTTキーが離されたらPTT終了
+        if (pttKeyActive && isPttKeyReleased(event)) {
             event.preventDefault();
             pttKeyActive = false;
             pttEnd(event);
@@ -711,7 +847,7 @@ function setupKeyboardShortcuts() {
         }
     });
 
-    debugLog('Keyboard shortcut: Ctrl+Space for PTT');
+    debugLog('Keyboard shortcut: ' + getPttKeyDisplayName() + ' for PTT');
 }
 
 // ========== PTT機能 ==========
