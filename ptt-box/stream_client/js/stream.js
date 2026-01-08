@@ -658,7 +658,7 @@ function forceOpusMono(sdp) {
     return sdp;
 }
 
-// ボリューム調整（PCストリーム用）
+// ボリューム調整（PCストリーム用 = サーバーからのP2P音声）
 function setVolume(value) {
     const audio = document.getElementById('audio');
     const volumeValue = document.getElementById('volumeValue');
@@ -670,9 +670,15 @@ function setVolume(value) {
     if (volumeValue) {
         volumeValue.textContent = value + '%';
     }
+
+    // サーバーからのP2P音声要素を更新
+    const serverConn = p2pConnections.get('server');
+    if (serverConn && serverConn.audioElement) {
+        serverConn.audioElement.volume = vol;
+    }
 }
 
-// P2P音声ボリューム調整
+// P2P音声ボリューム調整（クライアント同士）
 function setP2PVolume(value) {
     const volumeValue = document.getElementById('p2pVolumeValue');
     const vol = value / 100;
@@ -681,9 +687,9 @@ function setP2PVolume(value) {
         volumeValue.textContent = value + '%';
     }
 
-    // 全P2P接続の音声要素を更新
-    p2pConnections.forEach((connInfo) => {
-        if (connInfo.audioElement) {
+    // サーバー以外のP2P接続の音声要素を更新
+    p2pConnections.forEach((connInfo, clientId) => {
+        if (clientId !== 'server' && connInfo.audioElement) {
             connInfo.audioElement.volume = vol;
         }
     });
@@ -1165,10 +1171,19 @@ async function createP2PConnection(remoteClientId, isOfferer) {
         }
         connInfo.audioElement = audio;
 
-        // P2P音量スライダーの値を適用
-        const p2pSlider = document.getElementById('p2pVolumeSlider');
-        if (p2pSlider) {
-            audio.volume = p2pSlider.value / 100;
+        // サーバーかクライアントかで適用する音量スライダーを分ける
+        if (remoteClientId === 'server') {
+            // PCストリーム音量を適用
+            const volumeSlider = document.getElementById('volumeSlider');
+            if (volumeSlider) {
+                audio.volume = volumeSlider.value / 100;
+            }
+        } else {
+            // P2P音量を適用
+            const p2pSlider = document.getElementById('p2pVolumeSlider');
+            if (p2pSlider) {
+                audio.volume = p2pSlider.value / 100;
+            }
         }
 
         // 再生を試みる
