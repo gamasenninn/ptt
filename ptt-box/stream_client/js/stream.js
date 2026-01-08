@@ -783,14 +783,20 @@ function pttStart(event) {
     if (pttButtonPressed) return;  // 既に押されている
     pttButtonPressed = true;
 
+    // ボタンの押下状態を視覚的に表示
+    const pttBtn = document.getElementById('pttBtn');
+    if (pttBtn) pttBtn.classList.add('pressing');
+
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         debugLog('WebSocket not connected');
         pttButtonPressed = false;
+        if (pttBtn) pttBtn.classList.remove('pressing');
         return;
     }
     if (!micAccessGranted) {
         debugLog('Microphone not available');
         pttButtonPressed = false;
+        if (pttBtn) pttBtn.classList.remove('pressing');
         return;
     }
 
@@ -802,6 +808,10 @@ function pttStart(event) {
 function pttEnd(event) {
     event.preventDefault();
     event.stopPropagation();
+
+    // ボタンの押下状態を解除
+    const pttBtn = document.getElementById('pttBtn');
+    if (pttBtn) pttBtn.classList.remove('pressing');
 
     if (!pttButtonPressed) return;  // 押されていない
     pttButtonPressed = false;

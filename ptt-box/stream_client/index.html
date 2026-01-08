@@ -130,9 +130,10 @@
             transition: all 0.15s;
             user-select: none;
             -webkit-user-select: none;
-            touch-action: manipulation;
+            touch-action: none;
         }
         .ptt-button:active:not(:disabled),
+        .ptt-button.pressing,
         .ptt-button.transmitting {
             background: #e94560;
             border-color: #ff6b6b;
@@ -427,12 +428,10 @@
             <!-- PTT Button -->
             <div class="ptt-container">
                 <button id="pttBtn" class="ptt-button"
-                        ontouchstart="pttStart(event)"
-                        ontouchend="pttEnd(event)"
-                        ontouchcancel="pttEnd(event)"
-                        onmousedown="pttStart(event)"
-                        onmouseup="pttEnd(event)"
-                        onmouseleave="pttEnd(event)"
+                        onpointerdown="pttStart(event)"
+                        onpointerup="pttEnd(event)"
+                        onpointercancel="pttEnd(event)"
+                        onpointerleave="pttEnd(event)"
                         disabled>
                     <span class="ptt-icon">🎙️</span>
                     <span class="ptt-label">押して話す</span>
