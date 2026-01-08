@@ -63,11 +63,12 @@ window.addEventListener('DOMContentLoaded', () => {
         debugEl.innerHTML = '';
     }
 
-    // 音量の初期値を設定（スライダーのデフォルト値と同期）
+    // PCストリーム音量の初期値を設定（スライダーのデフォルト値と同期）
     const audio = document.getElementById('audio');
     if (audio) {
         audio.volume = 0.4;  // 40%
     }
+    // P2P音量は接続時に動的に設定される
 
     // LINEなどの内蔵ブラウザを検出
     checkInAppBrowser();
@@ -657,7 +658,7 @@ function forceOpusMono(sdp) {
     return sdp;
 }
 
-// ボリューム調整
+// ボリューム調整（PCストリーム用）
 function setVolume(value) {
     const audio = document.getElementById('audio');
     const volumeValue = document.getElementById('volumeValue');
@@ -669,8 +670,18 @@ function setVolume(value) {
     if (volumeValue) {
         volumeValue.textContent = value + '%';
     }
+}
 
-    // P2P接続の音声要素も更新
+// P2P音声ボリューム調整
+function setP2PVolume(value) {
+    const volumeValue = document.getElementById('p2pVolumeValue');
+    const vol = value / 100;
+
+    if (volumeValue) {
+        volumeValue.textContent = value + '%';
+    }
+
+    // 全P2P接続の音声要素を更新
     p2pConnections.forEach((connInfo) => {
         if (connInfo.audioElement) {
             connInfo.audioElement.volume = vol;
@@ -1154,10 +1165,10 @@ async function createP2PConnection(remoteClientId, isOfferer) {
         }
         connInfo.audioElement = audio;
 
-        // 音量をメインと同じに設定
-        const mainAudio = document.getElementById('audio');
-        if (mainAudio) {
-            audio.volume = mainAudio.volume;
+        // P2P音量スライダーの値を適用
+        const p2pSlider = document.getElementById('p2pVolumeSlider');
+        if (p2pSlider) {
+            audio.volume = p2pSlider.value / 100;
         }
 
         // 再生を試みる
