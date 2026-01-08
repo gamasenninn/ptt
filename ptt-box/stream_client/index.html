@@ -477,7 +477,7 @@
             <div id="historyList" class="history-list">
                 <div class="history-loading">読み込み中...</div>
             </div>
-            <audio id="historyAudio" style="display: none;"></audio>
+            <audio id="historyAudio" style="display: none;" preload="none"></audio>
         </div>
     </div>
 
@@ -489,7 +489,7 @@
                 <button class="modal-close" onclick="closeEditor()">&times;</button>
             </div>
             <div class="modal-body">
-                <audio id="editAudioPlayer" controls style="width: 100%; margin-bottom: 15px;"></audio>
+                <audio id="editAudioPlayer" controls preload="none" style="width: 100%; margin-bottom: 15px;"></audio>
                 <textarea id="editTextarea" class="modal-textarea"></textarea>
             </div>
             <div class="modal-footer">

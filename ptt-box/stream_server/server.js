@@ -310,32 +310,39 @@ class StreamServer {
     }
 
     // SRTファイル一覧取得
-    async getSrtFileList(recordingsDir) {
+    async getSrtFileList(recordingsDir, limit = 30) {
         if (!fs.existsSync(recordingsDir)) {
             return [];
         }
 
-        const files = fs.readdirSync(recordingsDir)
+        // まずファイル名だけ取得してソート（高速）
+        const srtFiles = fs.readdirSync(recordingsDir)
             .filter(f => f.endsWith('.srt'))
-            .map(filename => {
-                const filepath = path.join(recordingsDir, filename);
-                const content = fs.readFileSync(filepath, 'utf-8');
-                const preview = this.getSrtPreview(content);
-                const { datetime, datetimeShort } = this.extractDatetimeFromFilename(filename);
-                const { source, clientId } = this.extractSourceInfo(filename);
+            .map(filename => ({
+                filename,
+                sortKey: this.extractDatetimeForSort(filename)
+            }))
+            .sort((a, b) => b.sortKey.localeCompare(a.sortKey))
+            .slice(0, limit);  // 最新N件のみ
 
-                return {
-                    filename,
-                    datetime,
-                    datetimeShort,
-                    wavFile: filename.replace('.srt', '.wav'),
-                    preview,
-                    source,
-                    clientId,
-                    sortKey: this.extractDatetimeForSort(filename)
-                };
-            })
-            .sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+        // 必要なファイルだけ内容を読み込み
+        const files = srtFiles.map(({ filename }) => {
+            const filepath = path.join(recordingsDir, filename);
+            const content = fs.readFileSync(filepath, 'utf-8');
+            const preview = this.getSrtPreview(content);
+            const { datetime, datetimeShort } = this.extractDatetimeFromFilename(filename);
+            const { source, clientId } = this.extractSourceInfo(filename);
+
+            return {
+                filename,
+                datetime,
+                datetimeShort,
+                wavFile: filename.replace('.srt', '.wav'),
+                preview,
+                source,
+                clientId
+            };
+        });
 
         return files;
     }
@@ -391,7 +398,7 @@ class StreamServer {
             textLines.push(trimmed);
         }
 
-        return textLines.join(' ').substring(0, 100);
+        return textLines.join(' ').substring(0, 50);
     }
 
     // 新規接続
