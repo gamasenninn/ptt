@@ -87,12 +87,43 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// 履歴音量設定
+function setHistoryVolume(value) {
+    const audio = document.getElementById('historyAudio');
+    const editAudio = document.getElementById('editAudioPlayer');
+    const volumeValue = document.getElementById('historyVolumeValue');
+
+    if (audio) audio.volume = value / 100;
+    if (editAudio) editAudio.volume = value / 100;
+    if (volumeValue) volumeValue.textContent = value + '%';
+
+    // localStorageに保存
+    localStorage.setItem('historyVolumeSlider', value);
+}
+
+// 保存された履歴音量を読み込み
+function loadHistoryVolumeSetting() {
+    const saved = localStorage.getItem('historyVolumeSlider');
+    const slider = document.getElementById('historyVolumeSlider');
+    const audio = document.getElementById('historyAudio');
+    const volumeValue = document.getElementById('historyVolumeValue');
+
+    if (saved !== null) {
+        const vol = parseInt(saved, 10);
+        if (slider) slider.value = vol;
+        if (audio) audio.volume = vol / 100;
+        if (volumeValue) volumeValue.textContent = vol + '%';
+    } else if (audio) {
+        audio.volume = 0.4;  // デフォルト40%
+    }
+}
+
 // 音声再生（トグル）
 function playHistoryAudio(wavFile) {
     const audio = document.getElementById('historyAudio');
 
-    // トランシーバーの音量設定を反映
-    const volumeSlider = document.getElementById('volumeSlider');
+    // 履歴用の音量設定を反映
+    const volumeSlider = document.getElementById('historyVolumeSlider');
     if (volumeSlider) {
         audio.volume = volumeSlider.value / 100;
     }
@@ -113,7 +144,7 @@ function playHistoryAudio(wavFile) {
     renderHistoryList();
 }
 
-// 音声終了時
+// 音声終了時 & 初期化
 document.addEventListener('DOMContentLoaded', () => {
     const audio = document.getElementById('historyAudio');
     if (audio) {
@@ -122,6 +153,9 @@ document.addEventListener('DOMContentLoaded', () => {
             renderHistoryList();
         });
     }
+
+    // 保存された履歴音量を読み込み
+    loadHistoryVolumeSetting();
 });
 
 // SRT編集モーダルを開く
@@ -144,8 +178,8 @@ async function openEditor(filename, wavFile) {
         // 音声プレイヤーを設定
         if (audioPlayer && wavFile) {
             audioPlayer.src = '/api/audio?file=' + encodeURIComponent(wavFile);
-            // トランシーバーの音量設定を反映
-            const volumeSlider = document.getElementById('volumeSlider');
+            // 履歴用の音量設定を反映
+            const volumeSlider = document.getElementById('historyVolumeSlider');
             if (volumeSlider) {
                 audioPlayer.volume = volumeSlider.value / 100;
             }

@@ -575,8 +575,15 @@
 
         <!-- History Tab -->
         <div id="tab-history" class="tab-content">
-            <div style="display: flex; justify-content: center; margin-bottom: 10px;">
-                <button onclick="loadHistory()" style="background: #3d405b; padding: 10px 40px; font-size: 14px;">更新</button>
+            <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
+                <button onclick="loadHistory()" style="background: #3d405b; padding: 10px 20px; font-size: 14px;">更新</button>
+                <div style="flex: 1; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 16px;">🔊</span>
+                    <input type="range" id="historyVolumeSlider" min="0" max="100" value="40"
+                           style="flex: 1; height: 6px; cursor: pointer; accent-color: #60efff;"
+                           oninput="setHistoryVolume(this.value)">
+                    <span id="historyVolumeValue" style="min-width: 35px; font-size: 12px; text-align: right;">40%</span>
+                </div>
             </div>
             <div id="historyList" class="history-list">
                 <div class="history-loading">読み込み中...</div>
