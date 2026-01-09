@@ -79,6 +79,43 @@ function loadDebugButtonSetting() {
     }
 }
 
+// 保存された音量設定を読み込み
+function loadVolumeSetting() {
+    // PCストリーム音量
+    const savedVolume = localStorage.getItem('volumeSlider');
+    const volumeSlider = document.getElementById('volumeSlider');
+    const audio = document.getElementById('audio');
+    if (savedVolume !== null) {
+        const vol = parseInt(savedVolume, 10);
+        if (volumeSlider) volumeSlider.value = vol;
+        if (audio) audio.volume = vol / 100;
+        const volumeValue = document.getElementById('volumeValue');
+        if (volumeValue) volumeValue.textContent = vol + '%';
+    } else if (audio) {
+        audio.volume = 0.4;  // デフォルト40%
+    }
+
+    // P2P音量
+    const savedP2PVolume = localStorage.getItem('p2pVolumeSlider');
+    const p2pVolumeSlider = document.getElementById('p2pVolumeSlider');
+    if (savedP2PVolume !== null) {
+        const vol = parseInt(savedP2PVolume, 10);
+        if (p2pVolumeSlider) p2pVolumeSlider.value = vol;
+        const p2pVolumeValue = document.getElementById('p2pVolumeValue');
+        if (p2pVolumeValue) p2pVolumeValue.textContent = vol + '%';
+    }
+
+    // マイクゲイン
+    const savedMicGain = localStorage.getItem('micGainSlider');
+    const micGainSlider = document.getElementById('micGainSlider');
+    if (savedMicGain !== null) {
+        const val = parseInt(savedMicGain, 10);
+        if (micGainSlider) micGainSlider.value = val;
+        const micGainValue = document.getElementById('micGainValue');
+        if (micGainValue) micGainValue.textContent = (val / 100).toFixed(1) + 'x';
+    }
+}
+
 // ページ読み込み時にデバッグ領域をクリア
 window.addEventListener('DOMContentLoaded', () => {
     const debugEl = document.getElementById('debug');
@@ -86,12 +123,8 @@ window.addEventListener('DOMContentLoaded', () => {
         debugEl.innerHTML = '';
     }
 
-    // PCストリーム音量の初期値を設定（スライダーのデフォルト値と同期）
-    const audio = document.getElementById('audio');
-    if (audio) {
-        audio.volume = 0.4;  // 40%
-    }
-    // P2P音量は接続時に動的に設定される
+    // 保存された音量設定を読み込み
+    loadVolumeSetting();
 
     // LINEなどの内蔵ブラウザを検出
     checkInAppBrowser();
@@ -702,6 +735,9 @@ function setVolume(value) {
     if (serverConn && serverConn.audioElement) {
         serverConn.audioElement.volume = vol;
     }
+
+    // localStorageに保存
+    localStorage.setItem('volumeSlider', value);
 }
 
 // P2P音声ボリューム調整（クライアント同士）
@@ -719,6 +755,9 @@ function setP2PVolume(value) {
             connInfo.audioElement.volume = vol;
         }
     });
+
+    // localStorageに保存
+    localStorage.setItem('p2pVolumeSlider', value);
 }
 
 // マイクゲイン調整
@@ -731,6 +770,9 @@ function setMicGain(value) {
     if (gainValue) {
         gainValue.textContent = gain.toFixed(1) + 'x';
     }
+
+    // localStorageに保存
+    localStorage.setItem('micGainSlider', value);
 }
 
 // ========== キーボードショートカット ==========
