@@ -17,22 +17,22 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             max-width: 600px;
-            margin: 10px auto;
-            padding: 10px;
+            margin: 5px auto;
+            padding: 5px;
             background: #1a1a2e;
             color: #eee;
         }
         .container {
             background: #16213e;
             border-radius: 12px;
-            padding: 15px 20px;
+            padding: 10px 15px;
             text-align: center;
         }
         /* Connection Toggle Button */
         .connection-toggle {
             width: 100%;
-            margin: 10px 0;
-            padding: 15px 20px;
+            margin: 8px 0;
+            padding: 12px 15px;
             border: none;
             border-radius: 8px;
             cursor: pointer;
@@ -107,7 +107,7 @@
         }
         /* PTT Button */
         .ptt-container {
-            margin: 15px 0;
+            margin: 10px 0;
         }
         .ptt-button {
             width: 140px;
@@ -184,12 +184,12 @@
         /* Tab Navigation */
         .tab-nav {
             display: flex;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             border-bottom: 2px solid #0f3460;
         }
         .tab-btn {
             flex: 1;
-            padding: 12px;
+            padding: 8px;
             background: transparent !important;
             border: none;
             color: #888;
@@ -537,7 +537,7 @@
 
             <audio id="audio" autoplay playsinline></audio>
 
-            <div style="margin-top: 20px; display: flex; align-items: center; gap: 10px;">
+            <div style="margin-top: 12px; display: flex; align-items: center; gap: 10px;">
                 <span style="font-size: 20px;" title="PCストリーム">🔈</span>
                 <input type="range" id="volumeSlider" min="0" max="100" value="40"
                        style="flex: 1; height: 8px; cursor: pointer; accent-color: #60efff;"
@@ -545,7 +545,7 @@
                 <span id="volumeValue" style="min-width: 40px; text-align: right;">40%</span>
             </div>
 
-            <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px;">
+            <div style="margin-top: 8px; display: flex; align-items: center; gap: 10px;">
                 <span style="font-size: 20px;" title="P2P音声">👥</span>
                 <input type="range" id="p2pVolumeSlider" min="0" max="100" value="40"
                        style="flex: 1; height: 8px; cursor: pointer; accent-color: #f39c12;"
@@ -553,7 +553,7 @@
                 <span id="p2pVolumeValue" style="min-width: 40px; text-align: right;">40%</span>
             </div>
 
-            <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px;">
+            <div style="margin-top: 8px; display: flex; align-items: center; gap: 10px;">
                 <span style="font-size: 20px;" title="マイクゲイン">🎤</span>
                 <input type="range" id="micGainSlider" min="50" max="300" value="100"
                        style="flex: 1; height: 8px; cursor: pointer; accent-color: #27ae60;"
@@ -561,11 +561,11 @@
                 <span id="micGainValue" style="min-width: 40px; text-align: right;">1.0x</span>
             </div>
 
-            <div style="margin-top: 15px;">
+            <div style="margin-top: 10px;">
                 <button onclick="openSettings()" style="background: #3d405b; padding: 8px 16px; font-size: 14px; width: 100%;">⚙️ 設定</button>
             </div>
 
-            <div id="debugButtonContainer" style="margin-top: 15px; display: none;">
+            <div id="debugButtonContainer" style="margin-top: 10px; display: none;">
                 <button onclick="toggleDebug()" style="background: #333; padding: 8px 16px; font-size: 14px; width: 100%;">デバッグ表示</button>
             </div>
 
