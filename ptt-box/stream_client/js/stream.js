@@ -56,6 +56,29 @@ function toggleDebug() {
     debugEl.style.display = debugVisible ? 'block' : 'none';
 }
 
+// デバッグボタン表示/非表示
+function toggleDebugButtonVisibility(visible) {
+    const container = document.getElementById('debugButtonContainer');
+    if (container) {
+        container.style.display = visible ? 'block' : 'none';
+    }
+    localStorage.setItem('debugButtonVisible', visible ? 'true' : 'false');
+}
+
+// デバッグボタン表示設定を読み込み
+function loadDebugButtonSetting() {
+    const saved = localStorage.getItem('debugButtonVisible');
+    const visible = saved === 'true';
+    const container = document.getElementById('debugButtonContainer');
+    const toggle = document.getElementById('debugButtonToggle');
+    if (container) {
+        container.style.display = visible ? 'block' : 'none';
+    }
+    if (toggle) {
+        toggle.checked = visible;
+    }
+}
+
 // ページ読み込み時にデバッグ領域をクリア
 window.addEventListener('DOMContentLoaded', () => {
     const debugEl = document.getElementById('debug');
@@ -75,6 +98,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
     // キーボードショートカット設定
     setupKeyboardShortcuts();
+
+    // デバッグボタン表示設定を読み込み
+    loadDebugButtonSetting();
 });
 
 // 内蔵ブラウザ検出
