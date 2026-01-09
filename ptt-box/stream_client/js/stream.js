@@ -6,8 +6,9 @@ let audioContext = null;
 let analyser = null;
 let iceServers = null;  // サーバーから受信したICE設定
 let debugVisible = false;
-let autoReconnect = true;  // 自動再接続フラグ
+let autoReconnect = false;  // 自動再接続フラグ（connect()でtrueに設定）
 let reconnectAttempts = 0;
+let reconnectTimer = null;  // 再接続タイマーID
 const MAX_RECONNECT_ATTEMPTS = 10;
 const RECONNECT_DELAY = 3000;  // 3秒
 let wakeLock = null;  // スクリーンロック防止
@@ -199,10 +200,11 @@ document.addEventListener('visibilitychange', async () => {
 
 // 接続トグルボタン制御
 function toggleConnection() {
-    if (!ws || ws.readyState === WebSocket.CLOSED) {
-        connect();
-    } else {
+    // autoReconnect=true（再接続待機中含む）または接続中なら切断
+    if (autoReconnect || (ws && ws.readyState !== WebSocket.CLOSED)) {
         disconnect();
+    } else {
+        connect();
     }
 }
 
@@ -594,6 +596,11 @@ function removeP2PVolumeMeterSource(clientId) {
 function disconnect() {
     autoReconnect = false;  // 手動切断時は自動再接続しない
     reconnectAttempts = 0;
+    // 再接続タイマーをキャンセル
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
     releaseWakeLock();  // Wake Lock解放
     if (ws) {
         ws.close();
@@ -650,8 +657,10 @@ function cleanupConnection() {
     if (audio) {
         audio.srcObject = null;
     }
-    document.getElementById('volumeBar').style.width = '0%';
-    document.getElementById('p2pVolumeBar').style.width = '0%';
+    const volumeBar = document.getElementById('volumeBar');
+    if (volumeBar) volumeBar.style.width = '0%';
+    const p2pVolumeBar = document.getElementById('p2pVolumeBar');
+    if (p2pVolumeBar) p2pVolumeBar.style.width = '0%';
 
     // PTT状態リセット
     updatePttState('idle', null);
@@ -677,7 +686,8 @@ function scheduleReconnect() {
     debugLog('Reconnecting in ' + (RECONNECT_DELAY/1000) + 's... (' + reconnectAttempts + '/' + MAX_RECONNECT_ATTEMPTS + ')');
     updateConnectionToggle('connecting');
 
-    setTimeout(() => {
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
         if (autoReconnect && !ws) {
             connect();
         }
