@@ -88,10 +88,9 @@
             background: #5c5f7e;
         }
         .volume-meter {
-            height: 24px;
-            background: #0f3460;
-            border-radius: 12px;
-            margin-top: 20px;
+            height: 4px;
+            background: #0a1628;
+            border-radius: 2px;
             overflow: hidden;
         }
         .volume-bar {
@@ -99,7 +98,7 @@
             background: linear-gradient(90deg, #00ff87, #60efff);
             width: 0%;
             transition: width 0.05s;
-            border-radius: 12px;
+            border-radius: 2px;
         }
         .info {
             margin-top: 20px;
@@ -518,6 +517,11 @@
                 <button id="clientsBadge" class="clients-badge" onclick="event.stopPropagation(); showClientsPopup()">0人</button>
             </div>
 
+            <!-- Volume Meter -->
+            <div class="volume-meter" style="margin-bottom: 15px;">
+                <div id="p2pVolumeBar" class="volume-bar"></div>
+            </div>
+
             <!-- PTT Button -->
             <div class="ptt-container">
                 <button id="pttBtn" class="ptt-button"
@@ -555,14 +559,6 @@
                        style="flex: 1; height: 8px; cursor: pointer; accent-color: #27ae60;"
                        oninput="setMicGain(this.value)">
                 <span id="micGainValue" style="min-width: 40px; text-align: right;">1.0x</span>
-            </div>
-
-            <div class="volume-meter" style="display: none;">
-                <div id="volumeBar" class="volume-bar"></div>
-            </div>
-
-            <div class="volume-meter">
-                <div id="p2pVolumeBar" class="volume-bar"></div>
             </div>
 
             <div style="margin-top: 15px;">
