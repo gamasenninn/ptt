@@ -80,6 +80,30 @@ function loadDebugButtonSetting() {
     }
 }
 
+// PTTボタン表示/非表示
+function togglePttButtonVisibility(visible) {
+    const container = document.getElementById('pttContainer');
+    if (container) {
+        container.style.display = visible ? 'block' : 'none';
+    }
+    localStorage.setItem('pttButtonVisible', visible ? 'true' : 'false');
+}
+
+// PTTボタン表示設定を読み込み
+function loadPttButtonSetting() {
+    const saved = localStorage.getItem('pttButtonVisible');
+    // デフォルトは表示（true）
+    const visible = saved !== 'false';
+    const container = document.getElementById('pttContainer');
+    const toggle = document.getElementById('pttButtonToggle');
+    if (container) {
+        container.style.display = visible ? 'block' : 'none';
+    }
+    if (toggle) {
+        toggle.checked = visible;
+    }
+}
+
 // 保存された音量設定を読み込み
 function loadVolumeSetting() {
     // PCストリーム音量
@@ -135,6 +159,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
     // デバッグボタン表示設定を読み込み
     loadDebugButtonSetting();
+
+    // PTTボタン表示設定を読み込み
+    loadPttButtonSetting();
 });
 
 // 内蔵ブラウザ検出
