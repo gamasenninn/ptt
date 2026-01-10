@@ -174,9 +174,16 @@ class StreamServer {
         // PTTタイムアウトチェッカー
         setInterval(() => this.checkPttTimeout(), 1000);
 
-        // WebSocketハートビート（30秒ごとにping）
+        // WebSocketハートビート（30秒ごとにping/pong確認）
         setInterval(() => {
-            for (const client of this.clients.values()) {
+            for (const [clientId, client] of this.clients) {
+                if (client.isAlive === false) {
+                    // 前回のpingにpongが返ってこなかった → 切断
+                    log(`Client ${client.displayName} timeout - no pong response`);
+                    client.ws.terminate();
+                    continue;
+                }
+                client.isAlive = false;  // falseにしてping送信
                 if (client.ws.readyState === WebSocket.OPEN) {
                     client.ws.ping();
                 }
@@ -446,6 +453,12 @@ class StreamServer {
         ws.on('error', (err) => {
             logError(`WebSocket error: ${err.message}`);
         });
+
+        // pongハンドラ（ハートビート用）
+        ws.on('pong', () => {
+            client.isAlive = true;
+        });
+        client.isAlive = true;  // 初期値
     }
 
     // メッセージ処理
