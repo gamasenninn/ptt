@@ -14,6 +14,9 @@
         * {
             box-sizing: border-box;
         }
+        html {
+            overscroll-behavior: none;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             max-width: 600px;
@@ -21,6 +24,7 @@
             padding: 5px;
             background: #1a1a2e;
             color: #eee;
+            overscroll-behavior: none;  /* プルダウンリロード抑制 */
         }
         .container {
             background: #16213e;
@@ -637,6 +641,9 @@
                         <input type="checkbox" id="debugButtonToggle" onchange="toggleDebugButtonVisibility(this.checked)" style="width: 18px; height: 18px; cursor: pointer;">
                         <span>デバッグボタンを表示</span>
                     </label>
+                </div>
+                <div style="margin-bottom: 10px;">
+                    <button onclick="location.reload()" style="width: 100%; padding: 12px; background: #641220; border: none; color: #f8d7da; border-radius: 6px; cursor: pointer;">ページを再読み込み</button>
                 </div>
             </div>
             <div class="modal-footer">
