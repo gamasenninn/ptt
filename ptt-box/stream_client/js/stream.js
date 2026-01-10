@@ -1069,19 +1069,28 @@ function pttStart(event) {
     if (pttButtonPressed) return;  // 既に押されている
     pttButtonPressed = true;
 
-    // ボタンの押下状態を視覚的に表示
+    // ポインターキャプチャ（モバイルでpointerupを確実に受け取る）
+    if (event.target && event.pointerId !== undefined) {
+        event.target.setPointerCapture(event.pointerId);
+    }
+
+    // 外側リングの押下状態を視覚的に表示
+    const pttRing = document.getElementById('pttRing');
+    if (pttRing) pttRing.classList.add('active');
     const pttBtn = document.getElementById('pttBtn');
     if (pttBtn) pttBtn.classList.add('pressing');
 
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         debugLog('WebSocket not connected');
         pttButtonPressed = false;
+        if (pttRing) pttRing.classList.remove('active');
         if (pttBtn) pttBtn.classList.remove('pressing');
         return;
     }
     if (!micAccessGranted) {
         debugLog('Microphone not available');
         pttButtonPressed = false;
+        if (pttRing) pttRing.classList.remove('active');
         if (pttBtn) pttBtn.classList.remove('pressing');
         return;
     }
@@ -1095,9 +1104,25 @@ function pttEnd(event) {
     event.preventDefault();
     event.stopPropagation();
 
-    // ボタンの押下状態を解除
+    debugLog('pttEnd called: ' + event.type);  // デバッグ用
+
+    // ポインターキャプチャ解放
+    if (event.target && event.pointerId !== undefined) {
+        try {
+            event.target.releasePointerCapture(event.pointerId);
+        } catch (e) {}  // 既に解放されている場合は無視
+    }
+
+    // 外側リングの押下状態を解除
+    const pttRing = document.getElementById('pttRing');
+    if (pttRing) pttRing.classList.remove('active');
+
+    // ボタンの押下状態を解除し、フォーカスをボタンに移動
     const pttBtn = document.getElementById('pttBtn');
-    if (pttBtn) pttBtn.classList.remove('pressing');
+    if (pttBtn) {
+        pttBtn.classList.remove('pressing');
+        pttBtn.focus();  // 内側ボタンにフォーカス移動（sticky状態回避）
+    }
 
     if (!pttButtonPressed) return;  // 押されていない
     pttButtonPressed = false;
@@ -1180,6 +1205,7 @@ function updatePttState(state, speakerName) {
     pttState = state;
 
     const pttBtn = document.getElementById('pttBtn');
+    const pttRing = document.getElementById('pttRing');
     const speakerNameEl = document.getElementById('speakerName');
     const speakerIndicator = document.getElementById('speakerIndicator');
 
@@ -1190,6 +1216,16 @@ function updatePttState(state, speakerName) {
             pttBtn.classList.add('transmitting');
         } else if (state === 'receiving') {
             pttBtn.classList.add('receiving');
+        }
+    }
+
+    // 外側リングのクラス更新
+    if (pttRing) {
+        pttRing.classList.remove('active', 'transmitting', 'receiving');
+        if (state === 'transmitting') {
+            pttRing.classList.add('transmitting');
+        } else if (state === 'receiving') {
+            pttRing.classList.add('receiving');
         }
     }
 

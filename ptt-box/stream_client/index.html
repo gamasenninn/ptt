@@ -67,7 +67,7 @@
         .disconnected .connection-indicator { background: #e94560; }
         .connecting .connection-indicator { background: #f4f1de; animation: pulse 1s infinite; }
         .connected .connection-indicator { background: #95d5b2; }
-        button {
+        button:not(.ptt-button):not(.clients-badge) {
             background: #e94560;
             color: white;
             border: none;
@@ -78,17 +78,17 @@
             margin: 5px;
             transition: background 0.2s;
         }
-        button:hover:not(:disabled) {
+        button:not(.ptt-button):not(.clients-badge):hover:not(:disabled) {
             background: #ff6b6b;
         }
-        button:disabled {
+        button:not(.ptt-button):not(.clients-badge):disabled {
             background: #555;
             cursor: not-allowed;
         }
-        button.secondary {
+        button:not(.ptt-button).secondary {
             background: #3d405b;
         }
-        button.secondary:hover:not(:disabled) {
+        button:not(.ptt-button).secondary:hover:not(:disabled) {
             background: #5c5f7e;
         }
         .volume-meter {
@@ -113,12 +113,36 @@
         .ptt-container {
             margin: 10px 0;
         }
+        .ptt-ring {
+            width: 160px;
+            height: 160px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto;
+            border: 8px solid transparent;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .ptt-ring.active {
+            border-color: #e94560;
+            box-shadow: 0 0 30px rgba(233, 69, 96, 0.5);
+        }
+        .ptt-ring.transmitting {
+            border-color: #e94560;
+            box-shadow: 0 0 30px rgba(233, 69, 96, 0.5);
+        }
+        .ptt-ring.receiving {
+            border-color: #95d5b2;
+            box-shadow: 0 0 30px rgba(149, 213, 178, 0.5);
+        }
         .ptt-button {
             width: 140px;
             height: 140px;
             border-radius: 50%;
             background: #3d405b;
             border: 5px solid #555;
+            color: #eee;
             cursor: pointer;
             display: flex;
             flex-direction: column;
@@ -130,23 +154,37 @@
             -webkit-user-select: none;
             touch-action: none;
         }
-        .ptt-button:active:not(:disabled),
+        .ptt-button:active,
+        .ptt-button.pressing,
+        .ptt-button.transmitting,
+        .ptt-button.receiving {
+            /* 内側ボタンは色を変えない（外側リングが変わる） */
+            background: #3d405b !important;
+            border-color: #555 !important;
+            box-shadow: none !important;
+        }
         .ptt-button.pressing,
         .ptt-button.transmitting {
-            background: #e94560;
-            border-color: #ff6b6b;
             transform: scale(0.95);
-            box-shadow: 0 0 30px rgba(233, 69, 96, 0.5);
-        }
-        .ptt-button.receiving {
-            background: #1b4332;
-            border-color: #95d5b2;
         }
         .ptt-button:disabled {
             background: #333;
             border-color: #444;
             cursor: not-allowed;
             opacity: 0.5;
+        }
+        /* タッチデバイスでのsticky hover/focus問題対策 */
+        .ptt-button:focus {
+            outline: none;
+        }
+        @media (hover: none) {
+            .ptt-button:hover,
+            .ptt-button:focus {
+                background: #3d405b;
+                border-color: #555;
+                transform: none;
+                box-shadow: none;
+            }
         }
         .ptt-icon {
             font-size: 36px;
@@ -160,15 +198,16 @@
         .speaker-status {
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding: 8px 15px;
+            gap: 8px;
+            padding: 6px 12px;
             background: #0f3460;
-            border-radius: 8px;
-            margin-bottom: 15px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 13px;
         }
         .speaker-indicator {
-            width: 12px;
-            height: 12px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
             background: #666;
         }
@@ -398,22 +437,22 @@
             border: none;
         }
 
-        /* Clients Badge */
+        /* Clients Count */
         .clients-badge {
-            padding: 4px 10px;
-            background: #1a4a7a;
+            background: none;
             border: none;
-            border-radius: 4px;
-            color: #60efff;
+            color: #888;
             font-size: 12px;
             cursor: pointer;
             display: none;
+            padding: 0;
+            margin: 0;
         }
         .clients-badge:hover {
-            background: #2a5a8a;
+            color: #60efff;
         }
         .clients-badge.visible {
-            display: inline-block;
+            display: inline;
         }
 
         /* Clients Popup */
@@ -528,15 +567,17 @@
 
             <!-- PTT Button -->
             <div id="pttContainer" class="ptt-container">
-                <button id="pttBtn" class="ptt-button"
-                        onpointerdown="pttStart(event)"
-                        onpointerup="pttEnd(event)"
-                        onpointercancel="pttEnd(event)"
-                        onpointerleave="pttEnd(event)"
-                        disabled>
-                    <span class="ptt-icon">🎙️</span>
-                    <span class="ptt-label">押して話す</span>
-                </button>
+                <div id="pttRing" class="ptt-ring">
+                    <button id="pttBtn" class="ptt-button"
+                            onpointerdown="pttStart(event)"
+                            onpointerup="pttEnd(event)"
+                            onpointercancel="pttEnd(event)"
+                            onpointerleave="pttEnd(event)"
+                            disabled>
+                        <span class="ptt-icon">🎙️</span>
+                        <span class="ptt-label">押して話す</span>
+                    </button>
+                </div>
             </div>
 
             <audio id="audio" autoplay playsinline></audio>
