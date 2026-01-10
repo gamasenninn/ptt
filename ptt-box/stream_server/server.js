@@ -182,6 +182,16 @@ class StreamServer {
                 }
             }
         }, 30000);
+
+        // サーバー起動時刻を記録
+        this.startTime = Date.now();
+
+        // 状態監視（5分ごと）
+        setInterval(() => {
+            const uptime = Math.round((Date.now() - this.startTime) / 60000);
+            const mem = process.memoryUsage();
+            log(`[Monitor] uptime=${uptime}min, clients=${this.clients.size}, p2p=${this.p2pConnections.size}, push=${this.pushSubscriptions.size}, heap=${Math.round(mem.heapUsed / 1024 / 1024)}MB`);
+        }, 300000);  // 5分ごと
     }
 
     start() {
