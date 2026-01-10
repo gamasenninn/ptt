@@ -520,6 +520,10 @@ async function setupWebRTC() {
 function setupVolumeMeter(stream) {
     try {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        // モバイルではsuspended状態で開始されることがあるためresumeを呼ぶ
+        if (audioContext.state === 'suspended') {
+            audioContext.resume();
+        }
         const source = audioContext.createMediaStreamSource(stream);
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 256;
@@ -551,6 +555,10 @@ function setupP2PVolumeMeter(stream, clientId) {
         // AudioContextがなければ作成
         if (!p2pAudioContext) {
             p2pAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        // モバイルではsuspended状態で開始されることがあるためresumeを呼ぶ
+        if (p2pAudioContext.state === 'suspended') {
+            p2pAudioContext.resume();
         }
 
         // 既存のソースがあれば切断
