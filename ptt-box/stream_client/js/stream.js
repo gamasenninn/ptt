@@ -63,6 +63,14 @@ function toggleDebugButtonVisibility(visible) {
     if (container) {
         container.style.display = visible ? 'block' : 'none';
     }
+    // ボタン非表示時はデバッグ窓も閉じる
+    if (!visible) {
+        const debugEl = document.getElementById('debug');
+        if (debugEl) {
+            debugEl.style.display = 'none';
+        }
+        debugVisible = false;
+    }
     localStorage.setItem('debugButtonVisible', visible ? 'true' : 'false');
 }
 
