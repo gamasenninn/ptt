@@ -27,6 +27,7 @@ const {
     useSdesMid,
     MediaStreamTrack,
 } = require('werift');
+const { SerialPort } = require('serialport');
 
 // 設定
 const HTTP_PORT = parseInt(process.env.HTTP_PORT) || 9320;
@@ -36,6 +37,9 @@ const MIC_DEVICE = process.env.MIC_DEVICE || 'CABLE Output (VB-Audio Virtual Cab
 const ENABLE_LOCAL_AUDIO = process.env.ENABLE_LOCAL_AUDIO !== 'false';  // デフォルト有効
 const ENABLE_SERVER_MIC = process.env.ENABLE_SERVER_MIC !== 'false';  // デフォルト有効
 const SERVER_MIC_MODE = process.env.SERVER_MIC_MODE || 'always';  // 'always' or 'ptt'
+const RELAY_PORT = process.env.RELAY_PORT || 'COM3';
+const RELAY_BAUD_RATE = parseInt(process.env.RELAY_BAUD_RATE) || 9600;
+const ENABLE_RELAY = process.env.ENABLE_RELAY !== 'false';  // デフォルト有効
 
 // VAPID設定（Web Push）
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
@@ -104,6 +108,66 @@ class PTTManager {
     }
 }
 
+// ========== Relay Manager ==========
+class RelayManager {
+    constructor(portName, baudRate) {
+        this.portName = portName;
+        this.baudRate = baudRate;
+        this.serial = null;
+        this.enabled = ENABLE_RELAY;
+    }
+
+    async connect() {
+        if (!this.enabled) {
+            log('Relay disabled');
+            return;
+        }
+
+        try {
+            this.serial = new SerialPort({
+                path: this.portName,
+                baudRate: this.baudRate
+            });
+
+            await new Promise((resolve, reject) => {
+                this.serial.on('open', () => {
+                    log(`Relay connected: ${this.portName}`);
+                    resolve();
+                });
+                this.serial.on('error', (err) => {
+                    log(`Relay error: ${err.message}`);
+                    reject(err);
+                });
+            });
+        } catch (e) {
+            log(`Relay connection failed: ${e.message}`);
+            this.enabled = false;
+        }
+    }
+
+    turnOn() {
+        if (this.serial && this.enabled) {
+            this.serial.write('A1');
+            log('Relay A ON');
+        }
+    }
+
+    turnOff() {
+        if (this.serial && this.enabled) {
+            this.serial.write('A0');
+            log('Relay A OFF');
+        }
+    }
+
+    close() {
+        if (this.serial) {
+            this.turnOff();
+            this.serial.close();
+            log('Relay closed');
+        }
+    }
+}
+
 // ========== Client Connection ==========
 class ClientConnection {
     constructor(clientId, ws, displayName) {
@@ -125,6 +189,7 @@ class StreamServer {
     constructor() {
         this.clients = new Map();  // clientId -> ClientConnection
         this.pttManager = new PTTManager();
+        this.relayManager = new RelayManager(RELAY_PORT, RELAY_BAUD_RATE);
         this.pushSubscriptions = new Map();  // clientId -> subscription
 
         // P2P接続（サーバーがクライアントとして参加）
@@ -201,7 +266,10 @@ class StreamServer {
         }, 300000);  // 5分ごと
     }
 
-    start() {
+    async start() {
+        // リレー接続
+        await this.relayManager.connect();
+
         this.server.listen(HTTP_PORT, () => {
             log(`Server started on http://localhost:${HTTP_PORT}`);
         });
@@ -632,6 +700,9 @@ class StreamServer {
     // PTTリクエスト
     handlePttRequest(client) {
         if (this.pttManager.requestFloor(client.clientId)) {
+            // リレーON（アナログ無線機PTT）
+            this.relayManager.turnOn();
+
             client.send({ type: 'ptt_granted' });
             log(`PTT granted to ${client.displayName}`);
             this.broadcastPttStatus();
@@ -659,6 +730,9 @@ class StreamServer {
     // PTTリリース
     handlePttRelease(client) {
         if (this.pttManager.releaseFloor(client.clientId)) {
+            // リレーOFF（アナログ無線機PTT）
+            this.relayManager.turnOff();
+
             log(`PTT released by ${client.displayName}`);
             this.broadcastPttStatus();
 
@@ -722,6 +796,9 @@ class StreamServer {
     checkPttTimeout() {
         const timedOut = this.pttManager.checkTimeout();
         if (timedOut) {
+            // リレーOFF（タイムアウト時）
+            this.relayManager.turnOff();
+
             log(`PTT timeout: ${timedOut}`);
             this.broadcastPttStatus();
 
@@ -1421,6 +1498,7 @@ if (ENABLE_SERVER_MIC) {
         process.stdin.on('keypress', (str, key) => {
             if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
                 log('Shutting down...');
+                server.relayManager.close();
                 server.stopMicCapture();
                 server.stopSpeakerOutput();
                 process.exit(0);
@@ -1452,3 +1530,20 @@ if (ENABLE_SERVER_MIC) {
         console.log('Keyboard input not available');
     }
 }
+
+// グレースフルシャットダウン
+process.on('SIGINT', () => {
+    log('SIGINT received, shutting down...');
+    server.relayManager.close();
+    server.stopMicCapture();
+    server.stopSpeakerOutput();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    log('SIGTERM received, shutting down...');
+    server.relayManager.close();
+    server.stopMicCapture();
+    server.stopSpeakerOutput();
+    process.exit(0);
+});
