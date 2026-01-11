@@ -28,6 +28,7 @@ const MIC_GAIN = 1.0;  // 増幅なし（将来の調整用に残す）
 
 // P2P接続管理
 const p2pConnections = new Map();  // clientId -> { pc, audioSender, audioElement }
+let pendingP2PConnections = 0;  // P2P接続待ちカウンター
 
 // 接続中クライアント一覧
 const connectedClients = new Map();  // clientId -> { clientId, displayName }
@@ -257,6 +258,9 @@ function updateConnectionToggle(state) {
         case 'connecting':
             text.textContent = '接続中... - タップでキャンセル';
             break;
+        case 'preparing':
+            text.textContent = '準備中 - タップで切断';
+            break;
         case 'connected':
             text.textContent = '接続済み - タップで切断';
             break;
@@ -420,7 +424,7 @@ async function setupWebRTC() {
         debugLog('Connection: ' + pc.connectionState);
         switch (pc.connectionState) {
             case 'connected':
-                updateConnectionToggle('connected');
+                updateConnectionToggle('preparing');  // P2P接続完了まで「準備中」
                 enablePttButton(true);
                 reconnectAttempts = 0;  // 接続成功でリセット
                 requestWakeLock();  // スクリーンオフ防止
@@ -1261,6 +1265,16 @@ async function handleClientList(clients) {
 
     // クライアント一覧を更新
     connectedClients.clear();
+
+    // 新規に接続するクライアント数をカウント
+    const newClients = clients.filter(c => !p2pConnections.has(c.clientId));
+    pendingP2PConnections = newClients.length;
+
+    // 他クライアントがいない場合は即座に「接続済み」
+    if (pendingP2PConnections === 0) {
+        updateConnectionToggle('connected');
+    }
+
     for (const client of clients) {
         connectedClients.set(client.clientId, {
             clientId: client.clientId,
@@ -1373,7 +1387,23 @@ async function createP2PConnection(remoteClientId, isOfferer) {
         debugLog('P2P to ' + remoteClientId + ': ' + p2pPc.connectionState);
         if (p2pPc.connectionState === 'connected') {
             debugLog('✓ P2P connected to ' + remoteClientId);
+            // P2P接続完了カウンターをデクリメント
+            if (pendingP2PConnections > 0) {
+                pendingP2PConnections--;
+                debugLog('Pending P2P connections: ' + pendingP2PConnections);
+                if (pendingP2PConnections === 0) {
+                    updateConnectionToggle('connected');
+                }
+            }
         } else if (p2pPc.connectionState === 'failed' || p2pPc.connectionState === 'closed') {
+            // P2P接続失敗時もカウンターをデクリメント
+            if (pendingP2PConnections > 0) {
+                pendingP2PConnections--;
+                debugLog('P2P failed, pending: ' + pendingP2PConnections);
+                if (pendingP2PConnections === 0) {
+                    updateConnectionToggle('connected');
+                }
+            }
             cleanupP2PConnection(remoteClientId);
         }
     };
