@@ -67,7 +67,7 @@
         .disconnected .connection-indicator { background: #e94560; }
         .connecting .connection-indicator { background: #f4f1de; animation: pulse 1s infinite; }
         .connected .connection-indicator { background: #95d5b2; }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle) {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn) {
             background: #e94560;
             color: white;
             border: none;
@@ -78,10 +78,10 @@
             margin: 5px;
             transition: background 0.2s;
         }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):hover:not(:disabled) {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):hover:not(:disabled) {
             background: #ff6b6b;
         }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):disabled {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):disabled {
             background: #555;
             cursor: not-allowed;
         }
@@ -229,28 +229,25 @@
         .tab-nav {
             display: flex;
             margin-bottom: 8px;
-            border-bottom: 2px solid #0f3460;
         }
         .tab-btn {
             flex: 1;
             padding: 8px;
             background: transparent !important;
             border: none;
-            color: #888;
+            color: #666;
             cursor: pointer;
             font-size: 14px;
-            border-radius: 0;
             margin: 0;
-            transition: color 0.2s;
+            border-bottom: 2px solid #0f3460;
+            transition: color 0.2s, border-color 0.2s;
         }
         .tab-btn:hover {
             color: #aaa;
-            background: transparent !important;
         }
         .tab-btn.active {
             color: #60efff;
-            border-bottom: 2px solid #60efff;
-            margin-bottom: -2px;
+            border-bottom-color: #60efff;
         }
         .tab-content {
             display: none;
@@ -540,7 +537,7 @@
     <div class="container">
         <!-- Tab Navigation -->
         <div class="tab-nav">
-            <button class="tab-btn active" onclick="switchTab('transceiver')">トランシーバー</button>
+            <button class="tab-btn active" onclick="switchTab('transceiver')">トーク</button>
             <button class="tab-btn" onclick="switchTab('history')">履歴</button>
         </div>
 
