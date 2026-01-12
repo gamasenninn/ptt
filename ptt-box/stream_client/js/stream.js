@@ -29,6 +29,8 @@ const MIC_GAIN = 1.0;  // 増幅なし（将来の調整用に残す）
 // P2P接続管理
 const p2pConnections = new Map();  // clientId -> { pc, audioSender, audioElement }
 let pendingP2PConnections = 0;  // P2P接続待ちカウンター
+let p2pConnectionTimeout = null;  // P2P接続タイムアウト用タイマー
+const P2P_CONNECTION_TIMEOUT_MS = 10000;  // 10秒でタイムアウト
 
 // 接続中クライアント一覧
 const connectedClients = new Map();  // clientId -> { clientId, displayName }
@@ -425,6 +427,7 @@ async function setupWebRTC() {
         switch (pc.connectionState) {
             case 'connected':
                 updateConnectionToggle('preparing');  // P2P接続完了まで「準備中」
+                startP2PConnectionTimeout();  // タイムアウト開始（client_list未着でも対応）
                 enablePttButton(true);
                 reconnectAttempts = 0;  // 接続成功でリセット
                 requestWakeLock();  // スクリーンオフ防止
@@ -657,6 +660,10 @@ function disconnect() {
 
 // 接続リソースのみクリーンアップ（自動再接続用）
 function cleanupConnection() {
+    // P2P接続タイムアウトをクリア
+    clearP2PConnectionTimeout();
+    pendingP2PConnections = 0;
+
     // 全P2P接続をクリーンアップ
     cleanupAllP2PConnections();
 
@@ -1259,6 +1266,26 @@ function updatePttState(state, speakerName) {
 
 // ========== P2P接続管理 ==========
 
+// P2P接続タイムアウトをクリア
+function clearP2PConnectionTimeout() {
+    if (p2pConnectionTimeout) {
+        clearTimeout(p2pConnectionTimeout);
+        p2pConnectionTimeout = null;
+    }
+}
+
+// P2P接続タイムアウトを設定
+function startP2PConnectionTimeout() {
+    clearP2PConnectionTimeout();
+    p2pConnectionTimeout = setTimeout(() => {
+        if (pendingP2PConnections > 0) {
+            debugLog('P2P connection timeout, forcing connected state (pending: ' + pendingP2PConnections + ')');
+            pendingP2PConnections = 0;
+            updateConnectionToggle('connected');
+        }
+    }, P2P_CONNECTION_TIMEOUT_MS);
+}
+
 // クライアントリスト受信 → 各クライアントとP2P接続確立
 async function handleClientList(clients) {
     debugLog('Client list received: ' + clients.length + ' clients');
@@ -1273,6 +1300,9 @@ async function handleClientList(clients) {
     // 他クライアントがいない場合は即座に「接続済み」
     if (pendingP2PConnections === 0) {
         updateConnectionToggle('connected');
+    } else {
+        // P2P接続待ちがある場合はタイムアウトを設定
+        startP2PConnectionTimeout();
     }
 
     for (const client of clients) {
@@ -1392,19 +1422,24 @@ async function createP2PConnection(remoteClientId, isOfferer) {
                 pendingP2PConnections--;
                 debugLog('Pending P2P connections: ' + pendingP2PConnections);
                 if (pendingP2PConnections === 0) {
+                    clearP2PConnectionTimeout();
                     updateConnectionToggle('connected');
                 }
             }
-        } else if (p2pPc.connectionState === 'failed' || p2pPc.connectionState === 'closed') {
-            // P2P接続失敗時もカウンターをデクリメント
+        } else if (p2pPc.connectionState === 'failed' || p2pPc.connectionState === 'closed' || p2pPc.connectionState === 'disconnected') {
+            // P2P接続失敗/切断時もカウンターをデクリメント
+            // Note: モバイルでは 'disconnected' に遷移することがある
             if (pendingP2PConnections > 0) {
                 pendingP2PConnections--;
-                debugLog('P2P failed, pending: ' + pendingP2PConnections);
+                debugLog('P2P ' + p2pPc.connectionState + ', pending: ' + pendingP2PConnections);
                 if (pendingP2PConnections === 0) {
+                    clearP2PConnectionTimeout();
                     updateConnectionToggle('connected');
                 }
             }
-            cleanupP2PConnection(remoteClientId);
+            if (p2pPc.connectionState !== 'disconnected') {
+                cleanupP2PConnection(remoteClientId);
+            }
         }
     };
 
