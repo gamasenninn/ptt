@@ -514,7 +514,9 @@ class StreamServer {
         });
 
         // 切断ハンドラ
-        ws.on('close', () => {
+        ws.on('close', (code, reason) => {
+            const reasonStr = reason ? reason.toString() : '';
+            log(`WebSocket closed: ${client.displayName} (code=${code}, reason=${reasonStr})`);
             this.handleDisconnect(client);
         });
 
