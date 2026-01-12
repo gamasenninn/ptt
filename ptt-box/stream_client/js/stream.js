@@ -650,7 +650,7 @@ function disconnect() {
     }
     releaseWakeLock();  // Wake Lock解放
     if (ws) {
-        ws.close();
+        ws.close(1000, 'User disconnect');
     }
     cleanup();
 }
