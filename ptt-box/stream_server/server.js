@@ -34,6 +34,7 @@ const HTTP_PORT = parseInt(process.env.HTTP_PORT) || 9320;
 const PTT_TIMEOUT = process.env.PTT_TIMEOUT !== undefined ? parseInt(process.env.PTT_TIMEOUT) : 300000;  // 5分（0で無効化）
 const STUN_SERVER = process.env.STUN_SERVER || 'stun:stun.l.google.com:19302';
 const MIC_DEVICE = process.env.MIC_DEVICE || 'CABLE Output (VB-Audio Virtual Cable)';
+const SPEAKER_DEVICE = process.env.SPEAKER_DEVICE || '';  // 空の場合はシステムデフォルト
 const ENABLE_LOCAL_AUDIO = process.env.ENABLE_LOCAL_AUDIO !== 'false';  // デフォルト有効
 const ENABLE_SERVER_MIC = process.env.ENABLE_SERVER_MIC !== 'false';  // デフォルト有効
 const SERVER_MIC_MODE = process.env.SERVER_MIC_MODE || 'always';  // 'always' or 'ptt'
@@ -1158,13 +1159,20 @@ class StreamServer {
     startSpeakerOutput() {
         if (this.ffplayProcess) return;
 
-        this.ffplayProcess = spawn('ffplay', [
+        const ffplayArgs = [
             '-f', 'ogg',
             '-i', 'pipe:0',
             '-nodisp',
             '-autoexit',
             '-loglevel', 'error'
-        ], {
+        ];
+
+        // 出力デバイスが指定されている場合は追加
+        if (SPEAKER_DEVICE) {
+            ffplayArgs.push('-audio_device', SPEAKER_DEVICE);
+        }
+
+        this.ffplayProcess = spawn('ffplay', ffplayArgs, {
             stdio: ['pipe', 'ignore', 'pipe']
         });
 
@@ -1181,7 +1189,7 @@ class StreamServer {
             this.oggGranulePos = 0;
         });
 
-        log('Speaker output started');
+        log('Speaker output started' + (SPEAKER_DEVICE ? `: ${SPEAKER_DEVICE}` : ' (default device)'));
     }
 
     stopSpeakerOutput() {
