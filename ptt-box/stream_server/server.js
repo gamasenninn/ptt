@@ -34,7 +34,9 @@ const HTTP_PORT = parseInt(process.env.HTTP_PORT) || 9320;
 const PTT_TIMEOUT = process.env.PTT_TIMEOUT !== undefined ? parseInt(process.env.PTT_TIMEOUT) : 300000;  // 5分（0で無効化）
 const STUN_SERVER = process.env.STUN_SERVER || 'stun:stun.l.google.com:19302';
 const MIC_DEVICE = process.env.MIC_DEVICE || 'CABLE Output (VB-Audio Virtual Cable)';
-const SPEAKER_DEVICE = process.env.SPEAKER_DEVICE || '';  // 空の場合はシステムデフォルト
+const SPEAKER_DEVICE = process.env.SPEAKER_DEVICE || '';  // 空の場合はシステムデフォルト（ffplay用）
+const SPEAKER_DEVICE_ID = process.env.SPEAKER_DEVICE_ID || '0';  // デバイスID（Python用）
+const USE_PYTHON_AUDIO = process.env.USE_PYTHON_AUDIO === 'true';  // Python音声出力を使用
 const ENABLE_LOCAL_AUDIO = process.env.ENABLE_LOCAL_AUDIO !== 'false';  // デフォルト有効
 const ENABLE_SERVER_MIC = process.env.ENABLE_SERVER_MIC !== 'false';  // デフォルト有効
 const SERVER_MIC_MODE = process.env.SERVER_MIC_MODE || 'always';  // 'always' or 'ptt'
@@ -204,7 +206,7 @@ class StreamServer {
         this.rtpSsrc = Math.floor(Math.random() * 0xFFFFFFFF);
 
         // 音声出力（スピーカー）
-        this.ffplayProcess = null;
+        this.speakerProcess = null;
         this.oggInitialized = false;
         this.oggPageSequence = 0;
         this.oggGranulePos = 0;
@@ -1157,48 +1159,78 @@ class StreamServer {
     // ========== スピーカー出力（受信）==========
 
     startSpeakerOutput() {
-        if (this.ffplayProcess) return;
+        if (this.speakerProcess) return;
 
-        const ffplayArgs = [
-            '-f', 'ogg',
-            '-i', 'pipe:0',
-            '-nodisp',
-            '-autoexit',
-            '-loglevel', 'error'
-        ];
+        if (USE_PYTHON_AUDIO) {
+            // Python + sounddevice を使用（デバイス指定可能）
+            const pythonScript = path.join(__dirname, '..', 'audio_output.py');
 
-        // 出力デバイスが指定されている場合は追加
-        if (SPEAKER_DEVICE) {
-            ffplayArgs.push('-audio_device', SPEAKER_DEVICE);
+            this.speakerProcess = spawn('uv', ['run', 'python', pythonScript, SPEAKER_DEVICE_ID], {
+                stdio: ['pipe', 'ignore', 'pipe'],
+                cwd: path.join(__dirname, '..')  // ptt-box ディレクトリで実行
+            });
+
+            this.speakerProcess.stderr.on('data', (data) => {
+                log(`[audio_output] ${data.toString().trim()}`);
+            });
+
+            this.speakerProcess.on('error', (err) => {
+                logError(`Python audio error: ${err.message}`);
+                this.speakerProcess = null;
+            });
+
+            this.speakerProcess.on('close', (code) => {
+                log(`Python audio closed (code: ${code})`);
+                this.speakerProcess = null;
+                this.oggInitialized = false;
+                this.oggPageSequence = 0;
+                this.oggGranulePos = 0;
+            });
+
+            log(`Speaker output started (Python, device=${SPEAKER_DEVICE_ID})`);
+        } else {
+            // ffplay を使用（従来方式）
+            const ffplayArgs = [
+                '-f', 'ogg',
+                '-i', 'pipe:0',
+                '-nodisp',
+                '-autoexit',
+                '-loglevel', 'error'
+            ];
+
+            // 出力デバイスが指定されている場合は追加
+            if (SPEAKER_DEVICE) {
+                ffplayArgs.push('-audio_device', SPEAKER_DEVICE);
+            }
+
+            this.speakerProcess = spawn('ffplay', ffplayArgs, {
+                stdio: ['pipe', 'ignore', 'pipe']
+            });
+
+            this.speakerProcess.on('error', (err) => {
+                logError(`FFplay error: ${err.message}`);
+                this.speakerProcess = null;
+            });
+
+            this.speakerProcess.on('close', (code) => {
+                log(`FFplay closed`);
+                this.speakerProcess = null;
+                this.oggInitialized = false;
+                this.oggPageSequence = 0;
+                this.oggGranulePos = 0;
+            });
+
+            log('Speaker output started' + (SPEAKER_DEVICE ? `: ${SPEAKER_DEVICE}` : ' (ffplay, default device)'));
         }
-
-        this.ffplayProcess = spawn('ffplay', ffplayArgs, {
-            stdio: ['pipe', 'ignore', 'pipe']
-        });
-
-        this.ffplayProcess.on('error', (err) => {
-            logError(`FFplay error: ${err.message}`);
-            this.ffplayProcess = null;
-        });
-
-        this.ffplayProcess.on('close', (code) => {
-            log(`FFplay closed`);
-            this.ffplayProcess = null;
-            this.oggInitialized = false;
-            this.oggPageSequence = 0;
-            this.oggGranulePos = 0;
-        });
-
-        log('Speaker output started' + (SPEAKER_DEVICE ? `: ${SPEAKER_DEVICE}` : ' (default device)'));
     }
 
     stopSpeakerOutput() {
-        if (this.ffplayProcess) {
+        if (this.speakerProcess) {
             try {
-                this.ffplayProcess.stdin.end();
-                this.ffplayProcess.kill();
+                this.speakerProcess.stdin.end();
+                this.speakerProcess.kill();
             } catch (e) {}
-            this.ffplayProcess = null;
+            this.speakerProcess = null;
         }
         this.oggInitialized = false;
         this.oggPageSequence = 0;
@@ -1358,26 +1390,26 @@ class StreamServer {
     }
 
     sendOpusToSpeaker(opusPayload) {
-        if (!this.ffplayProcess || !this.ffplayProcess.stdin.writable) return;
+        if (!this.speakerProcess || !this.speakerProcess.stdin.writable) return;
 
         try {
             if (!this.oggInitialized) {
                 // OpusHead
                 const idHeader = this.createOpusIdHeader();
                 const idPage = this.createOggPage(idHeader, 0x02, 0);
-                this.ffplayProcess.stdin.write(idPage);
+                this.speakerProcess.stdin.write(idPage);
 
                 // OpusTags
                 const commentHeader = this.createOpusCommentHeader();
                 const commentPage = this.createOggPage(commentHeader, 0, 0);
-                this.ffplayProcess.stdin.write(commentPage);
+                this.speakerProcess.stdin.write(commentPage);
 
                 this.oggInitialized = true;
             }
 
             this.oggGranulePos += 960;
             const dataPage = this.createOggPage(opusPayload, 0, this.oggGranulePos);
-            this.ffplayProcess.stdin.write(dataPage);
+            this.speakerProcess.stdin.write(dataPage);
         } catch (e) {}
     }
 
