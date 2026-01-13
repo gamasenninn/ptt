@@ -1,10 +1,13 @@
 """
-音声出力スクリプト（デバイス指定対応）
-stdin から OGG/Opus を受け取り、指定デバイスに出力
+音声出力スクリプト（デバイス指定対応・常駐モード）
+stdin から連続OGG/Opusストリームを受け取り、指定デバイスに出力
+
+常駐モード:
+  server.jsから起動され、サーバー終了まで動作し続ける
+  PTT間の無音時もプロセスは維持される
 
 Usage:
   python audio_output.py [device_id]
-  echo OGG data | python audio_output.py 20
 
 Environment:
   SPEAKER_DEVICE_ID - 出力デバイスID (コマンドライン引数が優先)

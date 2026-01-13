@@ -273,6 +273,11 @@ class StreamServer {
         // リレー接続
         await this.relayManager.connect();
 
+        // Python音声出力プロセスを常駐起動（USE_PYTHON_AUDIO時のみ）
+        if (ENABLE_LOCAL_AUDIO && USE_PYTHON_AUDIO) {
+            this.startSpeakerOutput();
+        }
+
         this.server.listen(HTTP_PORT, () => {
             log(`Server started on http://localhost:${HTTP_PORT}`);
         });
@@ -713,7 +718,8 @@ class StreamServer {
             this.broadcastPttStatus();
 
             // クライアントからの音声受信のためスピーカー開始
-            if (ENABLE_LOCAL_AUDIO) {
+            // Python常駐モードでは起動済みなのでスキップ
+            if (ENABLE_LOCAL_AUDIO && !USE_PYTHON_AUDIO) {
                 this.startSpeakerOutput();
             }
 
@@ -741,9 +747,13 @@ class StreamServer {
             log(`PTT released by ${client.displayName}`);
             this.broadcastPttStatus();
 
-            // スピーカー停止
+            // スピーカー一時停止（Python常駐モードではプロセス維持）
             if (ENABLE_LOCAL_AUDIO) {
-                this.stopSpeakerOutput();
+                if (USE_PYTHON_AUDIO) {
+                    this.pauseSpeakerOutput();
+                } else {
+                    this.stopSpeakerOutput();
+                }
             }
 
             // 録音停止
@@ -1235,6 +1245,14 @@ class StreamServer {
         this.oggInitialized = false;
         this.oggPageSequence = 0;
         this.oggGranulePos = 0;
+        log('Speaker output stopped');
+    }
+
+    // PTT終了時用: プロセス維持、OGG状態も維持（連続ストリーム）
+    pauseSpeakerOutput() {
+        // Python常駐モードではプロセスを維持
+        // OGGヘッダーとgranule positionも継続（連続ストリーム）
+        log('Speaker output paused (process kept alive)');
     }
 
     // ========== 録音（WAVファイル保存）==========
