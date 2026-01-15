@@ -133,16 +133,30 @@ class Dashboard {
         if (res.success) {
             const tbody = document.getElementById('clients-tbody');
             if (res.clients.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3">接続なし</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="4">接続なし</td></tr>';
             } else {
                 tbody.innerHTML = res.clients.map(c => `
                     <tr>
                         <td>${c.clientId}</td>
                         <td>${c.displayName}</td>
                         <td class="state-${c.p2pState === 'connected' ? 'connected' : 'disconnected'}">${c.p2pState}</td>
+                        <td><button class="btn-small btn-danger" onclick="dashboard.disconnectClient('${c.clientId}', '${c.displayName}')">切断</button></td>
                     </tr>
                 `).join('');
             }
+        }
+    }
+
+    async disconnectClient(clientId, displayName) {
+        if (!confirm(`${displayName} を切断しますか？`)) return;
+
+        try {
+            const res = await this.api('POST', `/api/dash/clients/${clientId}/disconnect`);
+            if (res.success) {
+                this.refresh();
+            }
+        } catch (e) {
+            alert('切断エラー');
         }
     }
 
@@ -242,6 +256,7 @@ class Dashboard {
 }
 
 // 初期化
+let dashboard;
 document.addEventListener('DOMContentLoaded', () => {
-    new Dashboard();
+    dashboard = new Dashboard();
 });

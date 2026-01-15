@@ -177,6 +177,11 @@ button:disabled {
     color: #000;
 }
 
+.btn-small {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+
 /* テーブル */
 table {
     width: 100%;

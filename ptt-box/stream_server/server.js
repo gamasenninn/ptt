@@ -525,6 +525,23 @@ class StreamServer {
             }
         });
 
+        // クライアント強制切断
+        this.app.post('/api/dash/clients/:clientId/disconnect', requireAuth, (req, res) => {
+            const { clientId } = req.params;
+            const client = this.clients.get(clientId);
+
+            if (!client) {
+                return res.status(404).json({ success: false, error: 'Client not found' });
+            }
+
+            log(`Client ${client.displayName} (${clientId}) disconnected by dashboard`);
+
+            // WebSocketを閉じる（handleDisconnectが自動的に呼ばれる）
+            client.ws.close(1000, 'Disconnected by administrator');
+
+            res.json({ success: true, message: `Disconnected: ${client.displayName}` });
+        });
+
         // サーバー再起動（pm2経由）
         this.app.post('/api/dash/restart', requireAuth, (req, res) => {
             log('Server restart requested via dashboard');
@@ -822,6 +839,10 @@ class StreamServer {
                 if (ENABLE_LOCAL_AUDIO) {
                     this.createP2PToClient(client);
                 }
+            } else if (client.pc.connectionState === 'failed') {
+                // WebRTC接続失敗時はWebSocketも閉じる
+                log(`${client.displayName}: WebRTC failed, closing WebSocket`);
+                client.ws.close(1000, 'WebRTC connection failed');
             }
         };
 
