@@ -839,6 +839,20 @@ class StreamServer {
                 if (ENABLE_LOCAL_AUDIO) {
                     this.createP2PToClient(client);
                 }
+
+                // disconnectedタイマーをクリア（回復時）
+                if (client.disconnectTimer) {
+                    clearTimeout(client.disconnectTimer);
+                    client.disconnectTimer = null;
+                }
+            } else if (client.pc.connectionState === 'disconnected') {
+                // 30秒後にまだdisconnectedならクリーンアップ
+                client.disconnectTimer = setTimeout(() => {
+                    if (client.pc && client.pc.connectionState === 'disconnected') {
+                        log(`${client.displayName}: WebRTC disconnected timeout, closing WebSocket`);
+                        client.ws.close(1000, 'WebRTC disconnected timeout');
+                    }
+                }, 30000);
             } else if (client.pc.connectionState === 'failed') {
                 // WebRTC接続失敗時はWebSocketも閉じる
                 log(`${client.displayName}: WebRTC failed, closing WebSocket`);
@@ -954,6 +968,12 @@ class StreamServer {
     // 切断処理
     handleDisconnect(client) {
         log(`Client disconnected: ${client.displayName}`);
+
+        // disconnectedタイマークリア
+        if (client.disconnectTimer) {
+            clearTimeout(client.disconnectTimer);
+            client.disconnectTimer = null;
+        }
 
         // PTT解放
         this.pttManager.releaseFloor(client.clientId);
