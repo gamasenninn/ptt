@@ -604,6 +604,7 @@ function setupP2PVolumeMeter(stream, clientId) {
 
 function startP2PMeterLoop() {
     const dataArray = new Uint8Array(128);  // fftSize 256 → frequencyBinCount 128
+    const NOISE_THRESHOLD = 8;  // ノイズ閾値（この値以下は0%として表示）
 
     function updateP2PMeter() {
         if (!p2pMeterRunning) return;
@@ -622,7 +623,10 @@ function startP2PMeterLoop() {
             } catch (e) {}
         });
 
-        const percentage = Math.min(100, (maxLevel / 128) * 100);
+        // ノイズ閾値以下は0%として表示（PTT回路ノイズ対策）
+        const percentage = maxLevel > NOISE_THRESHOLD
+            ? Math.min(100, (maxLevel / 128) * 100)
+            : 0;
         const bar = document.getElementById('p2pVolumeBar');
         if (bar) {
             bar.style.width = percentage + '%';
