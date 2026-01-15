@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ダッシュボード - Stream Server</title>
+    <link rel="stylesheet" href="dash.css">
+</head>
+<body>
+    <!-- ログイン画面 -->
+    <div id="login-screen" class="screen">
+        <div class="login-box">
+            <h1>ダッシュボード</h1>
+            <form id="login-form">
+                <input type="password" id="password" placeholder="パスワード" autocomplete="current-password">
+                <button type="submit">ログイン</button>
+            </form>
+            <p id="login-error" class="error"></p>
+        </div>
+    </div>
+
+    <!-- ダッシュボード画面 -->
+    <div id="dashboard-screen" class="screen hidden">
+        <header>
+            <h1>Stream Server ダッシュボード</h1>
+            <button id="logout-btn" class="btn-secondary">ログアウト</button>
+        </header>
+
+        <main>
+            <!-- サーバー状態 -->
+            <section class="card">
+                <h2>サーバー状態</h2>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="label">稼働時間</span>
+                        <span id="uptime" class="value">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">メモリ</span>
+                        <span id="memory" class="value">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">接続数</span>
+                        <span id="client-count" class="value">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">音声プロセス</span>
+                        <span id="speaker-process" class="value">-</span>
+                    </div>
+                </div>
+                <div class="actions">
+                    <button id="restart-btn" class="btn-danger">サーバー再起動</button>
+                </div>
+            </section>
+
+            <!-- PTT状態 -->
+            <section class="card">
+                <h2>PTT状態</h2>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="label">状態</span>
+                        <span id="ptt-state" class="value">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">送信者</span>
+                        <span id="ptt-speaker" class="value">-</span>
+                    </div>
+                </div>
+                <div class="actions">
+                    <button id="ptt-release-btn" class="btn-warning">PTT強制解放</button>
+                </div>
+            </section>
+
+            <!-- クライアント一覧 -->
+            <section class="card">
+                <h2>接続クライアント</h2>
+                <table id="clients-table">
+                    <thead>
+                        <tr>
+                            <th>クライアントID</th>
+                            <th>表示名</th>
+                            <th>P2P状態</th>
+                        </tr>
+                    </thead>
+                    <tbody id="clients-tbody">
+                        <tr><td colspan="3">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </section>
+        </main>
+
+        <footer>
+            <span id="last-update">最終更新: -</span>
+            <span id="auto-refresh">自動更新: 5秒</span>
+        </footer>
+    </div>
+
+    <script src="dash.js"></script>
+</body>
+</html>

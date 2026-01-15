@@ -44,6 +44,10 @@ const RELAY_PORT = process.env.RELAY_PORT || 'COM3';
 const RELAY_BAUD_RATE = parseInt(process.env.RELAY_BAUD_RATE) || 9600;
 const ENABLE_RELAY = process.env.ENABLE_RELAY !== 'false';  // デフォルト有効
 
+// ダッシュボード設定
+const DASH_PASSWORD = process.env.DASH_PASSWORD || 'admin';
+const DASH_SESSION_SECRET = uuidv4();  // サーバー起動ごとに変更
+
 // VAPID設定（Web Push）
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
@@ -235,6 +239,9 @@ class StreamServer {
         // History API設定
         this.setupHistoryApi();
 
+        // ダッシュボードAPI設定
+        this.setupDashboardApi();
+
         // WebSocket設定
         this.wss = new WebSocket.Server({ server: this.server, path: '/ws' });
         this.wss.on('connection', (ws) => this.handleConnection(ws));
@@ -400,6 +407,155 @@ class StreamServer {
                 res.status(500).json({ success: false, error: e.message });
             }
         });
+    }
+
+    // ========== ダッシュボードAPI ==========
+    setupDashboardApi() {
+        // セッショントークン管理
+        this.dashSessions = new Set();
+
+        // 認証チェックミドルウェア
+        const requireAuth = (req, res, next) => {
+            const token = req.headers['x-dash-token'] || req.query.token;
+            if (token && this.dashSessions.has(token)) {
+                next();
+            } else {
+                res.status(401).json({ success: false, error: 'Unauthorized' });
+            }
+        };
+
+        // ログイン
+        this.app.post('/api/dash/login', (req, res) => {
+            const { password } = req.body;
+            if (password === DASH_PASSWORD) {
+                const token = uuidv4();
+                this.dashSessions.add(token);
+                log(`Dashboard login successful`);
+                res.json({ success: true, token });
+            } else {
+                log(`Dashboard login failed`);
+                res.status(401).json({ success: false, error: 'Invalid password' });
+            }
+        });
+
+        // ログアウト
+        this.app.post('/api/dash/logout', requireAuth, (req, res) => {
+            const token = req.headers['x-dash-token'] || req.query.token;
+            this.dashSessions.delete(token);
+            res.json({ success: true });
+        });
+
+        // サーバー状態
+        this.app.get('/api/dash/status', requireAuth, (req, res) => {
+            const mem = process.memoryUsage();
+            const uptime = Math.round((Date.now() - this.startTime) / 1000);
+            res.json({
+                success: true,
+                status: {
+                    uptime,
+                    uptimeFormatted: this.formatUptime(uptime),
+                    memory: {
+                        heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+                        heapTotal: Math.round(mem.heapTotal / 1024 / 1024)
+                    },
+                    clientCount: this.clients.size,
+                    p2pCount: this.p2pConnections.size,
+                    speakerProcess: this.speakerProcess ? 'running' : 'stopped'
+                }
+            });
+        });
+
+        // クライアント一覧
+        this.app.get('/api/dash/clients', requireAuth, (req, res) => {
+            const clients = [];
+            for (const [clientId, client] of this.clients) {
+                const p2pConn = this.p2pConnections.get(clientId);
+                clients.push({
+                    clientId,
+                    displayName: client.displayName,
+                    p2pState: p2pConn ? p2pConn.pc.connectionState : 'none'
+                });
+            }
+            res.json({ success: true, clients });
+        });
+
+        // PTT状態
+        this.app.get('/api/dash/ptt', requireAuth, (req, res) => {
+            const speaker = this.pttManager.currentSpeaker;
+            let speakerName = null;
+            if (speaker) {
+                if (speaker === this.serverClientId) {
+                    speakerName = 'Server (PC Mic)';
+                } else {
+                    const client = this.clients.get(speaker);
+                    speakerName = client ? client.displayName : 'Unknown';
+                }
+            }
+            res.json({
+                success: true,
+                ptt: {
+                    state: this.pttManager.getState(),
+                    speaker,
+                    speakerName,
+                    startTime: this.pttManager.speakerStartTime
+                }
+            });
+        });
+
+        // PTT強制解放
+        this.app.post('/api/dash/ptt/release', requireAuth, (req, res) => {
+            const speaker = this.pttManager.currentSpeaker;
+            if (speaker) {
+                this.pttManager.currentSpeaker = null;
+                this.pttManager.speakerStartTime = null;
+                this.relayManager.turnOff();
+                if (ENABLE_LOCAL_AUDIO) {
+                    if (USE_PYTHON_AUDIO) {
+                        this.pauseSpeakerOutput();
+                    } else {
+                        this.stopSpeakerOutput();
+                    }
+                }
+                this.stopRecording();
+                this.broadcastPttStatus();
+                log(`PTT force released by dashboard (was: ${speaker})`);
+                res.json({ success: true, message: `PTT released from ${speaker}` });
+            } else {
+                res.json({ success: true, message: 'No active PTT' });
+            }
+        });
+
+        // サーバー再起動（pm2経由）
+        this.app.post('/api/dash/restart', requireAuth, (req, res) => {
+            log('Server restart requested via dashboard');
+            res.json({ success: true, message: 'Restarting server...' });
+
+            // クリーンアップ後に終了（pm2が再起動）
+            setTimeout(() => {
+                this.relayManager.close();
+                this.stopMicCapture();
+                this.stopSpeakerOutput();
+                process.exit(0);
+            }, 500);
+        });
+
+        // ダッシュボード静的ファイル
+        const dashPath = path.join(__dirname, '..', 'stream_client', 'dash');
+        this.app.use('/dash', express.static(dashPath));
+
+        log('Dashboard API configured');
+    }
+
+    // 稼働時間フォーマット
+    formatUptime(seconds) {
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor((seconds % 86400) / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+        if (days > 0) return `${days}d ${hours}h ${mins}m`;
+        if (hours > 0) return `${hours}h ${mins}m ${secs}s`;
+        if (mins > 0) return `${mins}m ${secs}s`;
+        return `${secs}s`;
     }
 
     // SRTファイル一覧取得
