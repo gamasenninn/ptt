@@ -497,6 +497,8 @@ class StreamServer {
             if (speaker) {
                 if (speaker === this.serverClientId) {
                     speakerName = 'Server (PC Mic)';
+                } else if (speaker === 'external') {
+                    speakerName = '外部デバイス';
                 } else {
                     const client = this.clients.get(speaker);
                     speakerName = client ? client.displayName : 'Unknown';
