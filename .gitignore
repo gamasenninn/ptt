@@ -31,3 +31,6 @@ nul
 # Node.js
 node_modules/
 package-lock.json
+
+# Server logs
+ptt-box/stream_server/logs/

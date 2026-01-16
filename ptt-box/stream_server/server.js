@@ -53,6 +53,17 @@ const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
 
+// ログ設定
+const ENABLE_FILE_LOG = process.env.ENABLE_FILE_LOG !== 'false';  // デフォルト有効
+const LOG_DIR = path.join(__dirname, 'logs');
+
+// ログディレクトリ作成
+if (ENABLE_FILE_LOG) {
+    if (!fs.existsSync(LOG_DIR)) {
+        fs.mkdirSync(LOG_DIR, { recursive: true });
+    }
+}
+
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
     webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
     console.log('Web Push configured');
@@ -1734,14 +1745,34 @@ class StreamServer {
 }
 
 // ========== ユーティリティ ==========
+function getLogFilePath() {
+    const date = new Date().toISOString().slice(0, 10);  // YYYY-MM-DD
+    return path.join(LOG_DIR, `server-${date}.log`);
+}
+
+function writeToLogFile(line) {
+    if (!ENABLE_FILE_LOG) return;
+    try {
+        fs.appendFileSync(getLogFilePath(), line + '\n');
+    } catch (e) {
+        // ファイル書き込みエラーは無視（コンソールには出力済み）
+    }
+}
+
 function log(msg) {
-    const time = new Date().toLocaleTimeString();
+    const now = new Date();
+    const time = now.toLocaleTimeString();
+    const fullTimestamp = now.toISOString();
     console.log(`[${time}] ${msg}`);
+    writeToLogFile(`[${fullTimestamp}] ${msg}`);
 }
 
 function logError(msg) {
-    const time = new Date().toLocaleTimeString();
+    const now = new Date();
+    const time = now.toLocaleTimeString();
+    const fullTimestamp = now.toISOString();
     console.error(`[${time}] ERROR: ${msg}`);
+    writeToLogFile(`[${fullTimestamp}] ERROR: ${msg}`);
 }
 
 // ========== メイン ==========
@@ -1749,8 +1780,15 @@ console.log('='.repeat(50));
 console.log('  Stream Server (Node.js)');
 console.log('='.repeat(50));
 
+if (ENABLE_FILE_LOG) {
+    console.log(`File logging: ${LOG_DIR}`);
+}
+
 const server = new StreamServer();
 server.start();
+
+// 起動ログ
+log('Server started');
 
 // サーバーマイクモード表示とキーボード制御
 if (ENABLE_SERVER_MIC) {
