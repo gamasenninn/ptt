@@ -1544,6 +1544,8 @@ class StreamServer {
 
         if (this.recordingProcess) {
             const process = this.recordingProcess;
+            this.recordingProcess = null;  // 次の録音を開始できるように先にクリア
+
             try {
                 process.stdin.end();
             } catch (e) {}
