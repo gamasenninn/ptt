@@ -556,6 +556,29 @@ class StreamServer {
             }, 500);
         });
 
+        // VOX連携API（vox_ptt_record.pyから呼び出される）
+        this.app.post('/api/vox/on', (req, res) => {
+            // Webクライアントが送信中でなければPTT取得
+            if (this.pttManager.requestFloor('external')) {
+                this.broadcastPttStatus();
+                log('VOX ON: external device transmitting');
+                res.json({ success: true });
+            } else {
+                log('VOX ON denied: floor busy');
+                res.json({ success: false, reason: 'floor_busy' });
+            }
+        });
+
+        this.app.post('/api/vox/off', (req, res) => {
+            if (this.pttManager.releaseFloor('external')) {
+                this.broadcastPttStatus();
+                log('VOX OFF: external device stopped');
+                res.json({ success: true });
+            } else {
+                res.json({ success: false });
+            }
+        });
+
         // ダッシュボード静的ファイル
         const dashPath = path.join(__dirname, '..', 'stream_client', 'dash');
         this.app.use('/dash', express.static(dashPath));
@@ -1030,6 +1053,8 @@ class StreamServer {
         let speakerName = null;
         if (this.pttManager.currentSpeaker === this.serverClientId) {
             speakerName = 'Server (PC Mic)';
+        } else if (this.pttManager.currentSpeaker === 'external') {
+            speakerName = '外部デバイス';
         } else {
             const speaker = this.clients.get(this.pttManager.currentSpeaker);
             speakerName = speaker ? speaker.displayName : null;

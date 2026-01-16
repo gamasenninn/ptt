@@ -4,6 +4,7 @@ import numpy as np
 import time
 import wave
 import threading
+import requests
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -21,6 +22,7 @@ HOLD_TIME = float(os.environ.get("VOX_HOLD_TIME", "1.5"))
 SAVE_DELAY = float(os.environ.get("VOX_SAVE_DELAY", "10.0"))
 GAIN = float(os.environ.get("VOX_GAIN", "10.0"))
 RECORDINGS_DIR = Path(os.environ.get("RECORDINGS_DIR", Path(__file__).parent / "recordings"))
+STREAM_SERVER_URL = os.environ.get("STREAM_SERVER_URL", "http://localhost:9320")
 
 # ========== 状態変数 ==========
 above_count = 0
@@ -34,6 +36,20 @@ save_timer = None
 
 def get_volume(audio_data):
     return np.sqrt(np.mean(audio_data ** 2))
+
+def notify_vox_on():
+    """サーバーにVOX ON通知"""
+    try:
+        requests.post(f"{STREAM_SERVER_URL}/api/vox/on", timeout=1)
+    except Exception as e:
+        print(f"    ⚠️ VOX ON通知エラー: {e}")
+
+def notify_vox_off():
+    """サーバーにVOX OFF通知"""
+    try:
+        requests.post(f"{STREAM_SERVER_URL}/api/vox/off", timeout=1)
+    except Exception as e:
+        print(f"    ⚠️ VOX OFF通知エラー: {e}")
 
 def save_recording():
     """録音データをWAVファイルに保存"""
@@ -108,7 +124,8 @@ def audio_callback(indata, frames, time_info, status):
     # ===== PTT ON判定 =====
     if above_count >= HOLD_COUNT and not is_active:
         is_active = True
-        
+        notify_vox_on()  # サーバーに通知
+
         # 新規セッション開始 or 継続
         if not is_recording:
             is_recording = True
@@ -127,8 +144,9 @@ def audio_callback(indata, frames, time_info, status):
     # ===== PTT OFF判定 =====
     if is_active and (current_time - last_voice_time) > HOLD_TIME:
         is_active = False
+        notify_vox_off()  # サーバーに通知
         print(f"<<< PTT OFF")
-        
+
         # 10秒後に保存をスケジュール
         schedule_save()
 
