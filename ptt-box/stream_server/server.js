@@ -1297,7 +1297,8 @@ class StreamServer {
             '-b:a', '24k',
             '-frame_duration', String(FRAME_DURATION_MS),
             '-application', 'voip',
-            '-vbr', 'on',           // 可変ビットレート（DTX有効化に必要）
+            '-vbr', 'on',           // 可変ビットレート
+            '-dtx', '1',            // 無音時パケット送信停止
             '-packet_loss', '10',   // パケットロス耐性
             '-page_duration', '20000',
             '-flush_packets', '1',
