@@ -623,8 +623,9 @@ function startP2PMeterLoop() {
             } catch (e) {}
         });
 
-        // ノイズ閾値以下は0%として表示（PTT回路ノイズ対策）
-        const percentage = maxLevel > NOISE_THRESHOLD
+        // PTTがidle時は常に0%表示（無通信時のノイズ対策）
+        // VOX連携により外部デバイス送信時もpttStateがtransmittingになる
+        const percentage = (pttState !== 'idle' && maxLevel > NOISE_THRESHOLD)
             ? Math.min(100, (maxLevel / 128) * 100)
             : 0;
         const bar = document.getElementById('p2pVolumeBar');
