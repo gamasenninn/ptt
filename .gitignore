@@ -31,6 +31,7 @@ nul
 # Node.js
 node_modules/
 package-lock.json
+coverage/
 
 # Server logs
 ptt-box/stream_server/logs/
