@@ -235,6 +235,10 @@ class StreamServer {
         this.recordingOggGranulePos = 0;
         this.recordingOggSerial = 0x87654321;
 
+        // クライアント名マッピング（clientId → displayName）
+        this.clientNamesPath = path.join(__dirname, '..', 'recordings', 'client_names.json');
+        this.clientNames = this.loadClientNames();
+
         // Express設定
         this.app = express();
         this.server = http.createServer(this.app);
@@ -634,6 +638,7 @@ class StreamServer {
             const preview = this.getSrtPreview(content);
             const { datetime, datetimeShort } = this.extractDatetimeFromFilename(filename);
             const { source, clientId } = this.extractSourceInfo(filename);
+            const displayName = clientId ? this.getClientDisplayName(clientId) : null;
 
             return {
                 filename,
@@ -642,7 +647,8 @@ class StreamServer {
                 wavFile: filename.replace('.srt', '.wav'),
                 preview,
                 source,
-                clientId
+                clientId,
+                displayName
             };
         });
 
@@ -701,6 +707,38 @@ class StreamServer {
         }
 
         return textLines.join(' ').substring(0, 50);
+    }
+
+    // クライアント名マッピングを読み込み
+    loadClientNames() {
+        try {
+            if (fs.existsSync(this.clientNamesPath)) {
+                const data = fs.readFileSync(this.clientNamesPath, 'utf-8');
+                return JSON.parse(data);
+            }
+        } catch (e) {
+            log(`Error loading client names: ${e.message}`);
+        }
+        return {};
+    }
+
+    // クライアント名を保存
+    saveClientName(clientId, displayName) {
+        try {
+            this.clientNames[clientId] = displayName;
+            const dir = path.dirname(this.clientNamesPath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(this.clientNamesPath, JSON.stringify(this.clientNames, null, 2), 'utf-8');
+        } catch (e) {
+            log(`Error saving client name: ${e.message}`);
+        }
+    }
+
+    // clientIdからdisplayNameを取得
+    getClientDisplayName(clientId) {
+        return this.clientNames[clientId] || null;
     }
 
     // 新規接続
@@ -1525,6 +1563,9 @@ class StreamServer {
         this.recordingFinalPath = path.join(recordingsDir, this.recordingFilename);
 
         log(`Recording started: ${this.recordingFilename} (speaker: ${displayName})`);
+
+        // クライアント名をマッピングに保存
+        this.saveClientName(clientId, displayName);
 
         this.recordingProcess = spawn('ffmpeg', [
             '-y',  // 上書き許可

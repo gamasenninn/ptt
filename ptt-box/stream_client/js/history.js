@@ -67,7 +67,7 @@ function renderHistoryList() {
                     <span class="history-play-icon">${playIcon}</span>
                     <span class="source-badge" title="${file.source === 'analog' ? 'アナログ' : 'Web'}">${sourceIcon}</span>
                     <span class="history-datetime">${file.datetimeShort || file.datetime || '-'}</span>
-                    ${file.clientId ? `<span class="client-id">${escapeHtml(file.clientId)}</span>` : ''}
+                    ${file.clientId ? `<span class="client-id">${file.displayName ? escapeHtml(file.displayName) + ' (' + escapeHtml(file.clientId) + ')' : escapeHtml(file.clientId)}</span>` : ''}
                     <button class="history-edit-btn" onclick="event.stopPropagation(); openEditor('${file.filename}', '${file.wavFile}')">編集</button>
                 </div>
                 <div class="history-row2">
