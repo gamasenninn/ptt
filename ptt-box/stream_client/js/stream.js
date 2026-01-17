@@ -306,6 +306,16 @@ async function connect() {
                 debugLog('ICE servers: ' + JSON.stringify(iceServers.map(s => s.urls)));
                 await setupWebRTC();
 
+                // 保存された表示名をサーバーに送信
+                const savedName = getSavedDisplayName();
+                if (savedName) {
+                    ws.send(JSON.stringify({
+                        type: 'set_display_name',
+                        displayName: savedName
+                    }));
+                    debugLog('Display name sent: ' + savedName);
+                }
+
                 // プッシュ通知をセットアップ
                 if (vapidPublicKey) {
                     setupPushNotifications();
@@ -884,6 +894,7 @@ function openSettings() {
     if (modal) {
         modal.classList.add('active');
         updatePttKeyDisplay();
+        loadDisplayNameToInput();
     }
 }
 
@@ -894,6 +905,50 @@ function closeSettings() {
         modal.classList.remove('active');
     }
     cancelKeyRegistration();
+}
+
+// ========== 表示名設定 ==========
+
+// 保存された表示名を取得
+function getSavedDisplayName() {
+    return localStorage.getItem('ptt_display_name') || '';
+}
+
+// 表示名を保存
+function saveDisplayName() {
+    const input = document.getElementById('displayNameInput');
+    if (!input) return;
+
+    const name = input.value.trim();
+    if (name) {
+        localStorage.setItem('ptt_display_name', name);
+        // サーバーに通知
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'set_display_name',
+                displayName: name
+            }));
+        }
+        // フィードバック表示
+        const hint = document.getElementById('displayNameHint');
+        if (hint) {
+            hint.textContent = '保存しました';
+            hint.style.color = '#4ade80';
+            setTimeout(() => {
+                hint.textContent = '他のユーザーに表示される名前です';
+                hint.style.color = '#888';
+            }, 2000);
+        }
+        debugLog('Display name saved: ' + name);
+    }
+}
+
+// 設定画面を開いた時に表示名を読み込み
+function loadDisplayNameToInput() {
+    const input = document.getElementById('displayNameInput');
+    if (input) {
+        input.value = getSavedDisplayName();
+    }
 }
 
 // PTTキー表示を更新

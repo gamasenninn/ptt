@@ -668,6 +668,14 @@
             </div>
             <div class="modal-body">
                 <div style="margin-bottom: 20px;">
+                    <div style="margin-bottom: 10px; font-weight: 500;">表示名</div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="text" id="displayNameInput" placeholder="名前を入力" maxlength="20" style="flex: 1; padding: 12px; background: #0a0a15; border: 1px solid #333; border-radius: 6px; color: #eee; font-size: 14px;">
+                        <button onclick="saveDisplayName()" style="padding: 12px 20px; background: #3d405b; border: none; color: #eee; border-radius: 6px; cursor: pointer;">保存</button>
+                    </div>
+                    <div id="displayNameHint" style="margin-top: 10px; font-size: 12px; color: #888;">他のユーザーに表示される名前です</div>
+                </div>
+                <div style="margin-bottom: 20px;">
                     <div style="margin-bottom: 10px; font-weight: 500;">PTTショートカットキー</div>
                     <div style="display: flex; gap: 10px; align-items: center;">
                         <div id="pttKeyDisplay" style="flex: 1; padding: 12px; background: #0a0a15; border-radius: 6px; text-align: center; font-family: monospace;">Ctrl+Space</div>

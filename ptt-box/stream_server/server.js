@@ -768,7 +768,11 @@ class StreamServer {
                 break;
 
             case 'set_display_name':
-                client.displayName = msg.displayName || client.displayName;
+                if (msg.displayName && msg.displayName !== client.displayName) {
+                    const oldName = client.displayName;
+                    client.displayName = msg.displayName;
+                    log(`Display name changed: ${oldName} → ${client.displayName}`);
+                }
                 break;
 
             // P2Pシグナリング中継
