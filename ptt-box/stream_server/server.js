@@ -1782,97 +1782,177 @@ function logError(msg) {
     writeToLogFile(`[${fullTimestamp}] ERROR: ${msg}`);
 }
 
+// ========== テスト用ユーティリティ関数 ==========
+// クラスメソッドと同じロジックをスタンドアロン関数として提供
+
+function formatUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    if (days > 0) return `${days}d ${hours}h ${mins}m`;
+    if (hours > 0) return `${hours}h ${mins}m ${secs}s`;
+    if (mins > 0) return `${mins}m ${secs}s`;
+    return `${secs}s`;
+}
+
+function extractDatetimeFromFilename(filename) {
+    const match = filename.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+    if (match) {
+        const [, year, month, day, hour, min, sec] = match;
+        return {
+            datetime: `${year}-${month}-${day} ${hour}:${min}:${sec}`,
+            datetimeShort: `${month}/${day} ${hour}:${min}`
+        };
+    }
+    return { datetime: '-', datetimeShort: '-' };
+}
+
+function extractDatetimeForSort(filename) {
+    const match = filename.match(/(\d{8}_\d{6})/);
+    return match ? match[1] : '00000000_000000';
+}
+
+function extractSourceInfo(filename) {
+    if (filename.startsWith('web_')) {
+        const match = filename.match(/web_\d{8}_\d{6}_([^.]+)\.srt/);
+        return {
+            source: 'web',
+            clientId: match ? match[1] : null
+        };
+    } else if (filename.startsWith('rec_')) {
+        return { source: 'analog', clientId: null };
+    }
+    return { source: 'unknown', clientId: null };
+}
+
+function getSrtPreview(content) {
+    if (!content) return '';
+
+    const lines = content.split('\n');
+    const textLines = [];
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (/^\d+$/.test(trimmed)) continue;
+        if (/^\d{2}:\d{2}:\d{2}/.test(trimmed)) continue;
+        textLines.push(trimmed);
+    }
+
+    return textLines.join(' ').substring(0, 50);
+}
+
+// ========== モジュールエクスポート ==========
+// テスト用にエクスポート（本番実行には影響なし）
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        // 純粋関数
+        formatUptime,
+        extractDatetimeFromFilename,
+        extractDatetimeForSort,
+        extractSourceInfo,
+        getSrtPreview,
+        // クラス（Phase 2以降で使用）
+        PTTManager,
+        StreamServer
+    };
+}
+
 // ========== メイン ==========
-console.log('='.repeat(50));
-console.log('  Stream Server (Node.js)');
-console.log('='.repeat(50));
+// テスト実行時はサーバーを起動しない
+if (require.main === module) {
+    console.log('='.repeat(50));
+    console.log('  Stream Server (Node.js)');
+    console.log('='.repeat(50));
 
-if (ENABLE_FILE_LOG) {
-    console.log(`File logging: ${LOG_DIR}`);
-}
-
-const server = new StreamServer();
-server.start();
-
-// 起動ログ
-log('Server started');
-
-// サーバーマイクモード表示とキーボード制御
-if (ENABLE_SERVER_MIC) {
-    console.log('');
-    if (SERVER_MIC_MODE === 'always') {
-        console.log('Mic mode: ALWAYS ON (DTX enabled - silent when no audio)');
-        console.log('  Mic will start automatically when first client connects');
-    } else {
-        console.log('Mic mode: PTT (press SPACE to transmit)');
+    if (ENABLE_FILE_LOG) {
+        console.log(`File logging: ${LOG_DIR}`);
     }
 
-    try {
-        const readline = require('readline');
-        readline.emitKeypressEvents(process.stdin);
-        if (process.stdin.setRawMode) {
-            process.stdin.setRawMode(true);
+    const server = new StreamServer();
+    server.start();
+
+    // 起動ログ
+    log('Server started');
+
+    // サーバーマイクモード表示とキーボード制御
+    if (ENABLE_SERVER_MIC) {
+        console.log('');
+        if (SERVER_MIC_MODE === 'always') {
+            console.log('Mic mode: ALWAYS ON (DTX enabled - silent when no audio)');
+            console.log('  Mic will start automatically when first client connects');
+        } else {
+            console.log('Mic mode: PTT (press SPACE to transmit)');
         }
 
-        console.log('');
-        console.log('Controls:');
-        if (SERVER_MIC_MODE === 'ptt') {
-            console.log('  [SPACE] - Toggle mic transmission');
-        }
-        console.log('  [q]     - Quit');
-        console.log('');
-
-        let serverTransmitting = false;
-
-        process.stdin.on('keypress', (str, key) => {
-            if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
-                log('Shutting down...');
-                server.relayManager.close();
-                server.stopMicCapture();
-                server.stopSpeakerOutput();
-                process.exit(0);
+        try {
+            const readline = require('readline');
+            readline.emitKeypressEvents(process.stdin);
+            if (process.stdin.setRawMode) {
+                process.stdin.setRawMode(true);
             }
 
-            // PTTモードの時のみスペースキーで制御
-            if (SERVER_MIC_MODE === 'ptt' && key.name === 'space') {
-                if (!serverTransmitting) {
-                    // サーバーがPTT取得
-                    if (server.pttManager.requestFloor(server.serverClientId)) {
-                        serverTransmitting = true;
-                        log('Server PTT ON - transmitting mic audio');
-                        server.startMicCapture();
-                        server.broadcastPttStatus();
-                    } else {
-                        log('PTT denied - someone else is transmitting');
-                    }
-                } else {
-                    // サーバーがPTTリリース
-                    server.pttManager.releaseFloor(server.serverClientId);
-                    serverTransmitting = false;
-                    log('Server PTT OFF');
+            console.log('');
+            console.log('Controls:');
+            if (SERVER_MIC_MODE === 'ptt') {
+                console.log('  [SPACE] - Toggle mic transmission');
+            }
+            console.log('  [q]     - Quit');
+            console.log('');
+
+            let serverTransmitting = false;
+
+            process.stdin.on('keypress', (str, key) => {
+                if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
+                    log('Shutting down...');
+                    server.relayManager.close();
                     server.stopMicCapture();
-                    server.broadcastPttStatus();
+                    server.stopSpeakerOutput();
+                    process.exit(0);
                 }
-            }
-        });
-    } catch (e) {
-        console.log('Keyboard input not available');
+
+                // PTTモードの時のみスペースキーで制御
+                if (SERVER_MIC_MODE === 'ptt' && key.name === 'space') {
+                    if (!serverTransmitting) {
+                        // サーバーがPTT取得
+                        if (server.pttManager.requestFloor(server.serverClientId)) {
+                            serverTransmitting = true;
+                            log('Server PTT ON - transmitting mic audio');
+                            server.startMicCapture();
+                            server.broadcastPttStatus();
+                        } else {
+                            log('PTT denied - someone else is transmitting');
+                        }
+                    } else {
+                        // サーバーがPTTリリース
+                        server.pttManager.releaseFloor(server.serverClientId);
+                        serverTransmitting = false;
+                        log('Server PTT OFF');
+                        server.stopMicCapture();
+                        server.broadcastPttStatus();
+                    }
+                }
+            });
+        } catch (e) {
+            console.log('Keyboard input not available');
+        }
     }
+
+    // グレースフルシャットダウン
+    process.on('SIGINT', () => {
+        log('SIGINT received, shutting down...');
+        server.relayManager.close();
+        server.stopMicCapture();
+        server.stopSpeakerOutput();
+        process.exit(0);
+    });
+
+    process.on('SIGTERM', () => {
+        log('SIGTERM received, shutting down...');
+        server.relayManager.close();
+        server.stopMicCapture();
+        server.stopSpeakerOutput();
+        process.exit(0);
+    });
 }
-
-// グレースフルシャットダウン
-process.on('SIGINT', () => {
-    log('SIGINT received, shutting down...');
-    server.relayManager.close();
-    server.stopMicCapture();
-    server.stopSpeakerOutput();
-    process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-    log('SIGTERM received, shutting down...');
-    server.relayManager.close();
-    server.stopMicCapture();
-    server.stopSpeakerOutput();
-    process.exit(0);
-});
