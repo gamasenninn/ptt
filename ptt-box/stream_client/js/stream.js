@@ -1229,6 +1229,14 @@ function pttEnd(event) {
 // 送信権取得時
 function handlePttGranted() {
     debugLog('PTT granted - transmitting');
+
+    // ボタンが既に離されていたら即座にリリース
+    if (!pttButtonPressed) {
+        debugLog('Button already released - immediate release');
+        ws.send(JSON.stringify({ type: 'ptt_release' }));
+        return;
+    }
+
     isPttActive = true;
 
     // サーバー向けマイクをアンミュート
