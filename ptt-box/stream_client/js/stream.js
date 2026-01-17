@@ -10,7 +10,8 @@ let autoReconnect = false;  // 自動再接続フラグ（connect()でtrueに設
 let reconnectAttempts = 0;
 let reconnectTimer = null;  // 再接続タイマーID
 const MAX_RECONNECT_ATTEMPTS = 10;
-const RECONNECT_DELAY = 3000;  // 3秒
+const BASE_RECONNECT_DELAY = 2000;  // 基本2秒
+const MAX_RECONNECT_DELAY = 30000;  // 最大30秒
 let wakeLock = null;  // スクリーンロック防止
 
 // PTT関連
@@ -742,7 +743,7 @@ function cleanup() {
     updateConnectionToggle('disconnected');
 }
 
-// 自動再接続スケジュール
+// 自動再接続スケジュール（指数バックオフ）
 function scheduleReconnect() {
     if (!autoReconnect) return;
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
@@ -751,8 +752,11 @@ function scheduleReconnect() {
         return;
     }
 
+    // 指数バックオフ: 2秒, 4秒, 8秒, 16秒, 30秒(上限)...
+    const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
     reconnectAttempts++;
-    debugLog('Reconnecting in ' + (RECONNECT_DELAY/1000) + 's... (' + reconnectAttempts + '/' + MAX_RECONNECT_ATTEMPTS + ')');
+
+    debugLog('Reconnecting in ' + (delay/1000) + 's... (' + reconnectAttempts + '/' + MAX_RECONNECT_ATTEMPTS + ')');
     updateConnectionToggle('connecting');
 
     reconnectTimer = setTimeout(() => {
@@ -760,7 +764,7 @@ function scheduleReconnect() {
         if (autoReconnect && !ws) {
             connect();
         }
-    }, RECONNECT_DELAY);
+    }, delay);
 }
 
 // ページ離脱時にクリーンアップ

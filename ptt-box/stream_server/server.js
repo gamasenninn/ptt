@@ -924,13 +924,9 @@ class StreamServer {
                     client.disconnectTimer = null;
                 }
             } else if (client.pc.connectionState === 'disconnected') {
-                // 30秒後にまだdisconnectedならクリーンアップ
-                client.disconnectTimer = setTimeout(() => {
-                    if (client.pc && client.pc.connectionState === 'disconnected') {
-                        log(`${client.displayName}: WebRTC disconnected timeout, closing WebSocket`);
-                        client.ws.close(1000, 'WebRTC disconnected timeout');
-                    }
-                }, 30000);
+                // WebRTC切断時は即座にWebSocketも閉じる（リソース競合防止）
+                log(`${client.displayName}: WebRTC disconnected, closing WebSocket immediately`);
+                client.ws.close(1000, 'WebRTC disconnected');
             } else if (client.pc.connectionState === 'failed') {
                 // WebRTC接続失敗時はWebSocketも閉じる
                 log(`${client.displayName}: WebRTC failed, closing WebSocket`);
