@@ -1,16 +1,17 @@
 # stream_server / stream_client コードレビュー
 
 **レビュー日**: 2026-01-18
+**更新日**: 2026-01-18
 **対象**: WebRTC/WebSocket 周りを中心としたバグ、無駄なコード、最適化可能性
 
 ---
 
 ## サマリー
 
-| カテゴリ | HIGH | MEDIUM | LOW |
-|---------|------|--------|-----|
-| server.js | 6 | 8 | 5 |
-| stream_client | 3 | 6 | 4 |
+| カテゴリ | HIGH | MEDIUM | LOW | FIXED |
+|---------|------|--------|-----|-------|
+| server.js | 6 | 7 | 5 | 1 |
+| stream_client | 1 | 5 | 4 | 3 |
 
 ---
 
@@ -131,10 +132,18 @@ WebRTC ICE gatheringが失敗しても明示的なエラーハンドリングが
 
 ---
 
-#### 1.8 メモリリーク - イベントリスナー未削除
+#### 1.8 メモリリーク - イベントリスナー未削除 ✅ FIXED
 **場所**: WebRTC接続作成時
+**修正コミット**: `0bd9a81`
 
 `pc.ontrack`, `pc.onicecandidate`等のイベントリスナーが接続終了時に明示的に削除されていない。
+
+**実施した修正**:
+- `handleDisconnect()` でメイン PeerConnection の全ハンドラを close 前に null 化
+- P2P PeerConnection の `onconnectionstatechange`, `onicecandidate`, `ontrack` を null 化
+- `track.onReceiveRtp.subscribe()` の unsubscribe 対応
+- `waitForIceGathering()` のハンドラを完了/タイムアウト時に null 化
+- `stopMicCapture()` で `stdout.removeAllListeners('data')` を呼び出し
 
 ---
 
@@ -214,8 +223,9 @@ function createOpusIdHeader() {
 
 ### HIGH Priority Issues
 
-#### 2.1 ICE gathering時のイベントリスナー未削除（メモリリーク）
+#### 2.1 ICE gathering時のイベントリスナー未削除（メモリリーク） ✅ FIXED
 **場所**: 510-533行目
+**修正コミット**: `0bd9a81`
 
 ```javascript
 function waitForIceGathering(pc, timeout = 5000) {
@@ -239,25 +249,17 @@ function waitForIceGathering(pc, timeout = 5000) {
 }
 ```
 
-**推奨修正**:
-```javascript
-const handler = () => {
-    if (pc.iceGatheringState === 'complete') {
-        pc.removeEventListener('icegatheringstatechange', handler);
-        resolve();
-    }
-};
-// タイムアウト時も削除
-setTimeout(() => {
-    pc.removeEventListener('icegatheringstatechange', handler);
-    resolve();
-}, timeout);
-```
+**実施した修正**:
+- 名前付き関数 `onGatheringChange`, `onIceCandidate` でリスナーを登録
+- `cleanup()` 関数で `removeEventListener` を一括呼び出し
+- 完了時・タイムアウト時に確実にリスナーを削除
+- 二重 resolve 防止のため `resolved` フラグを導入
 
 ---
 
-#### 2.2 P2P ICEイベントリスナー未削除（メモリリーク）
+#### 2.2 P2P ICEイベントリスナー未削除（メモリリーク） ✅ FIXED
 **場所**: 1674-1679行目
+**修正コミット**: `0bd9a81`
 
 ```javascript
 pc.addEventListener('icecandidate', (e) => { ... });
@@ -265,7 +267,13 @@ pc.addEventListener('iceconnectionstatechange', () => { ... });
 // これらがP2P切断時に削除されていない
 ```
 
-**推奨修正**: `cleanupP2PConnection()` 内でイベントリスナーを明示的に削除。
+**実施した修正**:
+- `cleanupP2PConnection()` で close 前に全ハンドラを null 化:
+  - `pc.ontrack = null`
+  - `pc.onicecandidate = null`
+  - `pc.onconnectionstatechange = null`
+- `waitForP2PIceGathering()` でも `removeEventListener` を呼び出し
+- cloned track の明示的な `stop()` を追加
 
 ---
 
@@ -305,10 +313,17 @@ audioContext.resume();  // ← すでにclosedの場合エラー
 
 ---
 
-#### 2.5 再接続時のリソースリーク
+#### 2.5 再接続時のリソースリーク ✅ FIXED
 **場所**: connect/disconnect処理
+**修正コミット**: `0bd9a81`
 
 再接続時に古いPeerConnection, AudioContext等が完全にクリーンアップされていない可能性。
+
+**実施した修正**:
+- `cleanupConnection()` で RAF ループを `cancelAnimationFrame()` でキャンセル
+- `MediaStreamSource.disconnect()` を明示的に呼び出し
+- グローバル変数 `volumeMeterAnimationId`, `p2pMeterAnimationId`, `volumeMeterSource` を追加してリソースを追跡
+- 再接続時に既存リソースを確実に解放してから新規作成
 
 ---
 
@@ -395,7 +410,7 @@ const BASE_RECONNECT_DELAY = 2000;
 
 ### 短期対応（安定性）
 3. PTT状態の非アトミック操作修正 (1.3)
-4. メモリリーク修正 (2.1, 2.2)
+4. ~~メモリリーク修正 (1.8, 2.1, 2.2, 2.5)~~ ✅ 修正済み（コミット `0bd9a81`）
 5. レースコンディション修正 (1.1, 2.3)
 
 ### 中期対応（品質向上）
@@ -420,4 +435,25 @@ const BASE_RECONNECT_DELAY = 2000;
 - WebRTC接続/切断のエッジケース
 - 同時接続時のレースコンディション
 - エラー回復シナリオ
+
+---
+
+## 6. 修正履歴
+
+### 2026-01-18: メモリリーク修正 (`0bd9a81`)
+
+18時間稼働後に音声レベルメーターが応答しなくなる問題を調査し、メモリリーク4件を修正。
+
+| 項目 | 修正内容 |
+|------|----------|
+| 1.8 | サーバー: PeerConnection/RTPハンドラのクリーンアップ |
+| 2.1 | クライアント: ICE gathering リスナーの削除 |
+| 2.2 | クライアント: P2P ICE リスナーの削除 |
+| 2.5 | クライアント: RAF ループ/MediaStreamSource のクリーンアップ |
+
+**変更ファイル**:
+- `ptt-box/stream_server/server.js` (+31行)
+- `ptt-box/stream_client/js/stream.js` (+92行, -17行)
+
+**テスト結果**: 60テスト全て合格（デグレードなし）
 
