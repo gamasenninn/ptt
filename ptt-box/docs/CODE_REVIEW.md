@@ -10,7 +10,7 @@
 
 | カテゴリ | HIGH | MEDIUM | LOW | FIXED | N/A |
 |---------|------|--------|-----|-------|-----|
-| server.js | 5 | 6 | 5 | 2 | 1 |
+| server.js | 4 | 6 | 5 | 3 | 1 |
 | stream_client | 1 | 5 | 4 | 3 | 0 |
 
 ---
@@ -33,8 +33,9 @@ p2pConnections.delete(peerId visibleId visibleIdvisibleId);
 
 ---
 
-#### 1.2 Heartbeatのterminate()レースコンディション
+#### 1.2 Heartbeatのterminate()レースコンディション ✅ FIXED
 **場所**: 268-281行目
+**修正コミット**: `0d1f7ac`
 
 ```javascript
 client.heartbeatTimeout = setTimeout(() => {
@@ -45,9 +46,9 @@ client.heartbeatTimeout = setTimeout(() => {
 
 **問題**: タイムアウト発火時にすでに`client.ws`がcloseされている可能性がある。
 
-**推奨修正**:
+**実施した修正**:
 ```javascript
-if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+if (client.ws.readyState === WebSocket.OPEN) {
     client.ws.terminate();
 }
 ```
@@ -482,6 +483,14 @@ const BASE_RECONNECT_DELAY = 2000;
 
 **変更ファイル**:
 - `ptt-box/stream_server/server.js` (+49行)
+
+**テスト結果**: 60テスト全て合格（デグレードなし）
+
+### 2026-01-18: Heartbeat レースコンディション修正 (`0d1f7ac`)
+
+WebSocket heartbeat タイムアウト時に、既に閉じられた接続に対して `terminate()` を呼ぶ問題を修正。
+
+**実施した修正**: `terminate()` 呼び出し前に `readyState === WebSocket.OPEN` をチェック
 
 **テスト結果**: 60テスト全て合格（デグレードなし）
 
