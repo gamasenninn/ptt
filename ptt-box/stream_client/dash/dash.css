@@ -239,3 +239,77 @@ footer {
 .state-disconnected {
     color: #e94560;
 }
+
+/* モバイル対応 */
+@media (max-width: 480px) {
+    header {
+        padding: 0.75rem 1rem;
+    }
+
+    header h1 {
+        font-size: 1rem;
+    }
+
+    main {
+        padding: 1rem;
+        gap: 1rem;
+    }
+
+    .card {
+        padding: 1rem;
+    }
+
+    .card h2 {
+        font-size: 0.875rem;
+    }
+
+    .status-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.75rem;
+    }
+
+    .status-item .label {
+        font-size: 0.7rem;
+    }
+
+    .status-item .value {
+        font-size: 1rem;
+    }
+
+    .login-box {
+        min-width: auto;
+        width: calc(100vw - 2rem);
+        max-width: 300px;
+    }
+
+    footer {
+        padding: 0.5rem 1rem;
+        flex-direction: column;
+        gap: 0.25rem;
+        text-align: center;
+    }
+
+    /* テーブルをスクロール可能に */
+    .card:has(table) {
+        overflow-x: auto;
+    }
+
+    table {
+        min-width: 400px;
+        font-size: 0.8rem;
+    }
+
+    th, td {
+        padding: 0.5rem;
+        white-space: nowrap;
+    }
+
+    button {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.8rem;
+    }
+
+    .actions {
+        flex-wrap: wrap;
+    }
+}
