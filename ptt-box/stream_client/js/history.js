@@ -21,6 +21,12 @@ function switchTab(tabName) {
     // 履歴タブに切り替えたら読み込み
     if (tabName === 'history') {
         loadHistory();
+    } else if (tabName === 'admin') {
+        // 管理タブ: 初回のみ iframe を読み込み
+        const iframe = document.getElementById('admin-iframe');
+        if (!iframe.src || iframe.src === '' || iframe.src === window.location.href) {
+            iframe.src = '/dash/';
+        }
     }
 }
 

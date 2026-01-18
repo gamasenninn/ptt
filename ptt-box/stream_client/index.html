@@ -545,6 +545,7 @@
         <div class="tab-nav">
             <button class="tab-btn active" onclick="switchTab('transceiver')">トーク</button>
             <button class="tab-btn" onclick="switchTab('history')">履歴</button>
+            <button class="tab-btn" onclick="switchTab('admin')">管理</button>
         </div>
 
         <!-- Transceiver Tab -->
@@ -638,6 +639,11 @@
                 <div class="history-loading">読み込み中...</div>
             </div>
             <audio id="historyAudio" style="display: none;" preload="none"></audio>
+        </div>
+
+        <!-- Admin Tab -->
+        <div id="tab-admin" class="tab-content">
+            <iframe id="admin-iframe" src="" style="width: 100%; height: calc(100vh - 100px); border: none; background: #0a0a15;"></iframe>
         </div>
     </div>
 
