@@ -287,7 +287,21 @@ class StreamServer {
         setInterval(() => {
             const uptime = Math.round((Date.now() - this.startTime) / 60000);
             const mem = process.memoryUsage();
-            log(`[Monitor] uptime=${uptime}min, clients=${this.clients.size}, p2p=${this.p2pConnections.size}, push=${this.pushSubscriptions.size}, heap=${Math.round(mem.heapUsed / 1024 / 1024)}MB`);
+            // RTP状態も記録（長時間稼働時の問題調査用）
+            const rtpSeq = this.rtpSequence & 0xFFFF;
+            const rtpTs = this.rtpTimestamp >>> 0;
+            // P2P接続状態の詳細
+            const p2pStates = [];
+            for (const [clientId, connInfo] of this.p2pConnections) {
+                const client = this.clients.get(clientId);
+                const name = client ? client.displayName : clientId.slice(0, 4);
+                const state = connInfo.pc ? connInfo.pc.connectionState : 'no-pc';
+                p2pStates.push(`${name}:${state}`);
+            }
+            log(`[Monitor] uptime=${uptime}min, clients=${this.clients.size}, p2p=${this.p2pConnections.size}, push=${this.pushSubscriptions.size}, heap=${Math.round(mem.heapUsed / 1024 / 1024)}MB, rtp=${rtpSeq}/${rtpTs}`);
+            if (p2pStates.length > 0) {
+                log(`[Monitor] P2P: ${p2pStates.join(', ')}`);
+            }
         }, 300000);  // 5分ごと
     }
 

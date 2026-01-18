@@ -560,6 +560,11 @@ function setupVolumeMeter(stream) {
         function updateMeter() {
             if (!analyser) return;
 
+            // AudioContextがsuspendedなら再開を試みる（バックグラウンド後の復帰対策）
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+
             analyser.getByteFrequencyData(dataArray);
             const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
             const percentage = Math.min(100, (average / 128) * 100);
@@ -619,6 +624,11 @@ function startP2PMeterLoop() {
 
     function updateP2PMeter() {
         if (!p2pMeterRunning) return;
+
+        // AudioContextがsuspendedなら再開を試みる（バックグラウンド後の復帰対策）
+        if (p2pAudioContext && p2pAudioContext.state === 'suspended') {
+            p2pAudioContext.resume();
+        }
 
         let maxLevel = 0;
 
