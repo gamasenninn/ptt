@@ -8,10 +8,10 @@
 
 ## サマリー
 
-| カテゴリ | HIGH | MEDIUM | LOW | FIXED |
-|---------|------|--------|-----|-------|
-| server.js | 6 | 6 | 5 | 2 |
-| stream_client | 1 | 5 | 4 | 3 |
+| カテゴリ | HIGH | MEDIUM | LOW | FIXED | N/A |
+|---------|------|--------|-----|-------|-----|
+| server.js | 5 | 6 | 5 | 2 | 1 |
+| stream_client | 1 | 5 | 4 | 3 | 0 |
 
 ---
 
@@ -106,8 +106,9 @@ const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || 'admin';
 
 ---
 
-#### 1.6 録音クリーンアップのdouble-free
+#### 1.6 録音クリーンアップのdouble-free ⚪ N/A
 **場所**: 1595-1629行目
+**確認日**: 2026-01-18
 
 ```javascript
 function cleanupRecording(clientId) {
@@ -120,6 +121,13 @@ function cleanupRecording(clientId) {
 ```
 
 **問題**: 複数箇所から同時に呼ばれると、同じリソースを二重解放する可能性。
+
+**確認結果**: コードがリファクタリングされており、`activeRecordings` Map は存在しない。現在の実装では:
+- `startRecording()`: `if (this.recordingProcess) return;` で二重開始を防止
+- `stopRecording()`: `if (this.recordingProcess)` で二重処理を防止、即座に null 設定
+- パス情報はローカル変数にキャプチャされ、クロージャで安全に使用
+
+Node.js のシングルスレッド特性により、double-free の問題は発生しない。
 
 ---
 
