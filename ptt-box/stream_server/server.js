@@ -56,6 +56,7 @@ const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
 // ログ設定
 const ENABLE_FILE_LOG = process.env.ENABLE_FILE_LOG !== 'false';  // デフォルト有効
 const LOG_DIR = path.join(__dirname, 'logs');
+const LOG_RETENTION_DAYS = parseInt(process.env.LOG_RETENTION_DAYS) || 30;  // ログ保持日数
 
 // ログディレクトリ作成
 if (ENABLE_FILE_LOG) {
@@ -1833,6 +1834,41 @@ function getLogFilePath() {
     return path.join(LOG_DIR, `server-${date}.log`);
 }
 
+function cleanupOldLogs() {
+    if (!ENABLE_FILE_LOG || LOG_RETENTION_DAYS <= 0) return;
+
+    try {
+        const files = fs.readdirSync(LOG_DIR);
+        const now = Date.now();
+        const maxAge = LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+        let deletedCount = 0;
+
+        for (const file of files) {
+            if (!file.startsWith('server-') || !file.endsWith('.log')) continue;
+
+            // ファイル名から日付を抽出 (server-YYYY-MM-DD.log)
+            const match = file.match(/^server-(\d{4}-\d{2}-\d{2})\.log$/);
+            if (!match) continue;
+
+            const fileDate = new Date(match[1]);
+            if (isNaN(fileDate.getTime())) continue;
+
+            const age = now - fileDate.getTime();
+            if (age > maxAge) {
+                const filePath = path.join(LOG_DIR, file);
+                fs.unlinkSync(filePath);
+                deletedCount++;
+            }
+        }
+
+        if (deletedCount > 0) {
+            console.log(`[Log Cleanup] Deleted ${deletedCount} old log file(s)`);
+        }
+    } catch (e) {
+        console.error(`[Log Cleanup] Error: ${e.message}`);
+    }
+}
+
 function writeToLogFile(line) {
     if (!ENABLE_FILE_LOG) return;
     try {
@@ -1944,6 +1980,19 @@ if (require.main === module) {
 
     if (ENABLE_FILE_LOG) {
         console.log(`File logging: ${LOG_DIR}`);
+        console.log(`Log retention: ${LOG_RETENTION_DAYS} days`);
+
+        // 起動時に古いログをクリーンアップ
+        cleanupOldLogs();
+
+        // 毎日0時にログクリーンアップを実行
+        const now = new Date();
+        const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0) - now;
+        setTimeout(() => {
+            cleanupOldLogs();
+            // 以降は24時間ごとに実行
+            setInterval(cleanupOldLogs, 24 * 60 * 60 * 1000);
+        }, msUntilMidnight);
     }
 
     const server = new StreamServer();
