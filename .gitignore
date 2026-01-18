@@ -24,6 +24,7 @@ ptt-box/recordings/client_names.json
 
 # Environment variables
 .env
+.env.backup
 
 # Upload done markers
 *.updone
