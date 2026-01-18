@@ -41,6 +41,11 @@ let p2pAudioContext = null;
 let p2pMeterSources = new Map();  // clientId -> { source, analyser }
 let p2pMeterRunning = false;
 
+// 音声レベルメーター用（メモリリーク対策）
+let volumeMeterAnimationId = null;  // RAFキャンセル用
+let p2pMeterAnimationId = null;     // P2P RAF キャンセル用
+let volumeMeterSource = null;        // MediaStreamSource（disconnect用）
+
 // プッシュ通知用
 let pushSubscription = null;
 let vapidPublicKey = null;
@@ -490,9 +495,19 @@ async function setupWebRTC() {
         let hasRelay = false;
         let hasHostOrSrflx = false;
         let relayTimer = null;
+        let resolved = false;
+
+        // クリーンアップ関数（リスナー削除）
+        const cleanup = () => {
+            if (resolved) return;
+            resolved = true;
+            pc.removeEventListener('icegatheringstatechange', onGatheringChange);
+            pc.removeEventListener('icecandidate', onIceCandidate);
+        };
 
         const timeout = setTimeout(() => {
             debugLog('ICE gathering timeout');
+            cleanup();
             resolve();
         }, 10000);  // 最大10秒に短縮
 
@@ -502,21 +517,23 @@ async function setupWebRTC() {
                 relayTimer = setTimeout(() => {
                     debugLog('Proceeding with relay candidate');
                     clearTimeout(timeout);
+                    cleanup();
                     resolve();
                 }, 1000);
             }
         };
 
-        pc.addEventListener('icegatheringstatechange', () => {
+        const onGatheringChange = () => {
             if (pc.iceGatheringState === 'complete') {
                 clearTimeout(timeout);
                 if (relayTimer) clearTimeout(relayTimer);
+                cleanup();
                 resolve();
             }
-        });
+        };
 
         // ICE候補ごとにログ出力
-        pc.addEventListener('icecandidate', (event) => {
+        const onIceCandidate = (event) => {
             if (event.candidate) {
                 const type = event.candidate.type || 'unknown';
                 debugLog('Candidate: ' + type);
@@ -530,7 +547,10 @@ async function setupWebRTC() {
             } else {
                 debugLog('ICE gathering done');
             }
-        });
+        };
+
+        pc.addEventListener('icegatheringstatechange', onGatheringChange);
+        pc.addEventListener('icecandidate', onIceCandidate);
     });
 
     const hasRelayInSdp = pc.localDescription.sdp.includes('relay');
@@ -545,15 +565,26 @@ async function setupWebRTC() {
 
 function setupVolumeMeter(stream) {
     try {
+        // 既存のRAFループをキャンセル
+        if (volumeMeterAnimationId) {
+            cancelAnimationFrame(volumeMeterAnimationId);
+            volumeMeterAnimationId = null;
+        }
+        // 既存のソースをdisconnect
+        if (volumeMeterSource) {
+            try { volumeMeterSource.disconnect(); } catch (e) {}
+            volumeMeterSource = null;
+        }
+
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         // モバイルではsuspended状態で開始されることがあるためresumeを呼ぶ
         if (audioContext.state === 'suspended') {
             audioContext.resume();
         }
-        const source = audioContext.createMediaStreamSource(stream);
+        volumeMeterSource = audioContext.createMediaStreamSource(stream);
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 256;
-        source.connect(analyser);
+        volumeMeterSource.connect(analyser);
 
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
@@ -571,10 +602,10 @@ function setupVolumeMeter(stream) {
 
             document.getElementById('volumeBar').style.width = percentage + '%';
 
-            requestAnimationFrame(updateMeter);
+            volumeMeterAnimationId = requestAnimationFrame(updateMeter);
         }
 
-        updateMeter();
+        volumeMeterAnimationId = requestAnimationFrame(updateMeter);
     } catch (e) {
         console.warn('Volume meter setup failed:', e);
     }
@@ -654,10 +685,10 @@ function startP2PMeterLoop() {
             bar.style.width = percentage + '%';
         }
 
-        requestAnimationFrame(updateP2PMeter);
+        p2pMeterAnimationId = requestAnimationFrame(updateP2PMeter);
     }
 
-    updateP2PMeter();
+    p2pMeterAnimationId = requestAnimationFrame(updateP2PMeter);
 }
 
 function removeP2PVolumeMeterSource(clientId) {
@@ -701,6 +732,23 @@ function cleanupConnection() {
         pc.close();
         pc = null;
     }
+
+    // RAFループをキャンセル（メモリリーク対策）
+    if (volumeMeterAnimationId) {
+        cancelAnimationFrame(volumeMeterAnimationId);
+        volumeMeterAnimationId = null;
+    }
+    if (p2pMeterAnimationId) {
+        cancelAnimationFrame(p2pMeterAnimationId);
+        p2pMeterAnimationId = null;
+    }
+
+    // MediaStreamSourceをdisconnect（メモリリーク対策）
+    if (volumeMeterSource) {
+        try { volumeMeterSource.disconnect(); } catch (e) {}
+        volumeMeterSource = null;
+    }
+
     if (audioContext) {
         audioContext.close();
         audioContext = null;
@@ -1652,6 +1700,16 @@ function cleanupP2PConnection(clientId) {
     const connInfo = p2pConnections.get(clientId);
     if (connInfo) {
         if (connInfo.pc) {
+            // ハンドラを削除してからclose（メモリリーク対策）
+            connInfo.pc.ontrack = null;
+            connInfo.pc.onicecandidate = null;
+            connInfo.pc.onconnectionstatechange = null;
+
+            // cloned track を明示的に stop
+            if (connInfo.audioSender && connInfo.audioSender.track) {
+                try { connInfo.audioSender.track.stop(); } catch (e) {}
+            }
+
             connInfo.pc.close();
         }
         if (connInfo.audioElement) {
@@ -1679,14 +1737,20 @@ async function waitForP2PIceGathering(p2pPc) {
     if (p2pPc.iceGatheringState === 'complete') return;
 
     return new Promise((resolve) => {
-        const timeout = setTimeout(resolve, 5000);  // 最大5秒
-
-        p2pPc.addEventListener('icegatheringstatechange', () => {
+        const onGatheringChange = () => {
             if (p2pPc.iceGatheringState === 'complete') {
                 clearTimeout(timeout);
+                p2pPc.removeEventListener('icegatheringstatechange', onGatheringChange);
                 resolve();
             }
-        });
+        };
+
+        const timeout = setTimeout(() => {
+            p2pPc.removeEventListener('icegatheringstatechange', onGatheringChange);
+            resolve();
+        }, 5000);  // 最大5秒
+
+        p2pPc.addEventListener('icegatheringstatechange', onGatheringChange);
     });
 }
 

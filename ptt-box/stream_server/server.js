@@ -1067,14 +1067,29 @@ class StreamServer {
         this.pttManager.releaseFloor(client.clientId);
 
         // WebRTC接続クローズ
+        // メインPeerConnectionのハンドラを削除してからclose
         if (client.pc) {
+            client.pc.onconnectionstatechange = null;
+            client.pc.onicecandidate = null;
             client.pc.close();
         }
 
         // P2P接続クリーンアップ
         const p2pConn = this.p2pConnections.get(client.clientId);
         if (p2pConn) {
+            // RTPサブスクリプションを解除
+            if (p2pConn.rtpSubscription) {
+                try {
+                    p2pConn.rtpSubscription.unsubscribe?.();
+                } catch (e) {
+                    // ignore
+                }
+            }
+            // P2P PeerConnectionのハンドラを削除してからclose
             if (p2pConn.pc) {
+                p2pConn.pc.onconnectionstatechange = null;
+                p2pConn.pc.onicecandidate = null;
+                p2pConn.pc.ontrack = null;
                 p2pConn.pc.close();
             }
             this.p2pConnections.delete(client.clientId);
@@ -1197,7 +1212,8 @@ class StreamServer {
             audioTrack: null,
             pendingCandidates: [],
             remoteDescriptionSet: false,
-            receivedFrameCount: 0
+            receivedFrameCount: 0,
+            rtpSubscription: null  // RTPサブスクリプション（クリーンアップ用）
         };
         this.p2pConnections.set(client.clientId, connInfo);
 
@@ -1229,7 +1245,8 @@ class StreamServer {
             log(`P2P received track from ${client.displayName}`);
             const track = event.track;
 
-            track.onReceiveRtp.subscribe((rtp) => {
+            // RTPサブスクリプションを保存（クリーンアップ用）
+            connInfo.rtpSubscription = track.onReceiveRtp.subscribe((rtp) => {
                 // PTTがreceivingの時のみ音声出力
                 const pttState = this.pttManager.getState();
                 if (pttState !== 'transmitting') return;
@@ -1316,11 +1333,15 @@ class StreamServer {
                 return;
             }
 
-            const timer = setTimeout(() => resolve(), timeout);
+            const timer = setTimeout(() => {
+                pc.onicegatheringstatechange = null;  // タイムアウト時にハンドラをクリア
+                resolve();
+            }, timeout);
 
             pc.onicegatheringstatechange = () => {
                 if (pc.iceGatheringState === 'complete') {
                     clearTimeout(timer);
+                    pc.onicegatheringstatechange = null;  // 完了時にハンドラをクリア
                     resolve();
                 }
             };
@@ -1375,6 +1396,10 @@ class StreamServer {
 
     stopMicCapture() {
         if (this.ffmpegProcess) {
+            // stdoutのリスナーを削除してからkill
+            if (this.ffmpegProcess.stdout) {
+                this.ffmpegProcess.stdout.removeAllListeners('data');
+            }
             this.ffmpegProcess.kill();
             this.ffmpegProcess = null;
             log('Mic capture stopped');
