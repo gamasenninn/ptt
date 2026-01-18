@@ -16,6 +16,9 @@ wheels/
 # SRT edit history
 ptt-box/recordings/history/
 
+# Client names mapping (runtime data)
+ptt-box/recordings/client_names.json
+
 # PHPUnit cache
 .phpunit.result.cache
 
