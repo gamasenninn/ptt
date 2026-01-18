@@ -271,7 +271,9 @@ class StreamServer {
                 if (client.isAlive === false) {
                     // 前回のpingにpongが返ってこなかった → 切断
                     log(`Client ${client.displayName} timeout - no pong response`);
-                    client.ws.terminate();
+                    if (client.ws.readyState === WebSocket.OPEN) {
+                        client.ws.terminate();
+                    }
                     continue;
                 }
                 client.isAlive = false;  // falseにしてping送信
