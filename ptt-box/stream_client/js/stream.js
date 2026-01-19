@@ -14,6 +14,11 @@ const BASE_RECONNECT_DELAY = 2000;  // 基本2秒
 const MAX_RECONNECT_DELAY = 30000;  // 最大30秒
 let wakeLock = null;  // スクリーンロック防止
 
+// ICE Restart関連
+let iceRestartInProgress = false;
+let iceRestartTimer = null;
+const ICE_RESTART_TIMEOUT = 5000;  // 5秒
+
 // PTT関連
 let myClientId = null;
 let localStream = null;  // マイク音声ストリーム
@@ -331,6 +336,8 @@ async function connect() {
                     type: 'answer',
                     sdp: data.sdp
                 }));
+            } else if (data.type === 'ice_restart_answer') {
+                await handleIceRestartAnswer(data.sdp);
             } else if (data.type === 'ice-candidate' && data.candidate) {
                 await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
             } else if (data.type === 'error') {
@@ -442,6 +449,13 @@ async function setupWebRTC() {
         debugLog('Connection: ' + pc.connectionState);
         switch (pc.connectionState) {
             case 'connected':
+                // ICE Restart成功時のクリーンアップ
+                if (iceRestartInProgress) {
+                    debugLog('ICE restart successful');
+                    clearTimeout(iceRestartTimer);
+                    iceRestartTimer = null;
+                    iceRestartInProgress = false;
+                }
                 updateConnectionToggle('preparing');  // P2P接続完了まで「準備中」
                 startP2PConnectionTimeout();  // タイムアウト開始（client_list未着でも対応）
                 enablePttButton(true);
@@ -452,16 +466,16 @@ async function setupWebRTC() {
                 updateConnectionToggle('connecting');
                 break;
             case 'disconnected':
-                updateConnectionToggle('disconnected');
-                enablePttButton(false);
-                cleanupConnection();
-                scheduleReconnect();
+                // ICE Restart中でなければ試行
+                if (!iceRestartInProgress) {
+                    attemptIceRestart();
+                }
                 break;
             case 'failed':
-                updateConnectionToggle('disconnected');
-                enablePttButton(false);
-                cleanupConnection();
-                scheduleReconnect();
+                // ICE Restart中でなければ試行
+                if (!iceRestartInProgress) {
+                    attemptIceRestart();
+                }
                 break;
         }
     };
@@ -717,6 +731,13 @@ function disconnect() {
 
 // 接続リソースのみクリーンアップ（自動再接続用）
 function cleanupConnection() {
+    // ICE Restartタイマーをクリア
+    if (iceRestartTimer) {
+        clearTimeout(iceRestartTimer);
+        iceRestartTimer = null;
+    }
+    iceRestartInProgress = false;
+
     // P2P接続タイムアウトをクリア
     clearP2PConnectionTimeout();
     pendingP2PConnections = 0;
@@ -802,6 +823,116 @@ function cleanup() {
 }
 
 // 自動再接続スケジュール（指数バックオフ）
+// ICE Restart試行（切断時に完全再接続の前に試す）
+async function attemptIceRestart() {
+    // 既に試行中、またはWebSocket/PCが使えない場合はフォールバック
+    if (iceRestartInProgress || !ws || ws.readyState !== WebSocket.OPEN || !pc) {
+        debugLog('ICE restart not possible, falling back to reconnect');
+        updateConnectionToggle('disconnected');
+        enablePttButton(false);
+        cleanupConnection();
+        scheduleReconnect();
+        return;
+    }
+
+    iceRestartInProgress = true;
+    updateConnectionToggle('connecting');
+    debugLog('Attempting ICE restart...');
+
+    // タイムアウト設定（5秒で完全再接続にフォールバック）
+    iceRestartTimer = setTimeout(() => {
+        debugLog('ICE restart timeout, falling back to reconnect');
+        iceRestartInProgress = false;
+        iceRestartTimer = null;
+        updateConnectionToggle('disconnected');
+        enablePttButton(false);
+        cleanupConnection();
+        scheduleReconnect();
+    }, ICE_RESTART_TIMEOUT);
+
+    try {
+        // ブラウザのICE Restart APIを呼び出し（内部フラグをセット）
+        pc.restartIce();
+
+        // 新しいOffer作成（restartIce()後なので新ICE資格情報が含まれる）
+        const offer = await pc.createOffer();
+        const monoSdp = forceOpusMono(offer.sdp);
+        await pc.setLocalDescription({ type: 'offer', sdp: monoSdp });
+
+        // ICE gathering完了を待つ（短いタイムアウト）
+        await waitForIceGatheringWithTimeout(3000);
+
+        // サーバーに新しいOfferを送信
+        ws.send(JSON.stringify({
+            type: 'ice_restart_offer',
+            sdp: pc.localDescription.sdp
+        }));
+
+        debugLog('ICE restart offer sent');
+    } catch (e) {
+        debugLog('ICE restart failed: ' + e.message);
+        clearTimeout(iceRestartTimer);
+        iceRestartTimer = null;
+        iceRestartInProgress = false;
+        updateConnectionToggle('disconnected');
+        enablePttButton(false);
+        cleanupConnection();
+        scheduleReconnect();
+    }
+}
+
+// ICE gathering完了待ち（タイムアウト付き）
+function waitForIceGatheringWithTimeout(timeout) {
+    return new Promise((resolve) => {
+        if (!pc || pc.iceGatheringState === 'complete') {
+            resolve();
+            return;
+        }
+        const timer = setTimeout(resolve, timeout);
+        const handler = () => {
+            if (pc && pc.iceGatheringState === 'complete') {
+                clearTimeout(timer);
+                pc.removeEventListener('icegatheringstatechange', handler);
+                resolve();
+            }
+        };
+        pc.addEventListener('icegatheringstatechange', handler);
+    });
+}
+
+// ICE Restart Answer処理
+async function handleIceRestartAnswer(sdp) {
+    debugLog('Received ICE restart answer');
+    try {
+        await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
+        debugLog('ICE restart answer applied');
+
+        // Answer適用成功 → ICE Restartは成功と見なしてタイマークリア
+        // (connectionStateが変化しない場合があるため、ここでクリア)
+        if (iceRestartTimer) {
+            clearTimeout(iceRestartTimer);
+            iceRestartTimer = null;
+        }
+        iceRestartInProgress = false;
+        debugLog('ICE restart completed');
+
+        // 接続状態を確認して適切なUIに更新
+        if (pc.connectionState === 'connected') {
+            updateConnectionToggle('preparing');
+            enablePttButton(true);
+        }
+    } catch (e) {
+        debugLog('ICE restart answer failed: ' + e.message);
+        clearTimeout(iceRestartTimer);
+        iceRestartTimer = null;
+        iceRestartInProgress = false;
+        updateConnectionToggle('disconnected');
+        enablePttButton(false);
+        cleanupConnection();
+        scheduleReconnect();
+    }
+}
+
 function scheduleReconnect() {
     if (!autoReconnect) return;
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
@@ -1905,3 +2036,13 @@ function sendPushSubscription(subscription) {
     }));
     debugLog('Push subscription sent to server');
 }
+
+// デバッグ用グローバル公開
+window.debugStream = {
+    attemptIceRestart,
+    getState: () => ({
+        wsState: ws?.readyState,
+        pcState: pc?.connectionState,
+        iceRestartInProgress
+    })
+};

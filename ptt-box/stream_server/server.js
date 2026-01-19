@@ -43,6 +43,7 @@ const SERVER_MIC_MODE = process.env.SERVER_MIC_MODE || 'always';  // 'always' or
 const RELAY_PORT = process.env.RELAY_PORT || 'COM3';
 const RELAY_BAUD_RATE = parseInt(process.env.RELAY_BAUD_RATE) || 9600;
 const ENABLE_RELAY = process.env.ENABLE_RELAY !== 'false';  // デフォルト有効
+const ICE_RESTART_TIMEOUT = parseInt(process.env.ICE_RESTART_TIMEOUT) || 5000;  // ICE Restart タイムアウト（5秒）
 
 // ダッシュボード設定
 const DASH_PASSWORD = process.env.DASH_PASSWORD || 'admin';
@@ -814,6 +815,10 @@ class StreamServer {
                 await this.handleIceCandidate(client, msg.candidate);
                 break;
 
+            case 'ice_restart_offer':
+                await this.handleIceRestartOffer(client, msg.sdp);
+                break;
+
             case 'ptt_request':
                 this.handlePttRequest(client);
                 break;
@@ -940,14 +945,39 @@ class StreamServer {
                     clearTimeout(client.disconnectTimer);
                     client.disconnectTimer = null;
                 }
+
+                // ICE Restartタイマーとフラグをクリア（回復時）
+                if (client.iceRestartTimer || client.iceRestartInProgress) {
+                    if (client.iceRestartTimer) {
+                        clearTimeout(client.iceRestartTimer);
+                        client.iceRestartTimer = null;
+                    }
+                    client.iceRestartInProgress = false;
+                    log(`${client.displayName}: ICE restart successful`);
+                }
             } else if (client.pc.connectionState === 'disconnected') {
-                // WebRTC切断時は即座にWebSocketも閉じる（リソース競合防止）
-                log(`${client.displayName}: WebRTC disconnected, closing WebSocket immediately`);
-                client.ws.close(1000, 'WebRTC disconnected');
+                // WebRTC切断時はICE Restartを待つ（即座に閉じない）
+                // ただしICE Restart処理中はタイマーを開始しない
+                log(`${client.displayName}: WebRTC disconnected, waiting for ICE restart`);
+                if (!client.iceRestartTimer && !client.iceRestartInProgress) {
+                    client.iceRestartTimer = setTimeout(() => {
+                        if (client.pc?.connectionState !== 'connected') {
+                            log(`${client.displayName}: ICE restart timeout, closing WebSocket`);
+                            client.ws.close(1000, 'ICE restart timeout');
+                        }
+                    }, ICE_RESTART_TIMEOUT);
+                }
             } else if (client.pc.connectionState === 'failed') {
-                // WebRTC接続失敗時はWebSocketも閉じる
-                log(`${client.displayName}: WebRTC failed, closing WebSocket`);
-                client.ws.close(1000, 'WebRTC connection failed');
+                // WebRTC接続失敗時もICE Restartを待つ
+                log(`${client.displayName}: WebRTC failed, waiting for ICE restart`);
+                if (!client.iceRestartTimer && !client.iceRestartInProgress) {
+                    client.iceRestartTimer = setTimeout(() => {
+                        if (client.pc?.connectionState !== 'connected') {
+                            log(`${client.displayName}: ICE restart timeout after failure, closing WebSocket`);
+                            client.ws.close(1000, 'ICE restart failed');
+                        }
+                    }, ICE_RESTART_TIMEOUT);
+                }
             }
         };
 
@@ -986,6 +1016,39 @@ class StreamServer {
             } catch (e) {
                 // Ignore
             }
+        }
+    }
+
+    // ICE Restart Offer処理（クライアントからの再接続要求）
+    async handleIceRestartOffer(client, sdp) {
+        log(`ICE restart offer from ${client.displayName}`);
+
+        // ICE Restart処理中フラグをセット（タイマー開始を抑制）
+        client.iceRestartInProgress = true;
+
+        // タイマークリア
+        if (client.iceRestartTimer) {
+            clearTimeout(client.iceRestartTimer);
+            client.iceRestartTimer = null;
+        }
+
+        try {
+            // クライアントからの新しいOfferを受け入れ、Answerを返す
+            await client.pc.setRemoteDescription(new RTCSessionDescription(sdp, 'offer'));
+            const answer = await client.pc.createAnswer();
+            await client.pc.setLocalDescription(answer);
+
+            client.send({
+                type: 'ice_restart_answer',
+                sdp: client.pc.localDescription.sdp
+            });
+
+            log(`ICE restart answer sent to ${client.displayName}`);
+        } catch (e) {
+            logError(`ICE restart failed for ${client.displayName}: ${e.message}`);
+            client.iceRestartInProgress = false;
+            // 失敗した場合は接続を閉じる
+            client.ws.close(1000, 'ICE restart failed');
         }
     }
 
