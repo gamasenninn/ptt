@@ -455,9 +455,17 @@ async function setupWebRTC() {
                     clearTimeout(iceRestartTimer);
                     iceRestartTimer = null;
                     iceRestartInProgress = false;
+                    // ICE Restart後: P2P接続は維持されているので状態を確認
+                    if (pendingP2PConnections === 0) {
+                        updateConnectionToggle('connected');
+                    } else {
+                        updateConnectionToggle('preparing');
+                    }
+                } else {
+                    // 通常の新規接続: P2P接続完了まで「準備中」
+                    updateConnectionToggle('preparing');
+                    startP2PConnectionTimeout();  // タイムアウト開始（client_list未着でも対応）
                 }
-                updateConnectionToggle('preparing');  // P2P接続完了まで「準備中」
-                startP2PConnectionTimeout();  // タイムアウト開始（client_list未着でも対応）
                 enablePttButton(true);
                 reconnectAttempts = 0;  // 接続成功でリセット
                 requestWakeLock();  // スクリーンオフ防止
@@ -918,7 +926,13 @@ async function handleIceRestartAnswer(sdp) {
 
         // 接続状態を確認して適切なUIに更新
         if (pc.connectionState === 'connected') {
-            updateConnectionToggle('preparing');
+            // P2P接続が既に確立済みか、他クライアントがいない場合は'connected'
+            // そうでなければ'preparing'（P2P接続待ち）
+            if (pendingP2PConnections === 0) {
+                updateConnectionToggle('connected');
+            } else {
+                updateConnectionToggle('preparing');
+            }
             enablePttButton(true);
         }
     } catch (e) {
