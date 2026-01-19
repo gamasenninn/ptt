@@ -408,3 +408,221 @@ function cleanupConnection() {
         p2pAudioContext = null;
     }
 }
+```
+
+---
+
+## ICE Restartによるモバイル接続安定化
+
+### 1. 問題の発見
+
+サーバーログ解析で、モバイル端末から**3分間に27回の再接続**が発生していることを発見。
+
+```
+03:40:01 Client connected: ptt-trx-xxxx
+03:40:03 WebRTC disconnected, closing WebSocket immediately
+03:40:05 Client connected: ptt-trx-yyyy  ← 新しいIDで再接続
+... 27回繰り返し
+```
+
+### 2. 原因
+
+モバイル端末の移動中に発生する**セルタワーハンドオフ**（基地局切り替え）:
+
+1. 端末が移動して別の基地局に接続
+2. IPアドレスが変わる
+3. 既存のICE候補（IP:ポートの組み合わせ）が無効になる
+4. WebRTCのconnectionStateが`disconnected`に
+5. 従来の実装: 即座にWebSocketを閉じて完全再接続（3-5秒）
+
+### 3. 解決策: ICE Restart
+
+完全再接続ではなく、**ICE層のみを再ネゴシエーション**する。
+
+```
+WebRTC切断検知
+    ↓
+ICE Restart試行（5秒タイムアウト）
+    ↓
+┌─────────────┬─────────────────┐
+│ 成功        │ 失敗/タイムアウト │
+│ 0.5-1秒で回復│ 完全再接続へ     │
+│ クライアントID維持│ フォールバック   │
+└─────────────┴─────────────────┘
+```
+
+### 4. ICEとは
+
+**ICE (Interactive Connectivity Establishment)** はWebRTCの接続経路確立プロトコル:
+
+- **ICE候補**: 接続可能なIP:ポートの組み合わせ
+  - `host`: ローカルIPアドレス
+  - `srflx` (Server Reflexive): STUNで取得したパブリックIP
+  - `relay`: TURNサーバー経由
+
+ICE Restartは、既存のWebRTC接続を維持したまま新しいICE候補を収集・交換する仕組み。
+
+### 5. 実装のポイント
+
+#### クライアント側（stream.js）
+
+```javascript
+// 状態変数
+let iceRestartInProgress = false;
+let iceRestartTimer = null;
+const ICE_RESTART_TIMEOUT = 5000;
+
+async function attemptIceRestart() {
+    if (iceRestartInProgress || !ws || ws.readyState !== WebSocket.OPEN || !pc) {
+        // 条件を満たさない場合は完全再接続
+        cleanupConnection();
+        scheduleReconnect();
+        return;
+    }
+
+    iceRestartInProgress = true;
+
+    // タイムアウト設定（失敗時のフォールバック）
+    iceRestartTimer = setTimeout(() => {
+        iceRestartInProgress = false;
+        cleanupConnection();
+        scheduleReconnect();
+    }, ICE_RESTART_TIMEOUT);
+
+    // ICE Restart: 新しいICE資格情報でOffer作成
+    pc.restartIce();  // 内部フラグをセット
+    const offer = await pc.createOffer();  // 新ICE資格情報含む
+    await pc.setLocalDescription(offer);
+
+    // ICE gathering完了を待ってから送信
+    await waitForIceGatheringWithTimeout(3000);
+
+    ws.send(JSON.stringify({
+        type: 'ice_restart_offer',
+        sdp: pc.localDescription.sdp
+    }));
+}
+```
+
+#### サーバー側（server.js）
+
+```javascript
+const ICE_RESTART_TIMEOUT = 5000;
+
+// disconnected時: 即座に閉じずに待機
+client.pc.onconnectionstatechange = () => {
+    if (client.pc.connectionState === 'disconnected') {
+        // ICE Restart処理中はタイマーを開始しない
+        if (!client.iceRestartTimer && !client.iceRestartInProgress) {
+            client.iceRestartTimer = setTimeout(() => {
+                if (client.pc?.connectionState !== 'connected') {
+                    client.ws.close(1000, 'ICE restart timeout');
+                }
+            }, ICE_RESTART_TIMEOUT);
+        }
+    } else if (client.pc.connectionState === 'connected') {
+        // 成功時: タイマーとフラグをクリア
+        if (client.iceRestartTimer || client.iceRestartInProgress) {
+            clearTimeout(client.iceRestartTimer);
+            client.iceRestartTimer = null;
+            client.iceRestartInProgress = false;
+        }
+    }
+};
+
+// ICE Restart Offer処理
+async handleIceRestartOffer(client, sdp) {
+    client.iceRestartInProgress = true;  // タイマー開始を抑制
+
+    clearTimeout(client.iceRestartTimer);
+    client.iceRestartTimer = null;
+
+    await client.pc.setRemoteDescription(new RTCSessionDescription(sdp, 'offer'));
+    const answer = await client.pc.createAnswer();
+    await client.pc.setLocalDescription(answer);
+
+    client.send({
+        type: 'ice_restart_answer',
+        sdp: client.pc.localDescription.sdp
+    });
+}
+```
+
+### 6. メッセージプロトコル
+
+```
+┌─────────┐                    ┌─────────┐
+│ Client  │                    │ Server  │
+└────┬────┘                    └────┬────┘
+     │                              │
+     │  connectionState=disconnected│
+     │                              │
+     │  ice_restart_offer (SDP)     │
+     │─────────────────────────────>│
+     │                              │
+     │  ice_restart_answer (SDP)    │
+     │<─────────────────────────────│
+     │                              │
+     │  connectionState=connected   │
+     │                              │
+```
+
+### 7. 重要な注意点
+
+#### iceRestartInProgressフラグの必要性
+
+ICE再ネゴシエーション中、サーバー側のRTCPeerConnectionは内部で状態遷移を行う:
+
+```
+connected → checking → connected
+```
+
+`checking`状態で`disconnected`イベントが発火することがあり、フラグがないとタイマーが重複して開始され、正常な再接続がタイムアウトで失敗する。
+
+#### クライアント側のタイマークリア
+
+Answer受信時に即座にタイマーをクリアする必要がある。`connected`イベントを待つと、その前にタイムアウトが発火する可能性がある。
+
+```javascript
+async function handleIceRestartAnswer(sdp) {
+    await pc.setRemoteDescription({ type: 'answer', sdp });
+
+    // Answer適用後すぐにクリア（connectedを待たない）
+    if (iceRestartTimer) {
+        clearTimeout(iceRestartTimer);
+        iceRestartTimer = null;
+    }
+    iceRestartInProgress = false;
+}
+```
+
+### 8. テスト方法
+
+Chrome DevToolsのオフラインモードはWebSocketも切断するため、ICE Restartのテストには不向き。
+
+手動テスト用にデバッグ関数を公開:
+
+```javascript
+// stream.js末尾
+window.debugStream = {
+    attemptIceRestart,
+    getState: () => ({
+        wsState: ws?.readyState,
+        pcState: pc?.connectionState,
+        iceRestartInProgress
+    })
+};
+
+// コンソールでテスト
+debugStream.getState()           // 状態確認
+debugStream.attemptIceRestart()  // ICE Restart実行
+```
+
+### 9. 期待される効果
+
+| 指標 | 変更前 | 変更後 |
+|------|--------|--------|
+| 再接続時間 | 3-5秒 | 0.5-1秒 |
+| 接続ラッシュ | 27回/3分 | 大幅削減 |
+| 音声途切れ | 長い | 短い |
+| クライアントID | 毎回変更 | 維持 |
