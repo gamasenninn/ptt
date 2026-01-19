@@ -981,15 +981,15 @@ class StreamServer {
             }
         };
 
-        // ICE候補をクライアントに送信
+        // ICE候補をクライアントに送信（空候補をフィルタリング）
         client.pc.onicecandidate = (candidate) => {
-            if (candidate) {
+            if (candidate && candidate.candidate && candidate.candidate.length > 0) {
                 client.send({
                     type: 'ice-candidate',
                     candidate: {
                         candidate: candidate.candidate,
-                        sdpMid: candidate.sdpMid,
-                        sdpMLineIndex: candidate.sdpMLineIndex
+                        sdpMid: candidate.sdpMid || '0',
+                        sdpMLineIndex: candidate.sdpMLineIndex ?? 0
                     }
                 });
             }
@@ -1291,16 +1291,16 @@ class StreamServer {
             }
         };
 
-        // ICE候補
+        // ICE候補（空候補や無効な候補をフィルタリング）
         p2pPc.onicecandidate = (candidate) => {
-            if (candidate) {
+            if (candidate && candidate.candidate && candidate.candidate.length > 0) {
                 client.send({
                     type: 'p2p_ice_candidate',
                     from: this.serverClientId,
                     candidate: {
                         candidate: candidate.candidate,
-                        sdpMid: candidate.sdpMid,
-                        sdpMLineIndex: candidate.sdpMLineIndex
+                        sdpMid: candidate.sdpMid || '0',
+                        sdpMLineIndex: candidate.sdpMLineIndex ?? 0
                     }
                 });
             }

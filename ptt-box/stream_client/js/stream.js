@@ -1593,6 +1593,16 @@ async function handleClientList(clients) {
     updateClientsBadge();
 }
 
+// ICE候補を安全に作成（sdpMid/sdpMLineIndexがnullの場合にデフォルト値を設定）
+function createSafeIceCandidate(candidate) {
+    // weriftがsdpMid/sdpMLineIndexを送信しない場合があるのでデフォルト値を設定
+    return new RTCIceCandidate({
+        candidate: candidate.candidate,
+        sdpMid: candidate.sdpMid ?? '0',
+        sdpMLineIndex: candidate.sdpMLineIndex ?? 0
+    });
+}
+
 // P2P接続作成
 async function createP2PConnection(remoteClientId, isOfferer) {
     debugLog('Creating P2P to ' + remoteClientId + ' (offerer: ' + isOfferer + ')');
@@ -1755,12 +1765,12 @@ async function handleP2POffer(fromClientId, sdp) {
     // remote descriptionが設定されたことをマーク
     connInfo.remoteDescriptionSet = true;
 
-    // キューに溜まったICE候補を処理
+    // キューに溜まったICE候補を処理（エラーは無視、接続は他の候補で成立する）
     for (const candidate of connInfo.pendingCandidates) {
         try {
-            await connInfo.pc.addIceCandidate(new RTCIceCandidate(candidate));
+            await connInfo.pc.addIceCandidate(createSafeIceCandidate(candidate));
         } catch (e) {
-            debugLog('P2P ICE (queued) error: ' + e.message);
+            // 無効な候補は無視（正常な候補で接続は成立する）
         }
     }
     connInfo.pendingCandidates = [];
@@ -1797,9 +1807,9 @@ async function handleP2PAnswer(fromClientId, sdp) {
         // キューに溜まったICE候補を処理
         for (const candidate of connInfo.pendingCandidates) {
             try {
-                await connInfo.pc.addIceCandidate(new RTCIceCandidate(candidate));
+                await connInfo.pc.addIceCandidate(createSafeIceCandidate(candidate));
             } catch (e) {
-                debugLog('P2P ICE (queued) error: ' + e.message);
+                // 無効な候補は無視
             }
         }
         connInfo.pendingCandidates = [];
@@ -1825,9 +1835,9 @@ async function handleP2PIceCandidate(fromClientId, candidate) {
         }
 
         try {
-            await connInfo.pc.addIceCandidate(new RTCIceCandidate(candidate));
+            await connInfo.pc.addIceCandidate(createSafeIceCandidate(candidate));
         } catch (e) {
-            debugLog('P2P ICE error: ' + e.message);
+            // 無効な候補は無視
         }
     }
 }
