@@ -507,7 +507,7 @@ async function setupWebRTC() {
     const monoSdp = forceOpusMono(offer.sdp);
     await pc.setLocalDescription({ type: 'offer', sdp: monoSdp });
 
-    // ICE gathering完了を待つ（relay候補取得後は早めに進む）
+    // ICE gathering完了を待つ（srflx/relay取得後は早めに進む）
     await new Promise((resolve) => {
         if (pc.iceGatheringState === 'complete') {
             resolve();
@@ -515,8 +515,8 @@ async function setupWebRTC() {
         }
 
         let hasRelay = false;
-        let hasHostOrSrflx = false;
-        let relayTimer = null;
+        let hasSrflx = false;
+        let earlyProceedTimer = null;
         let resolved = false;
 
         // クリーンアップ関数（リスナー削除）
@@ -527,28 +527,30 @@ async function setupWebRTC() {
             pc.removeEventListener('icecandidate', onIceCandidate);
         };
 
+        // タイムアウトを3秒に短縮
         const timeout = setTimeout(() => {
             debugLog('ICE gathering timeout');
             cleanup();
             resolve();
-        }, 10000);  // 最大10秒に短縮
+        }, 3000);
 
-        const proceedIfReady = () => {
-            // relay候補があれば1秒後に進む（追加の候補を少し待つ）
-            if (hasRelay && !relayTimer) {
-                relayTimer = setTimeout(() => {
-                    debugLog('Proceeding with relay candidate');
-                    clearTimeout(timeout);
-                    cleanup();
-                    resolve();
-                }, 1000);
-            }
+        const proceedEarly = (reason) => {
+            // 既にタイマーが設定されていれば何もしない
+            if (earlyProceedTimer) return;
+            // srflxまたはrelay取得後、500msで進む
+            earlyProceedTimer = setTimeout(() => {
+                debugLog('Early proceed: ' + reason);
+                clearTimeout(timeout);
+                cleanup();
+                resolve();
+            }, 500);
         };
 
         const onGatheringChange = () => {
             if (pc.iceGatheringState === 'complete') {
+                debugLog('ICE gathering complete');
                 clearTimeout(timeout);
-                if (relayTimer) clearTimeout(relayTimer);
+                if (earlyProceedTimer) clearTimeout(earlyProceedTimer);
                 cleanup();
                 resolve();
             }
@@ -562,12 +564,14 @@ async function setupWebRTC() {
                 if (type === 'relay') {
                     hasRelay = true;
                     debugLog('✓ TURN relay OK!');
-                    proceedIfReady();
-                } else if (type === 'host' || type === 'srflx') {
-                    hasHostOrSrflx = true;
+                    proceedEarly('relay');
+                } else if (type === 'srflx') {
+                    hasSrflx = true;
+                    // srflx取得で早期送信（NATを越えられる可能性が高い）
+                    proceedEarly('srflx');
                 }
             } else {
-                debugLog('ICE gathering done');
+                debugLog('ICE gathering done (null candidate)');
             }
         };
 
@@ -1903,7 +1907,7 @@ async function waitForP2PIceGathering(p2pPc) {
         const timeout = setTimeout(() => {
             p2pPc.removeEventListener('icegatheringstatechange', onGatheringChange);
             resolve();
-        }, 5000);  // 最大5秒
+        }, 2000);  // 最大2秒（P2Pは高速化）
 
         p2pPc.addEventListener('icegatheringstatechange', onGatheringChange);
     });
