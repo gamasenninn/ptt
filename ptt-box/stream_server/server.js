@@ -59,6 +59,9 @@ const ENABLE_FILE_LOG = process.env.ENABLE_FILE_LOG !== 'false';  // デフォ�
 const LOG_DIR = path.join(__dirname, 'logs');
 const LOG_RETENTION_DAYS = parseInt(process.env.LOG_RETENTION_DAYS) || 30;  // ログ保持日数
 
+// 履歴表示設定
+const HISTORY_LIMIT = parseInt(process.env.HISTORY_LIMIT) || 100;  // 履歴表示件数
+
 // ログディレクトリ作成
 if (ENABLE_FILE_LOG) {
     if (!fs.existsSync(LOG_DIR)) {
@@ -634,7 +637,7 @@ class StreamServer {
     }
 
     // SRTファイル一覧取得
-    async getSrtFileList(recordingsDir, limit = 30) {
+    async getSrtFileList(recordingsDir, limit = HISTORY_LIMIT) {
         if (!fs.existsSync(recordingsDir)) {
             return [];
         }
