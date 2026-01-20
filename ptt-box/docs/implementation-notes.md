@@ -626,3 +626,137 @@ debugStream.attemptIceRestart()  // ICE Restart実行
 | 接続ラッシュ | 27回/3分 | 大幅削減 |
 | 音声途切れ | 長い | 短い |
 | クライアントID | 毎回変更 | 維持 |
+
+---
+
+## Opus DTX（Discontinuous Transmission）の知見
+
+### 1. DTXとは
+
+DTX (Discontinuous Transmission) は、無音時にパケット送信を停止する帯域節約機能。
+
+```javascript
+// SDPで有効化
+const opusParams = 'stereo=0;useinbandfec=1;maxaveragebitrate=24000;usedtx=1';
+```
+
+### 2. 期待される効果
+
+| 状態 | DTXなし | DTXあり |
+|------|---------|---------|
+| 発話中 | ~24 kbps | ~24 kbps |
+| 無音時 | ~24 kbps | ~500 bps |
+| 削減率 | - | **約98%** |
+
+### 3. 動作確認方法
+
+`chrome://webrtc-internals` で確認可能：
+
+1. Chromeで `chrome://webrtc-internals` を開く
+2. 別タブでWebトランシーバーに接続
+3. `RTCOutboundRTPAudioStream` セクションを展開
+4. `bytesSent_in_bits/s` グラフを確認
+5. PTT ON → 高ビットレート / PTT OFF → ほぼ0
+
+### 4. 発見された問題（2026-01-20）
+
+一部のスマートフォン（特にSIM/4G接続）で**送信開始時に音声が途切れる**問題が発生。
+
+#### 症状
+- PTTを押した直後の最初の言葉が欠ける
+- 端末ごとに発生頻度が異なる（個体差あり）
+
+#### 原因分析
+
+DTXは**VAD (Voice Activity Detection)** を使用して無音を検出：
+
+```
+無音状態（DTX中）
+    ↓ 話し始め
+VADが音声を検出（数十ms〜数百msの遅延）
+    ↓
+エンコーダーがアクティブモードに復帰
+    ↓
+パケット送信開始
+```
+
+この「VAD検出遅延」がスマホブラウザのOpusエンコーダー実装によって異なり、一部端末で顕著に発生。
+
+#### 参考情報（外部ソース）
+
+**Twilioの公式見解:**
+> DTXを有効にすると、ミュートしたトラックで背景ノイズが聞こえる問題がある
+> 推奨：問題が発生した場合は DTX を無効化
+> — [Twilio COMMON_ISSUES.md](https://github.com/twilio/twilio-video.js/blob/master/COMMON_ISSUES.md)
+
+**Opus DTXの技術仕様:**
+> DTX有効時、Opusは10フレーム（200ms）の無音後にDTXモードに移行
+> DTX中は約400ms間隔でコンフォートノイズフレームを送信
+> — [GetStream.io - Opus DTX解説](https://getstream.io/resources/projects/webrtc/advanced/dtx/)
+
+**周期的ノイズバーストの問題:**
+> DTX中に背景ノイズが不安定な場合、パルス状のノイズが発生することがある
+> — [Xiph.org Opus Issue #89](https://github.com/xiph/opus/issues/89)
+
+### 5. 対処方法
+
+#### 採用した解決策：DTX無効化
+
+```javascript
+// stream.js
+// usedtx=1: 無音時のパケット送信停止（帯域・バッテリー節約）
+//   ※一部スマホで送信開始時に途切れる問題があり、一旦無効化（2026-01-20）
+//   ※復活する場合: 末尾に ;usedtx=1 を追加
+const opusParams = 'stereo=0;sprop-stereo=0;useinbandfec=1;maxaveragebitrate=24000';
+```
+
+**理由:**
+- 24kbps + FEC の設定は DTX なしでも十分軽量
+- PTTシステムでは音声の即時性が重要
+- 帯域節約より安定性を優先
+
+#### 動的制御は困難
+
+「PTT ON時はDTX OFF、PTT OFF時はDTX ON」という制御は技術的に困難：
+
+- DTXはSDP（セッション記述）で設定されるコーデックパラメータ
+- 接続確立時に一度設定されると、動的に変更できない
+- 変更にはSDP再ネゴシエーションが必要（レイテンシ増加）
+
+### 6. 将来的な改善オプション
+
+1. **ブラウザ/Opus更新を待つ**: 新しいバージョンでVAD精度が向上する可能性
+2. **端末別に制御**: User-Agentで問題端末を検出し、選択的に無効化
+3. **PTT開始時プリバッファ**: ウォームアップ用の無音パケットを先行送信
+
+### 7. 現在のOpus設定（推奨）
+
+```javascript
+const opusParams = 'stereo=0;sprop-stereo=0;useinbandfec=1;maxaveragebitrate=24000';
+```
+
+| パラメータ | 値 | 効果 |
+|-----------|-----|------|
+| stereo | 0 | モノラル（帯域半減） |
+| sprop-stereo | 0 | 受信側もモノラル |
+| useinbandfec | 1 | FEC有効（パケットロス耐性） |
+| maxaveragebitrate | 24000 | 24kbps制限 |
+| ~~usedtx~~ | ~~1~~ | ~~無効化（問題発生のため）~~ |
+
+### 8. getUserMedia音声制約
+
+ブラウザの組み込み音声処理も有効化済み：
+
+```javascript
+const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+        echoCancellation: true,      // エコーキャンセル
+        noiseSuppression: true,      // ノイズ抑制
+        autoGainControl: true,       // 自動ゲイン制御
+        sampleRate: 48000,
+        channelCount: 1
+    }
+});
+```
+
+これらはブラウザ/デバイスによって品質が異なるが、追加のライブラリ（RNNoise等）なしで基本的なノイズ対策が可能。
