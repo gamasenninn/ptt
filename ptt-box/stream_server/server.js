@@ -1536,7 +1536,13 @@ class StreamServer {
 
         const rtpBuffer = this.createRtpBuffer(opusData);
 
+        // 現在の送信者を取得（送信者には自分の音声を返さない）
+        const currentSpeaker = this.pttManager.currentSpeaker;
+
         for (const [clientId, connInfo] of this.p2pConnections) {
+            // 送信中のクライアントには送らない（エコー/フィードバック防止）
+            if (currentSpeaker === clientId) continue;
+
             if (connInfo.audioTrack && connInfo.pc.connectionState === 'connected') {
                 try {
                     connInfo.audioTrack.writeRtp(rtpBuffer);

@@ -19,6 +19,9 @@ let iceRestartInProgress = false;
 let iceRestartTimer = null;
 const ICE_RESTART_TIMEOUT = 5000;  // 5秒
 
+// 音声バッファ設定（モバイル回線のジッター対策）
+const PLAYOUT_DELAY_HINT = 0.1;  // 100ms（遅延と安定性のバランス）
+
 // PTT関連
 let myClientId = null;
 let localStream = null;  // マイク音声ストリーム
@@ -418,6 +421,13 @@ async function setupWebRTC() {
     // 音声トラック受信時
     pc.ontrack = (event) => {
         debugLog('Track: ' + event.track.kind + ', streams: ' + event.streams.length);
+
+        // ジッターバッファを広げる（モバイル回線対策）
+        if (event.receiver && event.receiver.playoutDelayHint !== undefined) {
+            event.receiver.playoutDelayHint = PLAYOUT_DELAY_HINT;
+            debugLog('Playout delay set: ' + PLAYOUT_DELAY_HINT + 's');
+        }
+
         if (event.streams.length > 0) {
             const audio = document.getElementById('audio');
             audio.srcObject = event.streams[0];
@@ -980,7 +990,7 @@ window.addEventListener('beforeunload', () => {
     cleanup();
 });
 
-// SDPを修正してOpusをモノラルに強制
+// SDPを修正してOpusをモノラル+モバイル最適化
 function forceOpusMono(sdp) {
     // Opusのペイロードタイプを探す
     const opusMatch = sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/);
@@ -991,15 +1001,22 @@ function forceOpusMono(sdp) {
     const opusPayloadType = opusMatch[1];
     debugLog('Opus payload type: ' + opusPayloadType);
 
+    // Opus最適化パラメータ
+    // stereo=0: モノラル
+    // useinbandfec=1: パケットロス時の前方誤り訂正（モバイル回線で重要）
+    // maxaveragebitrate=24000: 24kbps（音声に十分、帯域節約）
+    const opusParams = 'stereo=0;sprop-stereo=0;useinbandfec=1;maxaveragebitrate=24000';
+
     // 既存のfmtpがあれば修正、なければ追加
     const fmtpRegex = new RegExp('a=fmtp:' + opusPayloadType + ' (.+)');
     if (fmtpRegex.test(sdp)) {
-        sdp = sdp.replace(fmtpRegex, 'a=fmtp:' + opusPayloadType + ' $1;stereo=0;sprop-stereo=0');
+        // 既存パラメータを保持しつつ追加
+        sdp = sdp.replace(fmtpRegex, 'a=fmtp:' + opusPayloadType + ' $1;' + opusParams);
     } else {
         // fmtpがない場合、rtpmapの後に追加
         sdp = sdp.replace(
             new RegExp('(a=rtpmap:' + opusPayloadType + ' opus/48000/2)'),
-            '$1\r\na=fmtp:' + opusPayloadType + ' stereo=0;sprop-stereo=0'
+            '$1\r\na=fmtp:' + opusPayloadType + ' ' + opusParams
         );
     }
 
@@ -1638,6 +1655,11 @@ async function createP2PConnection(remoteClientId, isOfferer) {
     // リモート音声受信
     p2pPc.ontrack = (event) => {
         debugLog('P2P track received from ' + remoteClientId + ', streams: ' + event.streams.length);
+
+        // ジッターバッファを広げる（モバイル回線対策）
+        if (event.receiver && event.receiver.playoutDelayHint !== undefined) {
+            event.receiver.playoutDelayHint = PLAYOUT_DELAY_HINT;
+        }
 
         // 音声再生用要素を作成
         let audio = document.getElementById('p2p-audio-' + remoteClientId);
