@@ -1005,7 +1005,8 @@ function forceOpusMono(sdp) {
     // stereo=0: モノラル
     // useinbandfec=1: パケットロス時の前方誤り訂正（モバイル回線で重要）
     // maxaveragebitrate=24000: 24kbps（音声に十分、帯域節約）
-    const opusParams = 'stereo=0;sprop-stereo=0;useinbandfec=1;maxaveragebitrate=24000';
+    // usedtx=1: 無音時のパケット送信停止（帯域・バッテリー節約）
+    const opusParams = 'stereo=0;sprop-stereo=0;useinbandfec=1;maxaveragebitrate=24000;usedtx=1';
 
     // 既存のfmtpがあれば修正、なければ追加
     const fmtpRegex = new RegExp('a=fmtp:' + opusPayloadType + ' (.+)');
