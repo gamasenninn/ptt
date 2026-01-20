@@ -732,7 +732,19 @@ class StreamServer {
         try {
             if (fs.existsSync(this.clientNamesPath)) {
                 const data = fs.readFileSync(this.clientNamesPath, 'utf-8');
-                return JSON.parse(data);
+                const loaded = JSON.parse(data);
+                // 旧形式（文字列）と新形式（オブジェクト）の両方に対応
+                const normalized = {};
+                for (const [id, value] of Object.entries(loaded)) {
+                    if (typeof value === 'string') {
+                        // 旧形式: "clientId": "name"
+                        normalized[id] = { name: value, lastSeen: null };
+                    } else {
+                        // 新形式: "clientId": { name, lastSeen }
+                        normalized[id] = value;
+                    }
+                }
+                return normalized;
             }
         } catch (e) {
             log(`Error loading client names: ${e.message}`);
@@ -743,7 +755,20 @@ class StreamServer {
     // クライアント名を保存
     saveClientName(clientId, displayName) {
         try {
-            this.clientNames[clientId] = displayName;
+            // デフォルト名（Client-xxxx）は保存しない
+            if (displayName.startsWith('Client-')) {
+                return;
+            }
+
+            const today = new Date().toISOString().split('T')[0];  // YYYY-MM-DD
+            this.clientNames[clientId] = {
+                name: displayName,
+                lastSeen: today
+            };
+
+            // 90日以上古いエントリをクリーンアップ
+            this.cleanupOldClientNames(90);
+
             const dir = path.dirname(this.clientNamesPath);
             if (!fs.existsSync(dir)) {
                 fs.mkdirSync(dir, { recursive: true });
@@ -754,9 +779,31 @@ class StreamServer {
         }
     }
 
+    // 古いエントリをクリーンアップ
+    cleanupOldClientNames(daysToKeep) {
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+        const cutoffStr = cutoffDate.toISOString().split('T')[0];
+
+        let cleaned = 0;
+        for (const [id, value] of Object.entries(this.clientNames)) {
+            // lastSeenがない（旧形式で変換された）またはcutoffより古い場合は削除
+            if (!value.lastSeen || value.lastSeen < cutoffStr) {
+                delete this.clientNames[id];
+                cleaned++;
+            }
+        }
+        if (cleaned > 0) {
+            log(`Cleaned up ${cleaned} old client name entries`);
+        }
+    }
+
     // clientIdからdisplayNameを取得
     getClientDisplayName(clientId) {
-        return this.clientNames[clientId] || null;
+        const entry = this.clientNames[clientId];
+        if (!entry) return null;
+        // 新形式と旧形式の両方に対応
+        return typeof entry === 'string' ? entry : entry.name;
     }
 
     // 新規接続
