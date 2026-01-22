@@ -1193,6 +1193,11 @@ class StreamServer {
         // P2P接続クリーンアップ
         const p2pConn = this.p2pConnections.get(client.clientId);
         if (p2pConn) {
+            // クリーンアップタイマーがあればキャンセル
+            if (p2pConn.cleanupTimer) {
+                clearTimeout(p2pConn.cleanupTimer);
+                p2pConn.cleanupTimer = null;
+            }
             // RTPサブスクリプションを解除
             if (p2pConn.rtpSubscription) {
                 try {
@@ -1329,14 +1334,44 @@ class StreamServer {
             pendingCandidates: [],
             remoteDescriptionSet: false,
             receivedFrameCount: 0,
-            rtpSubscription: null  // RTPサブスクリプション（クリーンアップ用）
+            rtpSubscription: null,  // RTPサブスクリプション（クリーンアップ用）
+            cleanupTimer: null      // disconnected時のクリーンアップタイマー
         };
         this.p2pConnections.set(client.clientId, connInfo);
 
         // 接続状態
+        const P2P_CLEANUP_TIMEOUT = 10000;  // 10秒（メインICE restart 5秒より長め）
         p2pPc.onconnectionstatechange = () => {
             log(`P2P to ${client.displayName}: ${p2pPc.connectionState}`);
-            if (p2pPc.connectionState === 'failed' || p2pPc.connectionState === 'closed') {
+
+            if (p2pPc.connectionState === 'disconnected') {
+                // 既存のタイマーがあればクリア
+                if (connInfo.cleanupTimer) {
+                    clearTimeout(connInfo.cleanupTimer);
+                }
+                // 10秒後にクリーンアップ（ICE restart猶予期間）
+                connInfo.cleanupTimer = setTimeout(() => {
+                    if (this.p2pConnections.has(client.clientId) &&
+                        p2pPc.connectionState !== 'connected') {
+                        log(`P2P to ${client.displayName}: cleanup after timeout`);
+                        p2pPc.close();
+                        this.p2pConnections.delete(client.clientId);
+                    }
+                }, P2P_CLEANUP_TIMEOUT);
+
+            } else if (p2pPc.connectionState === 'connected') {
+                // 回復したらタイマーキャンセル
+                if (connInfo.cleanupTimer) {
+                    clearTimeout(connInfo.cleanupTimer);
+                    connInfo.cleanupTimer = null;
+                    log(`P2P to ${client.displayName}: recovered, timer cancelled`);
+                }
+
+            } else if (p2pPc.connectionState === 'failed' || p2pPc.connectionState === 'closed') {
+                // 即座に削除
+                if (connInfo.cleanupTimer) {
+                    clearTimeout(connInfo.cleanupTimer);
+                }
                 this.p2pConnections.delete(client.clientId);
             }
         };
