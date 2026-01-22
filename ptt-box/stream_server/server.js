@@ -1619,13 +1619,20 @@ class StreamServer {
     sendOpusToClients(opusData) {
         if (opusData.length === 0) return;
 
-        const rtpBuffer = this.createRtpBuffer(opusData);
-
-        // 現在の送信者を取得（送信者には自分の音声を返さない）
         const currentSpeaker = this.pttManager.currentSpeaker;
 
+        // WebクライアントがPTT中は、サーバーマイク音声を一切送信しない
+        // (スピーカー出力 → マイク入力 のエコーループ防止)
+        if (currentSpeaker &&
+            currentSpeaker !== this.serverClientId &&
+            currentSpeaker !== 'external') {
+            return;
+        }
+
+        const rtpBuffer = this.createRtpBuffer(opusData);
+
         for (const [clientId, connInfo] of this.p2pConnections) {
-            // 送信中のクライアントには送らない（エコー/フィードバック防止）
+            // サーバーPTT中は送信者(server)をスキップ（自分の声が戻るのを防ぐ）
             if (currentSpeaker === clientId) continue;
 
             if (connInfo.audioTrack && connInfo.pc.connectionState === 'connected') {
