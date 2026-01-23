@@ -141,27 +141,50 @@ idle ─────────────────────────
 
 ## P2P音声配信フロー
 
+### パターン1: サーバーマイク/外部デバイス(VOX)の音声配信
+
+```mermaid
+sequenceDiagram
+    participant R as 無線機 (外部)
+    participant S as Server
+    participant A as Client A
+    participant B as Client B
+
+    Note over R,B: 外部デバイス(VOX)またはサーバーPTT中
+
+    R->>S: アナログ音声入力
+    S->>S: FFmpeg Opusエンコード
+
+    Note over S: P2P経由で全クライアントに配信
+    S->>A: P2P Opus送信
+    S->>B: P2P Opus送信
+
+    Note over A,B: 各クライアントで再生
+    A->>A: スピーカー出力
+    B->>B: スピーカー出力
+```
+
+### パターン2: Webクライアントの音声送信
+
 ```mermaid
 sequenceDiagram
     participant A as Client A (送信者)
     participant S as Server
+    participant R as 無線機 (外部)
     participant B as Client B
-    participant C as Client C
 
-    Note over A,C: Client AがPTT送信中
+    Note over A,B: Client AがPTT送信中
 
     A->>S: Opus音声パケット (WebRTC)
 
-    Note over S: エコー防止チェック
-    S->>S: currentSpeaker === A ?
+    Note over S: サーバーマイク音声を全ブロック
+    S->>S: エコーループ防止
 
-    Note over S,C: Aには送らない (エコー防止)
-    S->>B: P2P Opus送信
-    S->>C: P2P Opus送信
+    S->>R: スピーカー出力 → 無線送信
+    S->>B: P2P Opus送信 (Aには送らない)
 
-    Note over B,C: 各クライアントで再生
+    Note over B: 他クライアントで再生
     B->>B: スピーカー出力
-    C->>C: スピーカー出力
 ```
 
 ### エコー防止ロジック
@@ -170,14 +193,31 @@ sequenceDiagram
 sendOpusToClients(opusData) {
     const currentSpeaker = this.pttManager.currentSpeaker;
 
+    // WebクライアントがPTT中は、サーバーマイク音声を一切送信しない
+    // (スピーカー出力 → 無線機マイク → サーバーマイク のエコーループ防止)
+    if (currentSpeaker &&
+        currentSpeaker !== this.serverClientId &&
+        currentSpeaker !== 'external') {
+        return;  // 早期リターンで全送信をブロック
+    }
+
     for (const [clientId, connInfo] of this.p2pConnections) {
-        // 送信者には送らない（エコー防止）
+        // 送信者には送らない（自分の声が戻るのを防ぐ）
         if (currentSpeaker === clientId) continue;
 
         connInfo.audioTrack.writeRtp(rtpBuffer);
     }
 }
 ```
+
+### エコー防止の動作一覧
+
+| PTT状態 | サーバーマイク音声 | 理由 |
+|---------|-------------------|------|
+| idle | ✅ 全員に送信 | 通常動作 |
+| external (VOX) | ✅ 全員に送信 | 無線受信音声を配信 |
+| server | ✅ server以外に送信 | サーバーPTT |
+| Webクライアント | ❌ 全ブロック | エコーループ防止 |
 
 ---
 

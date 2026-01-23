@@ -1626,11 +1626,20 @@ class StreamServer {
         if (currentSpeaker &&
             currentSpeaker !== this.serverClientId &&
             currentSpeaker !== 'external') {
+            // 診断ログ: エコー防止でブロック開始時のみログ
+            if (this.lastBlockedSpeaker !== currentSpeaker) {
+                log(`[Audio] blocked (echo prevention): speaker=${currentSpeaker}`);
+                this.lastBlockedSpeaker = currentSpeaker;
+            }
             return;
         }
 
+        // ブロック状態をリセット
+        this.lastBlockedSpeaker = null;
+
         const rtpBuffer = this.createRtpBuffer(opusData);
 
+        let sentCount = 0;
         for (const [clientId, connInfo] of this.p2pConnections) {
             // サーバーPTT中は送信者(server)をスキップ（自分の声が戻るのを防ぐ）
             if (currentSpeaker === clientId) continue;
@@ -1638,8 +1647,15 @@ class StreamServer {
             if (connInfo.audioTrack && connInfo.pc.connectionState === 'connected') {
                 try {
                     connInfo.audioTrack.writeRtp(rtpBuffer);
+                    sentCount++;
                 } catch (e) {}
             }
+        }
+
+        // 診断ログ: 15000パケット（約5分）ごとに送信状況を記録
+        this.audioSentCount = (this.audioSentCount || 0) + 1;
+        if (this.audioSentCount % 15000 === 0) {
+            log(`[Audio] packets=${this.audioSentCount}, sent to ${sentCount}/${this.p2pConnections.size} clients`);
         }
     }
 
