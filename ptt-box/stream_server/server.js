@@ -1064,9 +1064,11 @@ class StreamServer {
         client.pc.addTransceiver('audio', { direction: 'recvonly' });
 
         await client.pc.setRemoteDescription(new RTCSessionDescription(sdp, 'offer'));
+        log(`${client.displayName}: offer received, creating answer`);
         const answer = await client.pc.createAnswer();
         await client.pc.setLocalDescription(answer);
 
+        log(`${client.displayName}: sending answer`);
         client.send({
             type: 'answer',
             sdp: client.pc.localDescription.sdp
@@ -1307,6 +1309,7 @@ class StreamServer {
                 });
             }
         }
+        log(`Sending client_list to ${client.displayName}: ${clients.length} other clients`);
         client.send({
             type: 'client_list',
             clients: clients

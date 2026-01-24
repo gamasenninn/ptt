@@ -335,13 +335,16 @@ async function connect() {
                     setupPushNotifications();
                 }
             } else if (data.type === 'answer') {
+                debugLog('Received answer, applying remote description');
                 await pc.setRemoteDescription(new RTCSessionDescription({
                     type: 'answer',
                     sdp: data.sdp
                 }));
+                debugLog('Answer applied successfully');
             } else if (data.type === 'ice_restart_answer') {
                 await handleIceRestartAnswer(data.sdp);
             } else if (data.type === 'ice-candidate' && data.candidate) {
+                debugLog('Received ICE candidate from server');
                 await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
             } else if (data.type === 'error') {
                 updateStatus('エラー: ' + data.message, 'error');
