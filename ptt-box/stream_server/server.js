@@ -44,6 +44,7 @@ const RELAY_PORT = process.env.RELAY_PORT || 'COM3';
 const RELAY_BAUD_RATE = parseInt(process.env.RELAY_BAUD_RATE) || 9600;
 const ENABLE_RELAY = process.env.ENABLE_RELAY !== 'false';  // デフォルト有効
 const ICE_RESTART_TIMEOUT = parseInt(process.env.ICE_RESTART_TIMEOUT) || 5000;  // ICE Restart タイムアウト（5秒）
+const MAX_ICE_RESTART_ATTEMPTS = 5;  // ICE Restart 最大試行回数
 
 // ダッシュボード設定
 const DASH_PASSWORD = process.env.DASH_PASSWORD || 'admin';
@@ -1010,12 +1011,13 @@ class StreamServer {
                 }
 
                 // ICE Restartタイマーとフラグをクリア（回復時）
-                if (client.iceRestartTimer || client.iceRestartInProgress) {
+                if (client.iceRestartTimer || client.iceRestartInProgress || client.iceRestartAttempts) {
                     if (client.iceRestartTimer) {
                         clearTimeout(client.iceRestartTimer);
                         client.iceRestartTimer = null;
                     }
                     client.iceRestartInProgress = false;
+                    client.iceRestartAttempts = 0;  // 試行回数リセット
                     log(`${client.displayName}: ICE restart successful`);
                 }
             } else if (client.pc.connectionState === 'disconnected') {
@@ -1084,7 +1086,16 @@ class StreamServer {
 
     // ICE Restart Offer処理（クライアントからの再接続要求）
     async handleIceRestartOffer(client, sdp) {
-        log(`ICE restart offer from ${client.displayName}`);
+        // 試行回数をインクリメント
+        client.iceRestartAttempts = (client.iceRestartAttempts || 0) + 1;
+        log(`ICE restart offer from ${client.displayName} (attempt ${client.iceRestartAttempts}/${MAX_ICE_RESTART_ATTEMPTS})`);
+
+        // 最大試行回数を超えたら切断
+        if (client.iceRestartAttempts > MAX_ICE_RESTART_ATTEMPTS) {
+            log(`${client.displayName}: too many ICE restart attempts, closing connection`);
+            client.ws.close(1000, 'ICE restart attempts exceeded');
+            return;
+        }
 
         // ICE Restart処理中フラグをセット（タイマー開始を抑制）
         client.iceRestartInProgress = true;
