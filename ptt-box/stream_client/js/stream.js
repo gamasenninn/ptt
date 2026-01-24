@@ -421,8 +421,12 @@ async function setupWebRTC() {
         });
     }
 
+    // イベントハンドラで使うためのローカル参照（レースコンディション防止）
+    const thisPC = pc;
+
     // 音声トラック受信時
     pc.ontrack = (event) => {
+        if (pc !== thisPC) return;  // 古い接続のイベントを無視
         debugLog('Track: ' + event.track.kind + ', streams: ' + event.streams.length);
 
         // ジッターバッファを広げる（モバイル回線対策）
@@ -445,6 +449,7 @@ async function setupWebRTC() {
 
     // ICE候補
     pc.onicecandidate = (event) => {
+        if (pc !== thisPC) return;  // 古い接続のイベントを無視
         if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
                 type: 'ice-candidate',
@@ -459,6 +464,11 @@ async function setupWebRTC() {
 
     // 接続状態変化
     pc.onconnectionstatechange = () => {
+        // 古い接続のイベントを無視（レースコンディション防止）
+        if (pc !== thisPC) {
+            debugLog('Ignoring old connection state event');
+            return;
+        }
         debugLog('Connection: ' + pc.connectionState);
         switch (pc.connectionState) {
             case 'connected':
@@ -503,6 +513,7 @@ async function setupWebRTC() {
 
     // ICE接続状態の詳細ログ
     pc.oniceconnectionstatechange = () => {
+        if (pc !== thisPC) return;  // 古い接続のイベントを無視
         debugLog('ICE: ' + pc.iceConnectionState);
         if (pc.iceConnectionState === 'failed') {
             debugLog('ERROR: ICE failed - TURN unreachable?');
