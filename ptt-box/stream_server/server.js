@@ -310,6 +310,19 @@ class StreamServer {
                 log(`[Monitor] P2P: ${p2pStates.join(', ')}`);
             }
         }, 300000);  // 5分ごと
+
+        // マイクキャプチャのハング検知（10秒ごと）
+        setInterval(() => {
+            if (this.ffmpegProcess && this.lastMicDataTime) {
+                const elapsed = Date.now() - this.lastMicDataTime;
+                if (elapsed > 10000) {
+                    log(`Mic capture appears hung (no data for ${Math.round(elapsed / 1000)}s), restarting...`);
+                    this.stopMicCapture();
+                    this.micStoppedIntentionally = false;  // 再起動を許可
+                    this.startMicCapture();
+                }
+            }
+        }, 10000);  // 10秒ごと
     }
 
     async start() {
@@ -1505,6 +1518,8 @@ class StreamServer {
         if (this.ffmpegProcess) return;
 
         log(`Starting mic capture: ${MIC_DEVICE}`);
+        this.micStoppedIntentionally = false;
+        this.lastMicDataTime = Date.now();
 
         this.ffmpegProcess = spawn('ffmpeg', [
             // 入力の低遅延設定
@@ -1540,6 +1555,12 @@ class StreamServer {
         this.ffmpegProcess.on('close', (code) => {
             log(`FFmpeg closed with code ${code}`);
             this.ffmpegProcess = null;
+
+            // クラッシュ検知: 意図的な停止でなければ自動再起動
+            if (!this.micStoppedIntentionally) {
+                log('Mic capture crashed, restarting in 1 second...');
+                setTimeout(() => this.startMicCapture(), 1000);
+            }
         });
 
         this.parseOggStream(this.ffmpegProcess.stdout);
@@ -1547,6 +1568,7 @@ class StreamServer {
 
     stopMicCapture() {
         if (this.ffmpegProcess) {
+            this.micStoppedIntentionally = true;  // 意図的停止フラグ
             // stdoutのリスナーを削除してからkill
             if (this.ffmpegProcess.stdout) {
                 this.ffmpegProcess.stdout.removeAllListeners('data');
@@ -1562,6 +1584,7 @@ class StreamServer {
         let headersParsed = false;
 
         stream.on('data', (chunk) => {
+            this.lastMicDataTime = Date.now();  // ハング検知用タイムスタンプ更新
             buffer = Buffer.concat([buffer, chunk]);
 
             while (buffer.length >= 27) {
