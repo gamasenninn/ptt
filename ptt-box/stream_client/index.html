@@ -263,11 +263,41 @@
         }
 
         /* History List */
-        .history-list {
-            text-align: left;
+        .history-list-container {
+            position: relative;
             max-height: calc(100vh - 150px);
             overflow-y: auto;
             overflow-x: hidden;
+            -webkit-overflow-scrolling: touch;
+        }
+        .pull-indicator {
+            display: none;
+            justify-content: center;
+            align-items: center;
+            padding: 15px;
+            color: #60efff;
+            font-size: 14px;
+        }
+        .pull-indicator.visible {
+            display: flex;
+        }
+        .pull-indicator.refreshing {
+            display: flex;
+        }
+        .pull-indicator .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #60efff;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .history-list {
+            text-align: left;
         }
         .history-item {
             display: flex;
@@ -635,8 +665,14 @@
                     <span id="historyVolumeValue" style="min-width: 35px; font-size: 12px; text-align: right;">40%</span>
                 </div>
             </div>
-            <div id="historyList" class="history-list">
-                <div class="history-loading">読み込み中...</div>
+            <div id="historyListContainer" class="history-list-container">
+                <div id="pullIndicator" class="pull-indicator">
+                    <span class="spinner"></span>
+                    <span class="pull-text">更新中...</span>
+                </div>
+                <div id="historyList" class="history-list">
+                    <div class="history-loading">読み込み中...</div>
+                </div>
             </div>
             <audio id="historyAudio" style="display: none;" preload="none"></audio>
         </div>
