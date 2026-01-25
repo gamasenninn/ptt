@@ -84,34 +84,49 @@ ptt-box/
 
 ## Configuration (.env)
 
+環境変数は用途別に2つのファイルで管理:
+
+| ファイル | 用途 | テンプレート |
+|---------|------|-------------|
+| `ptt-box/.env` | Python サービス | `.env.example` |
+| `ptt-box/stream_server/.env` | Node.js サーバー | `.env.example` |
+
+### Node.js (stream_server/.env)
+
 ```bash
-# サーバー
+# サーバー基本
 HTTP_PORT=9320
-STUN_SERVER=stun.l.google.com:19302
-TURN_SERVER=your-turn-server.com
-TURN_USERNAME=user
-TURN_PASSWORD=pass
+STUN_SERVER=stun:stun.l.google.com:19302
 
 # 音声デバイス
-MIC_DEVICE_NAME="マイク (USB PnP Audio Device)"
-SPEAKER_DEVICE_NAME="スピーカー"
-SERVER_MIC_MODE=always  # always|vox|off
+MIC_DEVICE=マイク (USB PnP Audio Device)
+USE_PYTHON_AUDIO=false  # true: audio_output.py / false: ffplay
+SPEAKER_DEVICE_ID=0     # audio_output.py用
 
 # リレー制御
 ENABLE_RELAY=true
 RELAY_PORT=COM3
-RELAY_BAUD_RATE=9600
 
 # ダッシュボード
 DASH_PASSWORD=admin
+```
 
-# VOX (Python)
-VOX_THRESHOLD=300
-VOX_HOLD_TIME=2.0
+### Python (ptt-box/.env)
 
-# Whisper
+```bash
+# VOX録音
+VOX_DEVICE_INDEX=1
+VOX_THRESHOLD=0.0020
+VOX_HOLD_TIME=1.5
+
+# 文字起こし
 WHISPER_MODEL_SIZE=large-v3
-WHISPER_COMPUTE_TYPE=int8
+WHISPER_DEVICE=cuda
+WHISPER_COMPUTE_TYPE=float16
+
+# 共通
+RECORDINGS_DIR=./recordings
+STREAM_SERVER_URL=http://localhost:9320
 ```
 
 ---
