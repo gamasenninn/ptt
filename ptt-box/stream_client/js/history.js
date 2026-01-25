@@ -43,10 +43,19 @@ function switchTab(tabName) {
 function initTabFromUrl() {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
+    const standalone = params.get('standalone') === '1';
+
     if (tab && ['transceiver', 'history', 'admin'].includes(tab)) {
         switchTab(tab);
-        // URLをクリーンに（パラメータを削除）
-        history.replaceState(null, '', window.location.pathname);
+
+        if (standalone) {
+            // standaloneモード: タブナビを非表示
+            const tabNav = document.querySelector('.tab-nav');
+            if (tabNav) tabNav.style.display = 'none';
+        } else {
+            // 通常モード: URLをクリーンに（パラメータを削除）
+            history.replaceState(null, '', window.location.pathname);
+        }
     }
 }
 
