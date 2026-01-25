@@ -4,6 +4,11 @@ let historyFiles = [];
 let currentPlayingFile = null;
 let editingFilename = null;
 
+// Pull-to-Refresh 状態
+let pullStartY = 0;
+let isPulling = false;
+let isRefreshing = false;
+
 // タブ切り替え
 function switchTab(tabName) {
     // タブボタンのアクティブ状態を更新
@@ -162,7 +167,75 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 保存された履歴音量を読み込み
     loadHistoryVolumeSetting();
+
+    // Pull-to-Refresh 初期化
+    initPullToRefresh();
 });
+
+// Pull-to-Refresh 初期化
+function initPullToRefresh() {
+    const container = document.getElementById('historyListContainer');
+    const indicator = document.getElementById('pullIndicator');
+    const pullText = indicator?.querySelector('.pull-text');
+
+    if (!container || !indicator) return;
+
+    const PULL_THRESHOLD = 60;  // リフレッシュ発動の閾値（px）
+
+    container.addEventListener('touchstart', (e) => {
+        // スクロールが一番上のときだけ有効
+        if (container.scrollTop === 0 && !isRefreshing) {
+            pullStartY = e.touches[0].clientY;
+            isPulling = true;
+        }
+    }, { passive: true });
+
+    container.addEventListener('touchmove', (e) => {
+        if (!isPulling || isRefreshing) return;
+
+        const currentY = e.touches[0].clientY;
+        const pullDistance = currentY - pullStartY;
+
+        if (pullDistance > 0 && container.scrollTop === 0) {
+            // 引っ張り量に応じてインジケーターを表示
+            if (pullDistance > 10) {
+                indicator.classList.add('visible');
+                indicator.classList.remove('refreshing');
+
+                if (pullDistance >= PULL_THRESHOLD) {
+                    if (pullText) pullText.textContent = '離すと更新';
+                } else {
+                    if (pullText) pullText.textContent = '↓ 引っ張って更新';
+                }
+            }
+        }
+    }, { passive: true });
+
+    container.addEventListener('touchend', async () => {
+        if (!isPulling || isRefreshing) return;
+
+        const indicator = document.getElementById('pullIndicator');
+        const pullText = indicator?.querySelector('.pull-text');
+
+        if (indicator.classList.contains('visible')) {
+            // リフレッシュ実行
+            isRefreshing = true;
+            indicator.classList.add('refreshing');
+            if (pullText) pullText.textContent = '更新中...';
+
+            await loadHistory();
+
+            // 完了後にインジケーターを非表示
+            setTimeout(() => {
+                indicator.classList.remove('visible', 'refreshing');
+                isRefreshing = false;
+            }, 300);
+        }
+
+        isPulling = false;
+        pullStartY = 0;
+    });
+}
 
 // SRT編集モーダルを開く
 async function openEditor(filename, wavFile) {

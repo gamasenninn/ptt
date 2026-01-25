@@ -44,6 +44,8 @@ const RELAY_PORT = process.env.RELAY_PORT || 'COM3';
 const RELAY_BAUD_RATE = parseInt(process.env.RELAY_BAUD_RATE) || 9600;
 const ENABLE_RELAY = process.env.ENABLE_RELAY !== 'false';  // デフォルト有効
 const ICE_RESTART_TIMEOUT = parseInt(process.env.ICE_RESTART_TIMEOUT) || 5000;  // ICE Restart タイムアウト（5秒）
+const MAX_ICE_RESTART_ATTEMPTS = 5;  // ICE Restart 最大試行回数
+const OFFER_TIMEOUT = 30000;  // Offer待ちタイムアウト（30秒）
 
 // ダッシュボード設定
 const DASH_PASSWORD = process.env.DASH_PASSWORD || 'admin';
@@ -310,6 +312,19 @@ class StreamServer {
                 log(`[Monitor] P2P: ${p2pStates.join(', ')}`);
             }
         }, 300000);  // 5分ごと
+
+        // マイクキャプチャのハング検知（10秒ごと）
+        setInterval(() => {
+            if (this.ffmpegProcess && this.lastMicDataTime) {
+                const elapsed = Date.now() - this.lastMicDataTime;
+                if (elapsed > 10000) {
+                    log(`Mic capture appears hung (no data for ${Math.round(elapsed / 1000)}s), restarting...`);
+                    this.stopMicCapture();
+                    this.micStoppedIntentionally = false;  // 再起動を許可
+                    this.startMicCapture();
+                }
+            }
+        }, 10000);  // 10秒ごと
     }
 
     async start() {
@@ -826,6 +841,14 @@ class StreamServer {
             vapidPublicKey: VAPID_PUBLIC_KEY || null
         });
 
+        // Offer待ちタイムアウト（WebSocket接続後、Offerが来ない場合に切断）
+        client.offerTimeout = setTimeout(() => {
+            if (!client.pc) {
+                log(`${client.displayName}: No offer received within ${OFFER_TIMEOUT/1000}s, closing connection`);
+                client.ws.close(1000, 'Offer timeout');
+            }
+        }, OFFER_TIMEOUT);
+
         // メッセージハンドラ
         ws.on('message', async (data) => {
             try {
@@ -968,6 +991,12 @@ class StreamServer {
 
     // WebRTC Offer処理
     async handleOffer(client, sdp) {
+        // Offer待ちタイムアウトをクリア
+        if (client.offerTimeout) {
+            clearTimeout(client.offerTimeout);
+            client.offerTimeout = null;
+        }
+
         const config = {
             iceServers: iceServers.map(s => ({ urls: s.urls })),
             headerExtensions: {
@@ -997,12 +1026,13 @@ class StreamServer {
                 }
 
                 // ICE Restartタイマーとフラグをクリア（回復時）
-                if (client.iceRestartTimer || client.iceRestartInProgress) {
+                if (client.iceRestartTimer || client.iceRestartInProgress || client.iceRestartAttempts) {
                     if (client.iceRestartTimer) {
                         clearTimeout(client.iceRestartTimer);
                         client.iceRestartTimer = null;
                     }
                     client.iceRestartInProgress = false;
+                    client.iceRestartAttempts = 0;  // 試行回数リセット
                     log(`${client.displayName}: ICE restart successful`);
                 }
             } else if (client.pc.connectionState === 'disconnected') {
@@ -1049,9 +1079,11 @@ class StreamServer {
         client.pc.addTransceiver('audio', { direction: 'recvonly' });
 
         await client.pc.setRemoteDescription(new RTCSessionDescription(sdp, 'offer'));
+        log(`${client.displayName}: offer received, creating answer`);
         const answer = await client.pc.createAnswer();
         await client.pc.setLocalDescription(answer);
 
+        log(`${client.displayName}: sending answer`);
         client.send({
             type: 'answer',
             sdp: client.pc.localDescription.sdp
@@ -1071,7 +1103,16 @@ class StreamServer {
 
     // ICE Restart Offer処理（クライアントからの再接続要求）
     async handleIceRestartOffer(client, sdp) {
-        log(`ICE restart offer from ${client.displayName}`);
+        // 試行回数をインクリメント
+        client.iceRestartAttempts = (client.iceRestartAttempts || 0) + 1;
+        log(`ICE restart offer from ${client.displayName} (attempt ${client.iceRestartAttempts}/${MAX_ICE_RESTART_ATTEMPTS})`);
+
+        // 最大試行回数を超えたら切断
+        if (client.iceRestartAttempts > MAX_ICE_RESTART_ATTEMPTS) {
+            log(`${client.displayName}: too many ICE restart attempts, closing connection`);
+            client.ws.close(1000, 'ICE restart attempts exceeded');
+            return;
+        }
 
         // ICE Restart処理中フラグをセット（タイマー開始を抑制）
         client.iceRestartInProgress = true;
@@ -1094,6 +1135,15 @@ class StreamServer {
             });
 
             log(`ICE restart answer sent to ${client.displayName}`);
+
+            // ICE Restart Answer送信後、新しいタイムアウトタイマーを設定
+            // （接続が回復しない場合に備える）
+            client.iceRestartTimer = setTimeout(() => {
+                if (client.pc?.connectionState !== 'connected') {
+                    log(`${client.displayName}: ICE restart timeout after answer, closing WebSocket`);
+                    client.ws.close(1000, 'ICE restart timeout');
+                }
+            }, ICE_RESTART_TIMEOUT);
         } catch (e) {
             logError(`ICE restart failed for ${client.displayName}: ${e.message}`);
             client.iceRestartInProgress = false;
@@ -1173,10 +1223,18 @@ class StreamServer {
     handleDisconnect(client) {
         log(`Client disconnected: ${client.displayName}`);
 
-        // disconnectedタイマークリア
+        // 各種タイマークリア
         if (client.disconnectTimer) {
             clearTimeout(client.disconnectTimer);
             client.disconnectTimer = null;
+        }
+        if (client.offerTimeout) {
+            clearTimeout(client.offerTimeout);
+            client.offerTimeout = null;
+        }
+        if (client.iceRestartTimer) {
+            clearTimeout(client.iceRestartTimer);
+            client.iceRestartTimer = null;
         }
 
         // PTT解放
@@ -1193,6 +1251,11 @@ class StreamServer {
         // P2P接続クリーンアップ
         const p2pConn = this.p2pConnections.get(client.clientId);
         if (p2pConn) {
+            // クリーンアップタイマーがあればキャンセル
+            if (p2pConn.cleanupTimer) {
+                clearTimeout(p2pConn.cleanupTimer);
+                p2pConn.cleanupTimer = null;
+            }
             // RTPサブスクリプションを解除
             if (p2pConn.rtpSubscription) {
                 try {
@@ -1278,6 +1341,7 @@ class StreamServer {
                 });
             }
         }
+        log(`Sending client_list to ${client.displayName}: ${clients.length} other clients`);
         client.send({
             type: 'client_list',
             clients: clients
@@ -1329,14 +1393,44 @@ class StreamServer {
             pendingCandidates: [],
             remoteDescriptionSet: false,
             receivedFrameCount: 0,
-            rtpSubscription: null  // RTPサブスクリプション（クリーンアップ用）
+            rtpSubscription: null,  // RTPサブスクリプション（クリーンアップ用）
+            cleanupTimer: null      // disconnected時のクリーンアップタイマー
         };
         this.p2pConnections.set(client.clientId, connInfo);
 
         // 接続状態
+        const P2P_CLEANUP_TIMEOUT = 10000;  // 10秒（メインICE restart 5秒より長め）
         p2pPc.onconnectionstatechange = () => {
             log(`P2P to ${client.displayName}: ${p2pPc.connectionState}`);
-            if (p2pPc.connectionState === 'failed' || p2pPc.connectionState === 'closed') {
+
+            if (p2pPc.connectionState === 'disconnected') {
+                // 既存のタイマーがあればクリア
+                if (connInfo.cleanupTimer) {
+                    clearTimeout(connInfo.cleanupTimer);
+                }
+                // 10秒後にクリーンアップ（ICE restart猶予期間）
+                connInfo.cleanupTimer = setTimeout(() => {
+                    if (this.p2pConnections.has(client.clientId) &&
+                        p2pPc.connectionState !== 'connected') {
+                        log(`P2P to ${client.displayName}: cleanup after timeout`);
+                        p2pPc.close();
+                        this.p2pConnections.delete(client.clientId);
+                    }
+                }, P2P_CLEANUP_TIMEOUT);
+
+            } else if (p2pPc.connectionState === 'connected') {
+                // 回復したらタイマーキャンセル
+                if (connInfo.cleanupTimer) {
+                    clearTimeout(connInfo.cleanupTimer);
+                    connInfo.cleanupTimer = null;
+                    log(`P2P to ${client.displayName}: recovered, timer cancelled`);
+                }
+
+            } else if (p2pPc.connectionState === 'failed' || p2pPc.connectionState === 'closed') {
+                // 即座に削除
+                if (connInfo.cleanupTimer) {
+                    clearTimeout(connInfo.cleanupTimer);
+                }
                 this.p2pConnections.delete(client.clientId);
             }
         };
@@ -1470,6 +1564,8 @@ class StreamServer {
         if (this.ffmpegProcess) return;
 
         log(`Starting mic capture: ${MIC_DEVICE}`);
+        this.micStoppedIntentionally = false;
+        this.lastMicDataTime = Date.now();
 
         this.ffmpegProcess = spawn('ffmpeg', [
             // 入力の低遅延設定
@@ -1505,6 +1601,12 @@ class StreamServer {
         this.ffmpegProcess.on('close', (code) => {
             log(`FFmpeg closed with code ${code}`);
             this.ffmpegProcess = null;
+
+            // クラッシュ検知: 意図的な停止でなければ自動再起動
+            if (!this.micStoppedIntentionally) {
+                log('Mic capture crashed, restarting in 1 second...');
+                setTimeout(() => this.startMicCapture(), 1000);
+            }
         });
 
         this.parseOggStream(this.ffmpegProcess.stdout);
@@ -1512,6 +1614,7 @@ class StreamServer {
 
     stopMicCapture() {
         if (this.ffmpegProcess) {
+            this.micStoppedIntentionally = true;  // 意図的停止フラグ
             // stdoutのリスナーを削除してからkill
             if (this.ffmpegProcess.stdout) {
                 this.ffmpegProcess.stdout.removeAllListeners('data');
@@ -1527,6 +1630,7 @@ class StreamServer {
         let headersParsed = false;
 
         stream.on('data', (chunk) => {
+            this.lastMicDataTime = Date.now();  // ハング検知用タイムスタンプ更新
             buffer = Buffer.concat([buffer, chunk]);
 
             while (buffer.length >= 27) {
@@ -1584,20 +1688,43 @@ class StreamServer {
     sendOpusToClients(opusData) {
         if (opusData.length === 0) return;
 
-        const rtpBuffer = this.createRtpBuffer(opusData);
-
-        // 現在の送信者を取得（送信者には自分の音声を返さない）
         const currentSpeaker = this.pttManager.currentSpeaker;
 
+        // WebクライアントがPTT中は、サーバーマイク音声を一切送信しない
+        // (スピーカー出力 → マイク入力 のエコーループ防止)
+        if (currentSpeaker &&
+            currentSpeaker !== this.serverClientId &&
+            currentSpeaker !== 'external') {
+            // 診断ログ: エコー防止でブロック開始時のみログ
+            if (this.lastBlockedSpeaker !== currentSpeaker) {
+                log(`[Audio] blocked (echo prevention): speaker=${currentSpeaker}`);
+                this.lastBlockedSpeaker = currentSpeaker;
+            }
+            return;
+        }
+
+        // ブロック状態をリセット
+        this.lastBlockedSpeaker = null;
+
+        const rtpBuffer = this.createRtpBuffer(opusData);
+
+        let sentCount = 0;
         for (const [clientId, connInfo] of this.p2pConnections) {
-            // 送信中のクライアントには送らない（エコー/フィードバック防止）
+            // サーバーPTT中は送信者(server)をスキップ（自分の声が戻るのを防ぐ）
             if (currentSpeaker === clientId) continue;
 
             if (connInfo.audioTrack && connInfo.pc.connectionState === 'connected') {
                 try {
                     connInfo.audioTrack.writeRtp(rtpBuffer);
+                    sentCount++;
                 } catch (e) {}
             }
+        }
+
+        // 診断ログ: 15000パケット（約5分）ごとに送信状況を記録
+        this.audioSentCount = (this.audioSentCount || 0) + 1;
+        if (this.audioSentCount % 15000 === 0) {
+            log(`[Audio] packets=${this.audioSentCount}, sent to ${sentCount}/${this.p2pConnections.size} clients`);
         }
     }
 

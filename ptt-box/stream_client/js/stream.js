@@ -335,13 +335,16 @@ async function connect() {
                     setupPushNotifications();
                 }
             } else if (data.type === 'answer') {
+                debugLog('Received answer, applying remote description');
                 await pc.setRemoteDescription(new RTCSessionDescription({
                     type: 'answer',
                     sdp: data.sdp
                 }));
+                debugLog('Answer applied successfully');
             } else if (data.type === 'ice_restart_answer') {
                 await handleIceRestartAnswer(data.sdp);
             } else if (data.type === 'ice-candidate' && data.candidate) {
+                debugLog('Received ICE candidate from server');
                 await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
             } else if (data.type === 'error') {
                 updateStatus('エラー: ' + data.message, 'error');
@@ -418,8 +421,12 @@ async function setupWebRTC() {
         });
     }
 
+    // イベントハンドラで使うためのローカル参照（レースコンディション防止）
+    const thisPC = pc;
+
     // 音声トラック受信時
     pc.ontrack = (event) => {
+        if (pc !== thisPC) return;  // 古い接続のイベントを無視
         debugLog('Track: ' + event.track.kind + ', streams: ' + event.streams.length);
 
         // ジッターバッファを広げる（モバイル回線対策）
@@ -442,6 +449,7 @@ async function setupWebRTC() {
 
     // ICE候補
     pc.onicecandidate = (event) => {
+        if (pc !== thisPC) return;  // 古い接続のイベントを無視
         if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
                 type: 'ice-candidate',
@@ -456,6 +464,11 @@ async function setupWebRTC() {
 
     // 接続状態変化
     pc.onconnectionstatechange = () => {
+        // 古い接続のイベントを無視（レースコンディション防止）
+        if (pc !== thisPC) {
+            debugLog('Ignoring old connection state event');
+            return;
+        }
         debugLog('Connection: ' + pc.connectionState);
         switch (pc.connectionState) {
             case 'connected':
@@ -500,6 +513,7 @@ async function setupWebRTC() {
 
     // ICE接続状態の詳細ログ
     pc.oniceconnectionstatechange = () => {
+        if (pc !== thisPC) return;  // 古い接続のイベントを無視
         debugLog('ICE: ' + pc.iceConnectionState);
         if (pc.iceConnectionState === 'failed') {
             debugLog('ERROR: ICE failed - TURN unreachable?');
@@ -1005,6 +1019,9 @@ function forceOpusMono(sdp) {
     // stereo=0: モノラル
     // useinbandfec=1: パケットロス時の前方誤り訂正（モバイル回線で重要）
     // maxaveragebitrate=24000: 24kbps（音声に十分、帯域節約）
+    // usedtx=1: 無音時のパケット送信停止（帯域・バッテリー節約）
+    //   ※一部スマホで送信開始時に途切れる問題があり、一旦無効化（2026-01-20）
+    //   ※復活する場合: 末尾に ;usedtx=1 を追加
     const opusParams = 'stereo=0;sprop-stereo=0;useinbandfec=1;maxaveragebitrate=24000';
 
     // 既存のfmtpがあれば修正、なければ追加
