@@ -14,7 +14,7 @@ WebRTCベースの双方向PTT（Push-To-Talk）トランシーバーシステ�
 | クライアント | PWA (HTML/CSS/JS), Web Audio API, Service Worker |
 | 音声処理 | FFmpeg, Opus codec (24kbps mono) |
 | 文字起こし | faster-whisper (large-v3), ONNX Runtime |
-| その他 | Python (VOX/transcriber), PHP (SRTビューア) |
+| その他 | Python (VOX/transcriber) |
 
 ---
 
@@ -34,7 +34,6 @@ uv run python ptt-box/transcriber.py
 
 # テスト実行
 cd ptt-box/stream_server && npm test
-cd ptt-box/web && php vendor/bin/phpunit tests/
 ```
 
 ---
@@ -57,8 +56,7 @@ ptt-box/
 │   └── dash/           # 管理ダッシュボード
 ├── docs/               # 詳細ドキュメント
 ├── recordings/         # WAV/SRTファイル保存先
-├── *.py                # Python サービス群
-└── web/                # PHP SRTビューア (レガシー)
+└── *.py                # Python サービス群
 ```
 
 ### 通信フロー
@@ -245,10 +243,6 @@ maxaveragebitrate=24000  // 24kbps制限
 # Node.js (Jest)
 cd ptt-box/stream_server
 npm test
-
-# PHP (PHPUnit)
-cd ptt-box/web
-php vendor/bin/phpunit tests/
 
 # 実機テスト
 # 1. スマホでWebトランシーバーに接続

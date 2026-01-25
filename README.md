@@ -163,7 +163,7 @@ cat ptt-box/stream_server/logs/server-$(date +%Y-%m-%d).log
 - **Client**: PWA, Web Audio API, Service Worker
 - **Audio**: FFmpeg, Opus codec
 - **Transcription**: faster-whisper, ONNX Runtime
-- **Legacy**: Python (VOX), PHP (SRT viewer)
+- **Legacy**: Python (VOX録音)
 
 ## License
 
