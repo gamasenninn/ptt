@@ -8,8 +8,6 @@ WebRTCを使用したPTT（Push-To-Talk）双方向通信システムの実装�
 
 ## アーキテクチャ
 
-### Node.js版（現行）
-
 ```
 stream_server/ (Node.js/werift)
 ├── server.js        メインサーバー
@@ -21,17 +19,6 @@ stream_client/
 ├── js/stream.js     WebRTC/PTT/P2P機能
 ├── js/history.js    SRT履歴機能
 └── js/monitor.js    モニター機能
-```
-
-### Python版（旧）
-
-```
-stream_server.py (Python/aiohttp)
-├── /ws              WebSocket (PTT/P2Pシグナリング)
-├── /ws/monitor      モニター用WebSocket
-├── /                静的ファイル配信
-├── /api/srt/*       SRT API (list/get/save)
-└── /api/audio       WAV配信
 ```
 
 ---
