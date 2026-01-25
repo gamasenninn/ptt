@@ -45,6 +45,7 @@ const RELAY_BAUD_RATE = parseInt(process.env.RELAY_BAUD_RATE) || 9600;
 const ENABLE_RELAY = process.env.ENABLE_RELAY !== 'false';  // デフォルト有効
 const ICE_RESTART_TIMEOUT = parseInt(process.env.ICE_RESTART_TIMEOUT) || 5000;  // ICE Restart タイムアウト（5秒）
 const MAX_ICE_RESTART_ATTEMPTS = 5;  // ICE Restart 最大試行回数
+const OFFER_TIMEOUT = 30000;  // Offer待ちタイムアウト（30秒）
 
 // ダッシュボード設定
 const DASH_PASSWORD = process.env.DASH_PASSWORD || 'admin';
@@ -840,6 +841,14 @@ class StreamServer {
             vapidPublicKey: VAPID_PUBLIC_KEY || null
         });
 
+        // Offer待ちタイムアウト（WebSocket接続後、Offerが来ない場合に切断）
+        client.offerTimeout = setTimeout(() => {
+            if (!client.pc) {
+                log(`${client.displayName}: No offer received within ${OFFER_TIMEOUT/1000}s, closing connection`);
+                client.ws.close(1000, 'Offer timeout');
+            }
+        }, OFFER_TIMEOUT);
+
         // メッセージハンドラ
         ws.on('message', async (data) => {
             try {
@@ -982,6 +991,12 @@ class StreamServer {
 
     // WebRTC Offer処理
     async handleOffer(client, sdp) {
+        // Offer待ちタイムアウトをクリア
+        if (client.offerTimeout) {
+            clearTimeout(client.offerTimeout);
+            client.offerTimeout = null;
+        }
+
         const config = {
             iceServers: iceServers.map(s => ({ urls: s.urls })),
             headerExtensions: {
@@ -1120,6 +1135,15 @@ class StreamServer {
             });
 
             log(`ICE restart answer sent to ${client.displayName}`);
+
+            // ICE Restart Answer送信後、新しいタイムアウトタイマーを設定
+            // （接続が回復しない場合に備える）
+            client.iceRestartTimer = setTimeout(() => {
+                if (client.pc?.connectionState !== 'connected') {
+                    log(`${client.displayName}: ICE restart timeout after answer, closing WebSocket`);
+                    client.ws.close(1000, 'ICE restart timeout');
+                }
+            }, ICE_RESTART_TIMEOUT);
         } catch (e) {
             logError(`ICE restart failed for ${client.displayName}: ${e.message}`);
             client.iceRestartInProgress = false;
@@ -1199,10 +1223,18 @@ class StreamServer {
     handleDisconnect(client) {
         log(`Client disconnected: ${client.displayName}`);
 
-        // disconnectedタイマークリア
+        // 各種タイマークリア
         if (client.disconnectTimer) {
             clearTimeout(client.disconnectTimer);
             client.disconnectTimer = null;
+        }
+        if (client.offerTimeout) {
+            clearTimeout(client.offerTimeout);
+            client.offerTimeout = null;
+        }
+        if (client.iceRestartTimer) {
+            clearTimeout(client.iceRestartTimer);
+            client.iceRestartTimer = null;
         }
 
         // PTT解放
