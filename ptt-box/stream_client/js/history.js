@@ -12,10 +12,14 @@ let isRefreshing = false;
 // タブ切り替え
 function switchTab(tabName) {
     // タブボタンのアクティブ状態を更新
-    document.querySelectorAll('.tab-btn').forEach(btn => {
+    document.querySelectorAll('.tab-btn').forEach((btn, index) => {
         btn.classList.remove('active');
+        // タブ名に対応するボタンをアクティブに
+        const tabNames = ['transceiver', 'history', 'admin'];
+        if (tabNames[index] === tabName) {
+            btn.classList.add('active');
+        }
     });
-    event.target.classList.add('active');
 
     // タブコンテンツの表示を切り替え
     document.querySelectorAll('.tab-content').forEach(content => {
@@ -32,6 +36,17 @@ function switchTab(tabName) {
         if (!iframe.src || iframe.src === '' || iframe.src === window.location.href) {
             iframe.src = '/dash/';
         }
+    }
+}
+
+// URLパラメータからタブを初期化
+function initTabFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    if (tab && ['transceiver', 'history', 'admin'].includes(tab)) {
+        switchTab(tab);
+        // URLをクリーンに（パラメータを削除）
+        history.replaceState(null, '', window.location.pathname);
     }
 }
 
@@ -170,6 +185,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Pull-to-Refresh 初期化
     initPullToRefresh();
+
+    // URLパラメータからタブを初期化
+    initTabFromUrl();
 });
 
 // Pull-to-Refresh 初期化

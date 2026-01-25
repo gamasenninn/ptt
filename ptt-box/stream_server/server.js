@@ -255,6 +255,10 @@ class StreamServer {
         this.app.use(express.static(clientPath));
         log(`Static files: ${clientPath}`);
 
+        // タブ直接アクセス用リダイレクト
+        this.app.get('/history', (req, res) => res.redirect('/?tab=history'));
+        this.app.get('/admin', (req, res) => res.redirect('/?tab=admin'));
+
         // JSONパーサー
         this.app.use(express.json());
 
