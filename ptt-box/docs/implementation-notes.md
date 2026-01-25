@@ -25,23 +25,40 @@ stream_client/
 
 ## WebRTC実装の知見
 
-### 1. TURN/STUNサーバー設定
+### 1. STUN/TURNサーバー設定
 
-モバイル回線や企業ネットワークでは直接接続できないことが多い。TURN必須。
+#### 現在の実装（STUNのみ）
 
-```python
-ice_servers = [
-    RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
-    RTCIceServer(
-        urls=[
-            f"turn:{TURN_SERVER}?transport=udp",
-            f"turn:{TURN_SERVER}?transport=tcp",
-            f"turns:{TURN_SERVER}?transport=tcp",
-        ],
-        username=TURN_USERNAME,
-        credential=TURN_PASSWORD
-    )
-]
+```javascript
+// server.js
+const STUN_SERVER = process.env.STUN_SERVER || 'stun:stun.l.google.com:19302';
+const iceServers = [{ urls: STUN_SERVER }];
+```
+
+Google公開STUNサーバーを使用。家庭/小規模オフィスのNAT環境では十分動作する。
+
+#### TURNが必要になるケース
+
+| NAT種類 | STUN | TURN | よくある場所 |
+|---------|------|------|-------------|
+| Full Cone | ✓ | ✓ | 家庭用ルーター |
+| Restricted Cone | ✓ | ✓ | 家庭用ルーター |
+| Port Restricted | ✓ | ✓ | 一般的なルーター |
+| **Symmetric** | ✗ | ✓ | 企業、一部モバイル回線 |
+
+「接続できない」報告があった場合はTURN実装を検討。ExpressTURN等の有料サービスか、自前でcoturnサーバーを構築する。
+
+#### 参考: TURN実装例（未実装）
+
+```javascript
+// 将来実装する場合
+if (process.env.TURN_SERVER) {
+    iceServers.push({
+        urls: `turn:${process.env.TURN_SERVER}`,
+        username: process.env.TURN_USERNAME,
+        credential: process.env.TURN_PASSWORD
+    });
+}
 ```
 
 ### 2. ICE Gathering待機
@@ -747,3 +764,51 @@ const stream = await navigator.mediaDevices.getUserMedia({
 ```
 
 これらはブラウザ/デバイスによって品質が異なるが、追加のライブラリ（RNNoise等）なしで基本的なノイズ対策が可能。
+
+---
+
+## トラブルシューティング
+
+### uv + クラウドストレージ（OneDrive等）でのハードリンクエラー
+
+#### 症状
+
+```
+[audio_output] error: Failed to install: certifi-2025.11.12-py3-none-any.whl
+Caused by: failed to hardlink file from C:\Users\...\uv\cache\... to C:\app\ptt\.venv\...
+クラウド操作は、互換性のないハードリンクのファイルでは実行できません。 (os error 396)
+Python audio closed (code: 2)
+```
+
+`audio_output.py` が起動直後にクラッシュし、アナログトランシーバーへの音声出力が機能しなくなる。
+
+#### 原因
+
+1. プロジェクトがクラウド同期フォルダ（OneDrive, Dropbox等）にある
+2. `pyproject.toml` 編集後に `uv sync` が実行される
+3. uv はデフォルトでキャッシュから `.venv` へハードリンクを作成
+4. クラウドストレージはハードリンクをサポートしない
+5. パッケージが不完全な状態で残る（例: `certifi/py.typed` 欠落）
+6. 以降、毎回 `uv run` で修復を試みて失敗
+
+#### 解決方法
+
+```powershell
+# 1. 壊れたパッケージを削除
+Remove-Item -Recurse -Force C:\app\ptt\.venv\Lib\site-packages\certifi
+
+# 2. コピーモードで再インストール
+$env:UV_LINK_MODE="copy"
+cd C:\app\ptt
+uv sync --all-packages
+```
+
+#### 恒久対策
+
+システム環境変数に `UV_LINK_MODE=copy` を設定：
+
+1. 「システム環境変数を編集」を開く
+2. 「環境変数」→「ユーザー環境変数」→「新規」
+3. 変数名: `UV_LINK_MODE`、値: `copy`
+
+これにより uv はハードリンクの代わりにファイルコピーを使用する。
