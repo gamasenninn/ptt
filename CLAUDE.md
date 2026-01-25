@@ -302,9 +302,6 @@ uv run python ptt-box/vox_ptt_record.py
 # 文字起こし (faster-whisper)
 uv run python ptt-box/transcriber.py
 
-# FTPアップロード
-uv run python ptt-box/uploader.py
-
 # デバイス一覧
 uv run python ptt-box/list_devices.py
 ```

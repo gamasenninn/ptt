@@ -96,8 +96,7 @@ ptt-box/
 ├── docs/               # 詳細ドキュメント
 ├── recordings/         # WAV/SRTファイル
 ├── transcriber.py      # 文字起こし (Whisper)
-├── vox_ptt_record.py   # VOX録音
-└── uploader.py         # FTPアップロード
+└── vox_ptt_record.py   # VOX録音
 ```
 
 ## Usage
