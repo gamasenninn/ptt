@@ -1577,6 +1577,7 @@ class StreamServer {
             '-flags', 'low_delay',
             // 入力デバイス
             '-f', 'dshow',
+            '-sample_rate', String(SAMPLE_RATE),  // 入力サンプルレート明示
             '-audio_buffer_size', '50',  // 50msバッファ（20msだと音割れ）
             '-i', `audio=${MIC_DEVICE}`,
             // 出力設定
