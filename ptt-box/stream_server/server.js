@@ -82,7 +82,7 @@ const SAMPLE_RATE = 48000;
 const CHANNELS = 1;
 const FRAME_DURATION_MS = 20;
 const OPUS_PAYLOAD_TYPE = 111;
-const OUTPUT_GAIN_DB = 6;  // 6dB boost
+const OUTPUT_GAIN_DB = parseFloat(process.env.OUTPUT_GAIN_DB) || 6;  // スピーカー出力ゲイン (dB)
 
 // ICE設定
 const iceServers = [{ urls: STUN_SERVER }];
