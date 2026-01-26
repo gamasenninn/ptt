@@ -812,3 +812,34 @@ uv sync --all-packages
 3. 変数名: `UV_LINK_MODE`、値: `copy`
 
 これにより uv はハードリンクの代わりにファイルコピーを使用する。
+
+---
+
+### FFmpegマイクキャプチャの音声速度異常（0.5倍速など）
+
+#### 症状
+
+アナログ無線機からの音声がWebトランシーバーで遅く再生される（0.5倍速のように聞こえる）。
+
+#### 原因
+
+FFmpegがdshow入力デバイスのサンプルレートを正しく検出できず、誤ったレートでキャプチャしている。
+
+#### 解決方法
+
+FFmpegコマンドに入力サンプルレートを明示：
+
+```javascript
+// server.js - startMicCapture()
+this.ffmpegProcess = spawn('ffmpeg', [
+    '-f', 'dshow',
+    '-sample_rate', '48000',  // ← 追加: 入力サンプルレート明示
+    '-audio_buffer_size', '50',
+    '-i', `audio=${MIC_DEVICE}`,
+    // ...
+]);
+```
+
+#### 補足
+
+Windowsのサウンド設定で、マイクデバイスの既定の形式が48000Hzに設定されていることも確認すると良い。
