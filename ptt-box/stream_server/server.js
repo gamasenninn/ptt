@@ -34,6 +34,7 @@ const HTTP_PORT = parseInt(process.env.HTTP_PORT) || 9320;
 const PTT_TIMEOUT = process.env.PTT_TIMEOUT !== undefined ? parseInt(process.env.PTT_TIMEOUT) : 300000;  // 5分（0で無効化）
 const STUN_SERVER = process.env.STUN_SERVER || 'stun:stun.l.google.com:19302';
 const MIC_DEVICE = process.env.MIC_DEVICE || 'CABLE Output (VB-Audio Virtual Cable)';
+const MIC_VOLUME = parseFloat(process.env.MIC_VOLUME) || 1.0;  // マイク音量倍率（デフォルト1.0）
 const SPEAKER_DEVICE = process.env.SPEAKER_DEVICE || '';  // 空の場合はシステムデフォルト（ffplay用）
 const SPEAKER_DEVICE_ID = process.env.SPEAKER_DEVICE_ID || '0';  // デバイスID（Python用）
 const USE_PYTHON_AUDIO = process.env.USE_PYTHON_AUDIO === 'true';  // Python音声出力を使用
@@ -1580,6 +1581,8 @@ class StreamServer {
             '-sample_rate', String(SAMPLE_RATE),  // 入力サンプルレート明示
             '-audio_buffer_size', '50',  // 50msバッファ（20msだと音割れ）
             '-i', `audio=${MIC_DEVICE}`,
+            // 音量調整
+            '-af', `volume=${MIC_VOLUME}`,  // 環境変数で設定可能
             // 出力設定
             '-ac', String(CHANNELS),
             '-ar', String(SAMPLE_RATE),
