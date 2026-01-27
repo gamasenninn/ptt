@@ -1,7 +1,7 @@
 # stream_server / stream_client コードレビュー
 
 **レビュー日**: 2026-01-18
-**更新日**: 2026-01-18
+**更新日**: 2026-01-27
 **対象**: WebRTC/WebSocket 周りを中心としたバグ、無駄なコード、最適化可能性
 
 ---
@@ -10,8 +10,8 @@
 
 | カテゴリ | HIGH | MEDIUM | LOW | FIXED | N/A |
 |---------|------|--------|-----|-------|-----|
-| server.js | 4 | 6 | 5 | 3 | 1 |
-| stream_client | 1 | 5 | 4 | 3 | 0 |
+| server.js | 3 | 6 | 5 | 3 | 2 |
+| stream_client | 0 | 5 | 4 | 3 | 1 |
 
 ---
 
@@ -19,17 +19,21 @@
 
 ### HIGH Priority Issues
 
-#### 1.1 P2P接続削除時のレースコンディション
-**場所**: 1191-1196行目
+#### 1.1 P2P接続削除時のレースコンディション ⚪ N/A
+**場所**: 1279, 1422, 1439行目付近
+**確認日**: 2026-01-27
 
 ```javascript
-p2pConnections.delete(peerId visibleId visibleIdvisibleId);
-// 複数の非同期操作が同じMapを同時に変更する可能性
+this.p2pConnections.delete(client.clientId);
+// 複数箇所から呼ばれる可能性
 ```
 
-**問題**: `p2pConnections.delete()` が複数箇所から呼ばれ、同時アクセスでMapの整合性が崩れる可能性がある。
+**当初の懸念**: `p2pConnections.delete()` が複数箇所から呼ばれ、同時アクセスでMapの整合性が崩れる可能性。
 
-**推奨修正**: 削除前に存在チェックを追加し、ログで追跡可能にする。
+**確認結果**:
+- Node.jsはシングルスレッドのため、真の同時アクセスは発生しない
+- `Map.delete()` は存在しないキーに対しても安全に動作する（エラーにならない）
+- 複数箇所からの呼び出しは問題なく処理される
 
 ---
 
@@ -292,26 +296,29 @@ pc.addEventListener('iceconnectionstatechange', () => { ... });
 
 ---
 
-#### 2.3 pendingP2PConnectionsカウンターのレースコンディション
-**場所**: 1490-1510行目
+#### 2.3 pendingP2PConnectionsカウンターのレースコンディション ⚪ N/A
+**場所**: 1611, 1749-1766行目付近
+**確認日**: 2026-01-27
 
+**当初の懸念**: `pendingP2PConnections++/--` パターンで例外発生時にデクリメントされない可能性。
+
+**確認結果**: 実装が変更されており、問題は解消されている。
+
+現在の実装:
 ```javascript
-pendingP2PConnections++;
-// ... 非同期処理 ...
-pendingP2PConnections--;
-```
+// handleClientList() - 値を直接設定（++ではない）
+pendingP2PConnections = newClients.length;
 
-**問題**: 例外発生時にデクリメントされない可能性がある。
-
-**推奨修正**:
-```javascript
-pendingP2PConnections++;
-try {
-    // ... 処理
-} finally {
+// onconnectionstatechange - ガード付きデクリメント
+if (pendingP2PConnections > 0) {
     pendingP2PConnections--;
 }
 ```
+
+セーフティネット:
+- `> 0` チェックで二重デクリメントを防止
+- 10秒タイムアウトで強制リセット (`startP2PConnectionTimeout()`)
+- `cleanupConnection()` で `= 0` リセット
 
 ---
 
@@ -426,7 +433,7 @@ const BASE_RECONNECT_DELAY = 2000;
 ### 短期対応（安定性）
 3. PTT状態の非アトミック操作修正 (1.3)
 4. ~~メモリリーク修正 (1.8, 2.1, 2.2, 2.5)~~ ✅ 修正済み（コミット `0bd9a81`）
-5. レースコンディション修正 (1.1, 2.3)
+5. ~~レースコンディション修正 (1.1, 2.3)~~ ⚪ N/A（実装変更で問題解消、2026-01-27確認）
 
 ### 中期対応（品質向上）
 6. エラーハンドリング統一
@@ -493,4 +500,15 @@ WebSocket heartbeat タイムアウト時に、既に閉じられた接続に対
 **実施した修正**: `terminate()` 呼び出し前に `readyState === WebSocket.OPEN` をチェック
 
 **テスト結果**: 60テスト全て合格（デグレードなし）
+
+### 2026-01-27: レースコンディション項目のN/A確認
+
+コードレビュー時に指摘されていた2件のレースコンディション問題を実コードで検証。
+
+| 項目 | 確認結果 |
+|------|----------|
+| 1.1 P2P接続削除 | Node.jsシングルスレッドのため同時アクセスなし。`Map.delete()` は存在しないキーでも安全 |
+| 2.3 pendingP2Pカウンタ | 実装が `++/--` から値の直接設定に変更済み。タイムアウトによるセーフティネットあり |
+
+**結論**: 両項目ともN/A（実装変更で問題解消）
 
