@@ -907,17 +907,27 @@ class StreamServer {
 
             case 'set_display_name':
                 if (msg.displayName && msg.displayName !== client.displayName) {
-                    const oldName = client.displayName;
-                    client.displayName = msg.displayName;
-                    log(`Display name changed: ${oldName} → ${client.displayName}`);
-
-                    // 同じ名前の古い接続を閉じる（モバイル再接続で新clientIdが発行された場合）
+                    // ユニークチェック: 他の接続中クライアントに同名がないか
+                    let nameTaken = false;
                     for (const [otherId, otherClient] of this.clients) {
                         if (otherId !== client.clientId &&
                             otherClient.displayName === msg.displayName) {
-                            log(`Closing stale connection: ${otherId} (replaced by ${client.clientId})`);
-                            otherClient.ws.close(1000, 'Replaced by new connection');
+                            nameTaken = true;
+                            break;
                         }
+                    }
+
+                    if (nameTaken) {
+                        client.send({
+                            type: 'display_name_error',
+                            error: 'name_taken',
+                            displayName: msg.displayName
+                        });
+                        log(`Display name rejected: ${msg.displayName} (already in use)`);
+                    } else {
+                        const oldName = client.displayName;
+                        client.displayName = msg.displayName;
+                        log(`Display name changed: ${oldName} → ${client.displayName}`);
                     }
                 }
                 break;

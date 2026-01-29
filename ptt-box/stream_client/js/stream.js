@@ -26,6 +26,7 @@ const PLAYOUT_DELAY_HINT = 0.1;  // 100ms（遅延と安定性のバランス）
 let myClientId = null;
 let localStream = null;  // マイク音声ストリーム
 let rawMicStream = null;  // 生のマイク入力（クリーンアップ用）
+let previousDisplayName = null;  // 名前変更のロールバック用
 let isPttActive = false;  // PTTボタンが押されているか
 let pttState = 'idle';  // idle, transmitting, receiving
 let micAccessGranted = false;
@@ -382,6 +383,21 @@ async function connect() {
             } else if (data.type === 'p2p_ice_candidate') {
                 // P2P ICE候補受信
                 handleP2PIceCandidate(data.from, data.candidate);
+            } else if (data.type === 'display_name_error') {
+                debugLog('Display name rejected: ' + data.displayName + ' (' + data.error + ')');
+                // localStorageをロールバック
+                if (previousDisplayName !== null) {
+                    localStorage.setItem('ptt_display_name', previousDisplayName);
+                    const input = document.getElementById('displayNameInput');
+                    if (input) input.value = previousDisplayName;
+                    previousDisplayName = null;
+                }
+                // ヒントテキストにエラー表示
+                const hint = document.getElementById('displayNameHint');
+                if (hint) {
+                    hint.textContent = 'この名前は使用中です';
+                    hint.style.color = '#f87171';
+                }
             }
         };
 
@@ -1166,8 +1182,10 @@ function saveDisplayName() {
 
     const name = input.value.trim();
     if (name) {
+        // ロールバック用に旧名を保存
+        previousDisplayName = localStorage.getItem('ptt_display_name') || '';
         localStorage.setItem('ptt_display_name', name);
-        // サーバーに通知
+        // サーバーに通知（サーバー側でユニークチェック）
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
                 type: 'set_display_name',
