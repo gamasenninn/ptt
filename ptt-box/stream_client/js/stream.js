@@ -1,5 +1,26 @@
 // WebRTC Audio Stream Client with PTT
 
+// 重複タブ検出 (BroadcastChannel)
+const tabChannel = (() => {
+    try { return new BroadcastChannel('ptt-instance'); }
+    catch (e) { return null; }  // 非対応ブラウザ
+})();
+let blockedByDuplicateTab = false;
+
+if (tabChannel) {
+    tabChannel.onmessage = (event) => {
+        if (event.data.type === 'check') {
+            // 別タブからの問い合わせ → 接続中なら応答
+            if (ws) {
+                tabChannel.postMessage({ type: 'active' });
+            }
+        } else if (event.data.type === 'active') {
+            // 別タブが接続中
+            blockedByDuplicateTab = true;
+        }
+    };
+}
+
 let ws = null;
 let pc = null;
 let audioContext = null;
@@ -281,6 +302,9 @@ function updateConnectionToggle(state) {
         case 'connected':
             text.textContent = '接続済み - タップで切断';
             break;
+        case 'blocked':
+            text.textContent = '別のタブで接続中です - タップで再試行';
+            break;
     }
 }
 
@@ -293,6 +317,19 @@ async function connect() {
     if (ws && ws.readyState === WebSocket.CONNECTING) {
         debugLog('Already connecting');
         return;
+    }
+
+    // 重複タブチェック
+    if (tabChannel) {
+        blockedByDuplicateTab = false;
+        tabChannel.postMessage({ type: 'check' });
+        await new Promise(r => setTimeout(r, 200));
+        if (blockedByDuplicateTab) {
+            debugLog('Blocked: another tab is already connected');
+            autoReconnect = false;
+            updateConnectionToggle('blocked');
+            return;
+        }
     }
 
     autoReconnect = true;  // 接続時は自動再接続を有効化

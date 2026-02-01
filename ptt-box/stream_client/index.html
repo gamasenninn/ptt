@@ -63,6 +63,10 @@
             background: #5c4d1a !important;
             color: #f4f1de;
         }
+        .connection-toggle.blocked {
+            background: #4a1942 !important;
+            color: #e8b4d8;
+        }
         .connection-indicator {
             width: 10px;
             height: 10px;
@@ -72,6 +76,7 @@
         .connecting .connection-indicator { background: #f4f1de; animation: pulse 1s infinite; }
         .connected .connection-indicator { background: #95d5b2; }
         .preparing .connection-indicator { background: #f4f1de; animation: pulse 1s infinite; }
+        .blocked .connection-indicator { background: #e8b4d8; }
         button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close) {
             background: #e94560;
             color: white;
