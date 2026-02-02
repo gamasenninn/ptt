@@ -47,6 +47,7 @@ const ENABLE_RELAY = process.env.ENABLE_RELAY !== 'false';  // デフォルト�
 const ICE_RESTART_TIMEOUT = parseInt(process.env.ICE_RESTART_TIMEOUT) || 5000;  // ICE Restart タイムアウト（5秒）
 const MAX_ICE_RESTART_ATTEMPTS = 5;  // ICE Restart 最大試行回数
 const OFFER_TIMEOUT = 10000;  // Offer待ちタイムアウト（10秒）
+const FFMPEG_RESTART_HOURS = parseFloat(process.env.FFMPEG_RESTART_HOURS) || 0;  // FFmpeg定期再起動（時間、0=無効）
 
 // ダッシュボード設定
 const DASH_PASSWORD = process.env.DASH_PASSWORD || 'admin';
@@ -228,6 +229,14 @@ class StreamServer {
         this.rtpTimestamp = 0;
         this.rtpSsrc = Math.floor(Math.random() * 0xFFFFFFFF);
 
+        // FFmpegドリフト計測
+        this.ffmpegStartTime = 0;
+        this.ffmpegRestartCount = 0;
+        this.avgFrameGap = 0;        // フレーム間隔のEMA (ms)
+        this.activeFrameCount = 0;   // DTX除外のアクティブフレーム数
+        this.lastFrameTime = 0;      // 直前フレームの時刻
+        this.oggParserBufferSize = 0; // OGGパーサーバッファサイズ
+
         // 音声出力（スピーカー）
         this.speakerProcess = null;
         this.oggInitialized = false;
@@ -316,7 +325,35 @@ class StreamServer {
             if (p2pStates.length > 0) {
                 log(`[Monitor] P2P: ${p2pStates.join(', ')}`);
             }
+
+            // 音声健全性ログ
+            if (this.ffmpegProcess && this.activeFrameCount > 100) {
+                const ffmpegUptime = Math.round((Date.now() - this.ffmpegStartTime) / 60000);
+                const gapMs = this.avgFrameGap.toFixed(2);
+                const driftPpm = Math.round(((this.avgFrameGap / 20) - 1) * 1000000);
+                log(`[Audio] gap=${gapMs}ms, drift=${driftPpm > 0 ? '+' : ''}${driftPpm}ppm, buffer=${this.oggParserBufferSize}B, ffmpeg_uptime=${ffmpegUptime}min`);
+
+                if (Math.abs(driftPpm) > 2000 && FFMPEG_RESTART_HOURS > 0) {
+                    log(`[Audio] WARNING: drift=${driftPpm}ppm exceeds 2000ppm, triggering FFmpeg restart`);
+                    this.restartMicCapture('drift');
+                } else if (Math.abs(driftPpm) > 500) {
+                    log(`[Audio] WARNING: drift=${driftPpm}ppm exceeds 500ppm (${(driftPpm * 3.6 / 1000).toFixed(1)}s/hour accumulation)`);
+                }
+            }
         }, 300000);  // 5分ごと
+
+        // FFmpeg定期再起動チェック（5分ごと）
+        if (FFMPEG_RESTART_HOURS > 0) {
+            setInterval(() => {
+                if (this.ffmpegProcess && this.ffmpegStartTime) {
+                    const elapsed = Date.now() - this.ffmpegStartTime;
+                    if (elapsed >= FFMPEG_RESTART_HOURS * 3600000) {
+                        log(`FFmpeg periodic restart (${FFMPEG_RESTART_HOURS}h elapsed)`);
+                        this.restartMicCapture('periodic');
+                    }
+                }
+            }, 300000);  // 5分ごとにチェック
+        }
 
         // マイクキャプチャのハング検知（10秒ごと）
         setInterval(() => {
@@ -516,7 +553,15 @@ class StreamServer {
                     },
                     clientCount: this.clients.size,
                     p2pCount: this.p2pConnections.size,
-                    speakerProcess: this.speakerProcess ? 'running' : 'stopped'
+                    speakerProcess: this.speakerProcess ? 'running' : 'stopped',
+                    audio: {
+                        ffmpegRunning: !!this.ffmpegProcess,
+                        ffmpegUptimeMin: this.ffmpegStartTime ? Math.round((Date.now() - this.ffmpegStartTime) / 60000) : 0,
+                        ffmpegRestartCount: this.ffmpegRestartCount,
+                        avgFrameGapMs: parseFloat(this.avgFrameGap.toFixed(2)),
+                        driftPpm: this.avgFrameGap > 0 ? Math.round(((this.avgFrameGap / 20) - 1) * 1000000) : 0,
+                        oggBufferSize: this.oggParserBufferSize
+                    }
                 }
             });
         });
@@ -1607,6 +1652,12 @@ class StreamServer {
         this.micStoppedIntentionally = false;
         this.lastMicDataTime = Date.now();
 
+        // ドリフト計測リセット
+        this.ffmpegStartTime = Date.now();
+        this.avgFrameGap = 0;
+        this.activeFrameCount = 0;
+        this.lastFrameTime = 0;
+
         this.ffmpegProcess = spawn('ffmpeg', [
             // 入力の低遅延設定
             '-fflags', '+nobuffer+flush_packets',
@@ -1668,6 +1719,39 @@ class StreamServer {
         }
     }
 
+    restartMicCapture(reason) {
+        log(`Restarting FFmpeg (reason: ${reason})`);
+        this.ffmpegRestartCount++;
+        this.stopMicCapture();
+
+        // RTPタイムスタンプ・シーケンスをリセット（ブラウザのジッタバッファがリシンク）
+        this.rtpSequence = 0;
+        this.rtpTimestamp = 0;
+
+        setTimeout(() => {
+            this.micStoppedIntentionally = false;
+            this.startMicCapture();
+        }, 100);
+    }
+
+    measureFrameGap() {
+        const now = Date.now();
+        if (this.lastFrameTime > 0) {
+            const gap = now - this.lastFrameTime;
+            // DTX除外: 100ms超はDTXによる無音スキップとみなす
+            if (gap < 100) {
+                this.activeFrameCount++;
+                if (this.avgFrameGap === 0) {
+                    this.avgFrameGap = gap;
+                } else {
+                    // 指数移動平均 (α=0.001, 時定数≈1000フレーム≈20秒)
+                    this.avgFrameGap = this.avgFrameGap * 0.999 + gap * 0.001;
+                }
+            }
+        }
+        this.lastFrameTime = now;
+    }
+
     parseOggStream(stream) {
         let buffer = Buffer.alloc(0);
         let headersParsed = false;
@@ -1701,12 +1785,15 @@ class StreamServer {
                         // Skip headers
                     } else {
                         headersParsed = true;
+                        this.measureFrameGap();
                         this.sendOpusToClients(payload);
                     }
                 } else {
+                    this.measureFrameGap();
                     this.sendOpusToClients(payload);
                 }
 
+                this.oggParserBufferSize = buffer.length - pageSize;
                 buffer = buffer.slice(pageSize);
             }
         });
@@ -2291,6 +2378,9 @@ if (require.main === module) {
 
     // 起動ログ
     log('Server started');
+    if (FFMPEG_RESTART_HOURS > 0) {
+        log(`FFmpeg periodic restart: every ${FFMPEG_RESTART_HOURS}h`);
+    }
 
     // サーバーマイクモード表示とキーボード制御
     if (ENABLE_SERVER_MIC) {
