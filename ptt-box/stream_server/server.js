@@ -35,6 +35,7 @@ const PTT_TIMEOUT = process.env.PTT_TIMEOUT !== undefined ? parseInt(process.env
 const STUN_SERVER = process.env.STUN_SERVER || 'stun:stun.l.google.com:19302';
 const MIC_DEVICE = process.env.MIC_DEVICE || 'CABLE Output (VB-Audio Virtual Cable)';
 const MIC_VOLUME = parseFloat(process.env.MIC_VOLUME) || 1.0;  // マイク音量倍率（デフォルト1.0）
+const MIC_SAMPLE_RATE = parseInt(process.env.MIC_SAMPLE_RATE) || 48000;  // マイク入力サンプルレート
 const SPEAKER_DEVICE = process.env.SPEAKER_DEVICE || '';  // 空の場合はシステムデフォルト（ffplay用）
 const SPEAKER_DEVICE_ID = process.env.SPEAKER_DEVICE_ID || '0';  // デバイスID（Python用）
 const USE_PYTHON_AUDIO = process.env.USE_PYTHON_AUDIO === 'true';  // Python音声出力を使用
@@ -1664,7 +1665,7 @@ class StreamServer {
             '-flags', 'low_delay',
             // 入力デバイス
             '-f', 'dshow',
-            '-sample_rate', String(SAMPLE_RATE),  // 入力サンプルレート明示
+            '-sample_rate', String(MIC_SAMPLE_RATE),  // 入力サンプルレート（デバイスの実レートに合わせる）
             '-audio_buffer_size', '50',  // 50msバッファ（20msだと音割れ）
             '-i', `audio=${MIC_DEVICE}`,
             // 音量調整
@@ -2378,6 +2379,9 @@ if (require.main === module) {
 
     // 起動ログ
     log('Server started');
+    if (MIC_SAMPLE_RATE !== SAMPLE_RATE) {
+        log(`Mic input: ${MIC_SAMPLE_RATE}Hz → resampling to ${SAMPLE_RATE}Hz`);
+    }
     if (FFMPEG_RESTART_HOURS > 0) {
         log(`FFmpeg periodic restart: every ${FFMPEG_RESTART_HOURS}h`);
     }
