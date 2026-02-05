@@ -373,8 +373,11 @@ class StreamServer {
                 if (elapsed > 10000) {
                     log(`Mic capture appears hung (no data for ${Math.round(elapsed / 1000)}s), restarting...`);
                     this.stopMicCapture();
-                    this.micStoppedIntentionally = false;  // 再起動を許可
-                    this.startMicCapture();
+                    // USBデバイス解放を待ってから再起動（即時再起動するとdshow交渉が不安定になる）
+                    setTimeout(() => {
+                        this.micStoppedIntentionally = false;
+                        this.startMicCapture();
+                    }, 100);
                 }
             }
         }, 10000);  // 10秒ごと
