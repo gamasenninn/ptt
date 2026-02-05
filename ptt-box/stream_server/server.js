@@ -334,7 +334,17 @@ class StreamServer {
                 const driftPpm = Math.round(((this.avgFrameGap / 20) - 1) * 1000000);
                 log(`[Audio] gap=${gapMs}ms, drift=${driftPpm > 0 ? '+' : ''}${driftPpm}ppm, buffer=${this.oggParserBufferSize}B, ffmpeg_uptime=${ffmpegUptime}min`);
 
-                if (Math.abs(driftPpm) > 2000 && FFMPEG_RESTART_HOURS > 0) {
+                // gap異常検出（サンプルレート誤検出の可能性）
+                // 正常範囲: 18-23ms (期待値20ms ± 15%)
+                // 異常例: 11ms → 88200Hz誤検出、44ms → 22050Hz誤検出
+                if (this.avgFrameGap < 15 || this.avgFrameGap > 26) {
+                    log(`[Audio] CRITICAL: gap=${gapMs}ms is abnormal (expected ~20ms), possible sample rate mismatch!`);
+                    // 異常なgapは常に再起動（サンプルレート誤検出はFFmpeg再起動で回復する可能性）
+                    if (ffmpegUptime >= 1) {  // 起動直後の不安定期間を除外
+                        log(`[Audio] Triggering FFmpeg restart due to abnormal gap`);
+                        this.restartMicCapture('abnormal_gap');
+                    }
+                } else if (Math.abs(driftPpm) > 2000 && FFMPEG_RESTART_HOURS > 0) {
                     log(`[Audio] WARNING: drift=${driftPpm}ppm exceeds 2000ppm, triggering FFmpeg restart`);
                     this.restartMicCapture('drift');
                 } else if (Math.abs(driftPpm) > 500) {
@@ -1686,6 +1696,17 @@ class StreamServer {
             'pipe:1'
         ], {
             stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        // FFmpegのstderrをログに出力（サンプルレート交渉の確認用）
+        this.ffmpegProcess.stderr.on('data', (data) => {
+            const lines = data.toString().trim().split('\n');
+            for (const line of lines) {
+                // 入力フォーマット情報をログ出力
+                if (line.includes('Input') || line.includes('Stream') || line.includes('Audio:') || line.includes('Hz')) {
+                    log(`[FFmpeg] ${line.trim()}`);
+                }
+            }
         });
 
         this.ffmpegProcess.on('error', (err) => {
