@@ -45,7 +45,7 @@ const SERVER_MIC_MODE = process.env.SERVER_MIC_MODE || 'always';  // 'always' or
 const RELAY_PORT = process.env.RELAY_PORT || 'COM3';
 const RELAY_BAUD_RATE = parseInt(process.env.RELAY_BAUD_RATE) || 9600;
 const ENABLE_RELAY = process.env.ENABLE_RELAY !== 'false';  // デフォルト有効
-const ICE_RESTART_TIMEOUT = parseInt(process.env.ICE_RESTART_TIMEOUT) || 5000;  // ICE Restart タイムアウト（5秒）
+const ICE_RESTART_TIMEOUT = parseInt(process.env.ICE_RESTART_TIMEOUT) || 10000;  // ICE Restart タイムアウト（10秒）
 const MAX_ICE_RESTART_ATTEMPTS = 5;  // ICE Restart 最大試行回数
 const OFFER_TIMEOUT = 10000;  // Offer待ちタイムアウト（10秒）
 const FFMPEG_RESTART_HOURS = parseFloat(process.env.FFMPEG_RESTART_HOURS) || 0;  // FFmpeg定期再起動（時間、0=無効）
@@ -1498,7 +1498,7 @@ class StreamServer {
         this.p2pConnections.set(client.clientId, connInfo);
 
         // 接続状態
-        const P2P_CLEANUP_TIMEOUT = 10000;  // 10秒（メインICE restart 5秒より長め）
+        const P2P_CLEANUP_TIMEOUT = 15000;  // 15秒（クライアントICE restart 10秒より長め）
         p2pPc.onconnectionstatechange = () => {
             log(`P2P to ${client.displayName}: ${p2pPc.connectionState}`);
 
@@ -1507,7 +1507,7 @@ class StreamServer {
                 if (connInfo.cleanupTimer) {
                     clearTimeout(connInfo.cleanupTimer);
                 }
-                // 10秒後にクリーンアップ（ICE restart猶予期間）
+                // 15秒後にクリーンアップ（ICE restart猶予期間）
                 connInfo.cleanupTimer = setTimeout(() => {
                     if (this.p2pConnections.has(client.clientId) &&
                         p2pPc.connectionState !== 'connected') {

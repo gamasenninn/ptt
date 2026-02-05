@@ -38,10 +38,10 @@ let wakeLock = null;  // スクリーンロック防止
 // ICE Restart関連
 let iceRestartInProgress = false;
 let iceRestartTimer = null;
-const ICE_RESTART_TIMEOUT = 5000;  // 5秒
+const ICE_RESTART_TIMEOUT = 10000;  // 10秒（基地局ハンドオフの猶予延長）
 
 // 音声バッファ設定（モバイル回線のジッター対策）
-const PLAYOUT_DELAY_HINT = 0.1;  // 100ms（遅延と安定性のバランス）
+const PLAYOUT_DELAY_HINT = 0.2;  // 200ms（基地局ハンドオフ時のジッター吸収）
 
 // PTT関連
 let myClientId = null;
@@ -1731,6 +1731,7 @@ async function createP2PConnection(remoteClientId, isOfferer) {
         // ジッターバッファを広げる（モバイル回線対策）
         if (event.receiver && event.receiver.playoutDelayHint !== undefined) {
             event.receiver.playoutDelayHint = PLAYOUT_DELAY_HINT;
+            debugLog('P2P playout delay set: ' + PLAYOUT_DELAY_HINT + 's');
         }
 
         // 音声再生用要素を作成
