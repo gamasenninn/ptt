@@ -96,8 +96,7 @@ ptt-box/
 ├── docs/               # 詳細ドキュメント
 ├── recordings/         # WAV/SRTファイル
 ├── transcriber.py      # 文字起こし (Whisper)
-├── vox_ptt_record.py   # VOX録音
-└── uploader.py         # FTPアップロード
+└── vox_ptt_record.py   # VOX録音
 ```
 
 ## Usage
@@ -163,7 +162,7 @@ cat ptt-box/stream_server/logs/server-$(date +%Y-%m-%d).log
 - **Client**: PWA, Web Audio API, Service Worker
 - **Audio**: FFmpeg, Opus codec
 - **Transcription**: faster-whisper, ONNX Runtime
-- **Legacy**: Python (VOX), PHP (SRT viewer)
+- **Legacy**: Python (VOX録音)
 
 ## License
 

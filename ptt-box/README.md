@@ -1,14 +1,25 @@
-# ptt-box
+# ptt-box/
 
-VOX/PTT録音ツール
+PTTシステムのメイン実装ディレクトリ。
 
-## ファイル
+詳細なドキュメントは [../README.md](../README.md) および [../CLAUDE.md](../CLAUDE.md) を参照。
 
-- `list_devices.py` - オーディオデバイス一覧
-- `vox_detect.py` - VOX検出（PTT ON/OFF表示）
-- `vox_ptt_record.py` - VOX + 録音（WAVファイル保存）
+## ディレクトリ構成
 
-## 依存関係
+```
+stream_server/   - Node.js WebRTCサーバー
+stream_client/   - PWA Webクライアント
+recordings/      - WAV/SRTファイル保存先
+docs/            - 詳細ドキュメント（通信シーケンス図等）
+*.py             - Python サービス（VOX録音、文字起こし）
+```
 
-- `numpy` - 数値計算
-- `sounddevice` - オーディオ入力
+## クイックスタート
+
+```bash
+# サーバー起動
+cd stream_server && npm install && node server.js
+
+# ブラウザでアクセス
+open http://localhost:9320
+```

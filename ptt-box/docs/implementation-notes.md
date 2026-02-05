@@ -8,8 +8,6 @@ WebRTCを使用したPTT（Push-To-Talk）双方向通信システムの実装�
 
 ## アーキテクチャ
 
-### Node.js版（現行）
-
 ```
 stream_server/ (Node.js/werift)
 ├── server.js        メインサーバー
@@ -23,38 +21,44 @@ stream_client/
 └── js/monitor.js    モニター機能
 ```
 
-### Python版（旧）
-
-```
-stream_server.py (Python/aiohttp)
-├── /ws              WebSocket (PTT/P2Pシグナリング)
-├── /ws/monitor      モニター用WebSocket
-├── /                静的ファイル配信
-├── /api/srt/*       SRT API (list/get/save)
-└── /api/audio       WAV配信
-```
-
 ---
 
 ## WebRTC実装の知見
 
-### 1. TURN/STUNサーバー設定
+### 1. STUN/TURNサーバー設定
 
-モバイル回線や企業ネットワークでは直接接続できないことが多い。TURN必須。
+#### 現在の実装（STUNのみ）
 
-```python
-ice_servers = [
-    RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
-    RTCIceServer(
-        urls=[
-            f"turn:{TURN_SERVER}?transport=udp",
-            f"turn:{TURN_SERVER}?transport=tcp",
-            f"turns:{TURN_SERVER}?transport=tcp",
-        ],
-        username=TURN_USERNAME,
-        credential=TURN_PASSWORD
-    )
-]
+```javascript
+// server.js
+const STUN_SERVER = process.env.STUN_SERVER || 'stun:stun.l.google.com:19302';
+const iceServers = [{ urls: STUN_SERVER }];
+```
+
+Google公開STUNサーバーを使用。家庭/小規模オフィスのNAT環境では十分動作する。
+
+#### TURNが必要になるケース
+
+| NAT種類 | STUN | TURN | よくある場所 |
+|---------|------|------|-------------|
+| Full Cone | ✓ | ✓ | 家庭用ルーター |
+| Restricted Cone | ✓ | ✓ | 家庭用ルーター |
+| Port Restricted | ✓ | ✓ | 一般的なルーター |
+| **Symmetric** | ✗ | ✓ | 企業、一部モバイル回線 |
+
+「接続できない」報告があった場合はTURN実装を検討。ExpressTURN等の有料サービスか、自前でcoturnサーバーを構築する。
+
+#### 参考: TURN実装例（未実装）
+
+```javascript
+// 将来実装する場合
+if (process.env.TURN_SERVER) {
+    iceServers.push({
+        urls: `turn:${process.env.TURN_SERVER}`,
+        username: process.env.TURN_USERNAME,
+        credential: process.env.TURN_PASSWORD
+    });
+}
 ```
 
 ### 2. ICE Gathering待機
@@ -760,3 +764,174 @@ const stream = await navigator.mediaDevices.getUserMedia({
 ```
 
 これらはブラウザ/デバイスによって品質が異なるが、追加のライブラリ（RNNoise等）なしで基本的なノイズ対策が可能。
+
+---
+
+## トラブルシューティング
+
+### uv + クラウドストレージ（OneDrive等）でのハードリンクエラー
+
+#### 症状
+
+```
+[audio_output] error: Failed to install: certifi-2025.11.12-py3-none-any.whl
+Caused by: failed to hardlink file from C:\Users\...\uv\cache\... to C:\app\ptt\.venv\...
+クラウド操作は、互換性のないハードリンクのファイルでは実行できません。 (os error 396)
+Python audio closed (code: 2)
+```
+
+`audio_output.py` が起動直後にクラッシュし、アナログトランシーバーへの音声出力が機能しなくなる。
+
+#### 原因
+
+1. プロジェクトがクラウド同期フォルダ（OneDrive, Dropbox等）にある
+2. `pyproject.toml` 編集後に `uv sync` が実行される
+3. uv はデフォルトでキャッシュから `.venv` へハードリンクを作成
+4. クラウドストレージはハードリンクをサポートしない
+5. パッケージが不完全な状態で残る（例: `certifi/py.typed` 欠落）
+6. 以降、毎回 `uv run` で修復を試みて失敗
+
+#### 解決方法
+
+```powershell
+# 1. 壊れたパッケージを削除
+Remove-Item -Recurse -Force C:\app\ptt\.venv\Lib\site-packages\certifi
+
+# 2. コピーモードで再インストール
+$env:UV_LINK_MODE="copy"
+cd C:\app\ptt
+uv sync --all-packages
+```
+
+#### 恒久対策
+
+システム環境変数に `UV_LINK_MODE=copy` を設定：
+
+1. 「システム環境変数を編集」を開く
+2. 「環境変数」→「ユーザー環境変数」→「新規」
+3. 変数名: `UV_LINK_MODE`、値: `copy`
+
+これにより uv はハードリンクの代わりにファイルコピーを使用する。
+
+---
+
+### FFmpegマイクキャプチャの音声速度異常（0.5倍速など）
+
+#### 症状
+
+アナログ無線機からの音声がWebトランシーバーで遅く再生される（0.5倍速のように聞こえる）。
+
+#### 原因
+
+FFmpegがdshow入力デバイスのサンプルレートを正しく検出できず、誤ったレートでキャプチャしている。
+
+#### 解決方法
+
+FFmpegコマンドに入力サンプルレートを明示：
+
+```javascript
+// server.js - startMicCapture()
+this.ffmpegProcess = spawn('ffmpeg', [
+    '-f', 'dshow',
+    '-sample_rate', '48000',  // ← 追加: 入力サンプルレート明示
+    '-audio_buffer_size', '50',
+    '-i', `audio=${MIC_DEVICE}`,
+    // ...
+]);
+```
+
+#### 補足
+
+Windowsのサウンド設定で、マイクデバイスの既定の形式が48000Hzに設定されていることも確認すると良い。
+
+---
+
+## 音量調整パラメータ
+
+### システム全体の音声フロー
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         サーバー (server.js)                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  【入力側】                          【出力側】                           │
+│                                                                         │
+│  アナログ無線機                       Webトランシーバー                    │
+│       ↓                                   ↓                            │
+│  USB マイク                          WebRTC Opus受信                     │
+│       ↓                                   ↓                            │
+│  FFmpeg キャプチャ                   Opusデコード                        │
+│       ↓                                   ↓                            │
+│  ┌─────────────┐                    ┌──────────────┐                   │
+│  │ MIC_VOLUME  │ ←── ここで増幅     │OUTPUT_GAIN_DB│ ←── ここで増幅    │
+│  │   = 3.0     │                    │    = 6 dB    │                   │
+│  └─────────────┘                    └──────────────┘                   │
+│       ↓                                   ↓                            │
+│  Opusエンコード                      audio_output.py                    │
+│       ↓                                   ↓                            │
+│  WebRTC送信                          USB スピーカー                      │
+│       ↓                                   ↓                            │
+│  Webトランシーバー                    アナログ無線機                      │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### MIC_VOLUME（入力ゲイン）
+
+| 項目 | 内容 |
+|------|------|
+| **何をするか** | アナログ無線→Webへの音声を増幅 |
+| **適用方法** | FFmpegの `-af volume=X` フィルター |
+| **単位** | 倍率（1.0 = 等倍、2.0 = 2倍、3.0 = 3倍） |
+| **設定場所** | `stream_server/.env` の `MIC_VOLUME` |
+
+**数値変更の効果:**
+
+| 値 | 増幅 | dB換算 | 備考 |
+|----|------|--------|------|
+| 1.0 | 等倍 | 0dB | デフォルト |
+| 2.0 | 2倍 | +6dB | |
+| 3.0 | 3倍 | +9.5dB | 現在の推奨値 |
+| 5.0 | 5倍 | +14dB | 歪む可能性あり |
+
+**調整が必要な場面:**
+- Webトランシーバーで「アナログ無線の音が小さい」→ 値を上げる
+- Webトランシーバーで「アナログ無線の音が割れる」→ 値を下げる
+
+### OUTPUT_GAIN_DB（出力ゲイン）
+
+| 項目 | 内容 |
+|------|------|
+| **何をするか** | Web→アナログ無線への音声を増幅 |
+| **適用方法** | Opusヘッダーに記録、FFmpegデコード時に適用 |
+| **単位** | デシベル（dB） |
+| **設定場所** | `stream_server/.env` の `OUTPUT_GAIN_DB` |
+
+**数値変更の効果:**
+
+| 値 | 増幅 | 備考 |
+|----|------|------|
+| 0 | 等倍 | Webの声がアナログ側で小さい |
+| 6 | 約2倍 | 現在のデフォルト |
+| 12 | 約4倍 | |
+| 20 | 約10倍 | 歪む可能性大 |
+
+**調整が必要な場面:**
+- アナログ無線で「Webの声が小さい」→ 値を上げる
+- アナログ無線で「Webの声が割れる/歪む」→ 値を下げる
+
+### 早見表
+
+| やりたいこと | 調整するパラメータ | 操作 |
+|-------------|-------------------|------|
+| Webで聞くアナログ無線の音量を上げたい | `MIC_VOLUME` | 値を増やす |
+| Webで聞くアナログ無線の音量を下げたい | `MIC_VOLUME` | 値を減らす |
+| アナログ無線で聞くWebの音量を上げたい | `OUTPUT_GAIN_DB` | 値を増やす |
+| アナログ無線で聞くWebの音量を下げたい | `OUTPUT_GAIN_DB` | 値を減らす |
+
+### 注意点
+
+1. **クリッピング（歪み）**: 値を上げすぎると音が割れる。特に大きな声のときに注意
+2. **単位の違い**: MIC_VOLUMEは倍率、OUTPUT_GAIN_DBはdB（対数）
+3. **dBの目安**: +6dB ≈ 2倍、+12dB ≈ 4倍、+20dB ≈ 10倍

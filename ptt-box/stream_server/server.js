@@ -34,6 +34,8 @@ const HTTP_PORT = parseInt(process.env.HTTP_PORT) || 9320;
 const PTT_TIMEOUT = process.env.PTT_TIMEOUT !== undefined ? parseInt(process.env.PTT_TIMEOUT) : 300000;  // 5分（0で無効化）
 const STUN_SERVER = process.env.STUN_SERVER || 'stun:stun.l.google.com:19302';
 const MIC_DEVICE = process.env.MIC_DEVICE || 'CABLE Output (VB-Audio Virtual Cable)';
+const MIC_VOLUME = parseFloat(process.env.MIC_VOLUME) || 1.0;  // マイク音量倍率（デフォルト1.0）
+const MIC_SAMPLE_RATE = parseInt(process.env.MIC_SAMPLE_RATE) || 48000;  // マイク入力サンプルレート
 const SPEAKER_DEVICE = process.env.SPEAKER_DEVICE || '';  // 空の場合はシステムデフォルト（ffplay用）
 const SPEAKER_DEVICE_ID = process.env.SPEAKER_DEVICE_ID || '0';  // デバイスID（Python用）
 const USE_PYTHON_AUDIO = process.env.USE_PYTHON_AUDIO === 'true';  // Python音声出力を使用
@@ -45,7 +47,8 @@ const RELAY_BAUD_RATE = parseInt(process.env.RELAY_BAUD_RATE) || 9600;
 const ENABLE_RELAY = process.env.ENABLE_RELAY !== 'false';  // デフォルト有効
 const ICE_RESTART_TIMEOUT = parseInt(process.env.ICE_RESTART_TIMEOUT) || 5000;  // ICE Restart タイムアウト（5秒）
 const MAX_ICE_RESTART_ATTEMPTS = 5;  // ICE Restart 最大試行回数
-const OFFER_TIMEOUT = 30000;  // Offer待ちタイムアウト（30秒）
+const OFFER_TIMEOUT = 10000;  // Offer待ちタイムアウト（10秒）
+const FFMPEG_RESTART_HOURS = parseFloat(process.env.FFMPEG_RESTART_HOURS) || 0;  // FFmpeg定期再起動（時間、0=無効）
 
 // ダッシュボード設定
 const DASH_PASSWORD = process.env.DASH_PASSWORD || 'admin';
@@ -81,7 +84,7 @@ const SAMPLE_RATE = 48000;
 const CHANNELS = 1;
 const FRAME_DURATION_MS = 20;
 const OPUS_PAYLOAD_TYPE = 111;
-const OUTPUT_GAIN_DB = 6;  // 6dB boost
+const OUTPUT_GAIN_DB = parseFloat(process.env.OUTPUT_GAIN_DB) || 6;  // スピーカー出力ゲイン (dB)
 
 // ICE設定
 const iceServers = [{ urls: STUN_SERVER }];
@@ -227,6 +230,14 @@ class StreamServer {
         this.rtpTimestamp = 0;
         this.rtpSsrc = Math.floor(Math.random() * 0xFFFFFFFF);
 
+        // FFmpegドリフト計測
+        this.ffmpegStartTime = 0;
+        this.ffmpegRestartCount = 0;
+        this.avgFrameGap = 0;        // フレーム間隔のEMA (ms)
+        this.activeFrameCount = 0;   // DTX除外のアクティブフレーム数
+        this.lastFrameTime = 0;      // 直前フレームの時刻
+        this.oggParserBufferSize = 0; // OGGパーサーバッファサイズ
+
         // 音声出力（スピーカー）
         this.speakerProcess = null;
         this.oggInitialized = false;
@@ -254,6 +265,10 @@ class StreamServer {
         const clientPath = path.join(__dirname, '..', 'stream_client');
         this.app.use(express.static(clientPath));
         log(`Static files: ${clientPath}`);
+
+        // タブ直接アクセス用リダイレクト（standaloneモード）
+        this.app.get('/history', (req, res) => res.redirect('/?tab=history&standalone=1'));
+        this.app.get('/admin', (req, res) => res.redirect('/?tab=admin&standalone=1'));
 
         // JSONパーサー
         this.app.use(express.json());
@@ -311,7 +326,45 @@ class StreamServer {
             if (p2pStates.length > 0) {
                 log(`[Monitor] P2P: ${p2pStates.join(', ')}`);
             }
+
+            // 音声健全性ログ
+            if (this.ffmpegProcess && this.activeFrameCount > 100) {
+                const ffmpegUptime = Math.round((Date.now() - this.ffmpegStartTime) / 60000);
+                const gapMs = this.avgFrameGap.toFixed(2);
+                const driftPpm = Math.round(((this.avgFrameGap / 20) - 1) * 1000000);
+                log(`[Audio] gap=${gapMs}ms, drift=${driftPpm > 0 ? '+' : ''}${driftPpm}ppm, buffer=${this.oggParserBufferSize}B, ffmpeg_uptime=${ffmpegUptime}min`);
+
+                // gap異常検出（サンプルレート誤検出の可能性）
+                // 正常範囲: 18-23ms (期待値20ms ± 15%)
+                // 異常例: 11ms → 88200Hz誤検出、44ms → 22050Hz誤検出
+                if (this.avgFrameGap < 15 || this.avgFrameGap > 26) {
+                    log(`[Audio] CRITICAL: gap=${gapMs}ms is abnormal (expected ~20ms), possible sample rate mismatch!`);
+                    // 異常なgapは常に再起動（サンプルレート誤検出はFFmpeg再起動で回復する可能性）
+                    if (ffmpegUptime >= 1) {  // 起動直後の不安定期間を除外
+                        log(`[Audio] Triggering FFmpeg restart due to abnormal gap`);
+                        this.restartMicCapture('abnormal_gap');
+                    }
+                } else if (Math.abs(driftPpm) > 2000 && FFMPEG_RESTART_HOURS > 0) {
+                    log(`[Audio] WARNING: drift=${driftPpm}ppm exceeds 2000ppm, triggering FFmpeg restart`);
+                    this.restartMicCapture('drift');
+                } else if (Math.abs(driftPpm) > 500) {
+                    log(`[Audio] WARNING: drift=${driftPpm}ppm exceeds 500ppm (${(driftPpm * 3.6 / 1000).toFixed(1)}s/hour accumulation)`);
+                }
+            }
         }, 300000);  // 5分ごと
+
+        // FFmpeg定期再起動チェック（5分ごと）
+        if (FFMPEG_RESTART_HOURS > 0) {
+            setInterval(() => {
+                if (this.ffmpegProcess && this.ffmpegStartTime) {
+                    const elapsed = Date.now() - this.ffmpegStartTime;
+                    if (elapsed >= FFMPEG_RESTART_HOURS * 3600000) {
+                        log(`FFmpeg periodic restart (${FFMPEG_RESTART_HOURS}h elapsed)`);
+                        this.restartMicCapture('periodic');
+                    }
+                }
+            }, 300000);  // 5分ごとにチェック
+        }
 
         // マイクキャプチャのハング検知（10秒ごと）
         setInterval(() => {
@@ -320,8 +373,11 @@ class StreamServer {
                 if (elapsed > 10000) {
                     log(`Mic capture appears hung (no data for ${Math.round(elapsed / 1000)}s), restarting...`);
                     this.stopMicCapture();
-                    this.micStoppedIntentionally = false;  // 再起動を許可
-                    this.startMicCapture();
+                    // USBデバイス解放を待ってから再起動（即時再起動するとdshow交渉が不安定になる）
+                    setTimeout(() => {
+                        this.micStoppedIntentionally = false;
+                        this.startMicCapture();
+                    }, 100);
                 }
             }
         }, 10000);  // 10秒ごと
@@ -511,7 +567,15 @@ class StreamServer {
                     },
                     clientCount: this.clients.size,
                     p2pCount: this.p2pConnections.size,
-                    speakerProcess: this.speakerProcess ? 'running' : 'stopped'
+                    speakerProcess: this.speakerProcess ? 'running' : 'stopped',
+                    audio: {
+                        ffmpegRunning: !!this.ffmpegProcess,
+                        ffmpegUptimeMin: this.ffmpegStartTime ? Math.round((Date.now() - this.ffmpegStartTime) / 60000) : 0,
+                        ffmpegRestartCount: this.ffmpegRestartCount,
+                        avgFrameGapMs: parseFloat(this.avgFrameGap.toFixed(2)),
+                        driftPpm: this.avgFrameGap > 0 ? Math.round(((this.avgFrameGap / 20) - 1) * 1000000) : 0,
+                        oggBufferSize: this.oggParserBufferSize
+                    }
                 }
             });
         });
@@ -843,7 +907,7 @@ class StreamServer {
 
         // Offer待ちタイムアウト（WebSocket接続後、Offerが来ない場合に切断）
         client.offerTimeout = setTimeout(() => {
-            if (!client.pc) {
+            if (!client.pc && !client.offerProcessing) {
                 log(`${client.displayName}: No offer received within ${OFFER_TIMEOUT/1000}s, closing connection`);
                 client.ws.close(1000, 'Offer timeout');
             }
@@ -902,9 +966,28 @@ class StreamServer {
 
             case 'set_display_name':
                 if (msg.displayName && msg.displayName !== client.displayName) {
-                    const oldName = client.displayName;
-                    client.displayName = msg.displayName;
-                    log(`Display name changed: ${oldName} → ${client.displayName}`);
+                    // ユニークチェック: 他の接続中クライアントに同名がないか
+                    let nameTaken = false;
+                    for (const [otherId, otherClient] of this.clients) {
+                        if (otherId !== client.clientId &&
+                            otherClient.displayName === msg.displayName) {
+                            nameTaken = true;
+                            break;
+                        }
+                    }
+
+                    if (nameTaken) {
+                        client.send({
+                            type: 'display_name_error',
+                            error: 'name_taken',
+                            displayName: msg.displayName
+                        });
+                        log(`Display name rejected: ${msg.displayName} (already in use)`);
+                    } else {
+                        const oldName = client.displayName;
+                        client.displayName = msg.displayName;
+                        log(`Display name changed: ${oldName} → ${client.displayName}`);
+                    }
                 }
                 break;
 
@@ -940,8 +1023,17 @@ class StreamServer {
     // プッシュ通知subscription登録
     handlePushSubscribe(client, subscription) {
         if (!subscription) return;
+
+        // 同じendpoint（同じブラウザ/デバイス）の古いエントリを削除
+        const newEndpoint = subscription.endpoint;
+        for (const [existingId, existingSub] of this.pushSubscriptions) {
+            if (existingId !== client.clientId && existingSub.endpoint === newEndpoint) {
+                this.pushSubscriptions.delete(existingId);
+            }
+        }
+
         this.pushSubscriptions.set(client.clientId, subscription);
-        log(`Push subscription registered: ${client.displayName} (${client.clientId})`);
+        log(`Push subscription registered: ${client.displayName} (${client.clientId}), total=${this.pushSubscriptions.size}`);
     }
 
     // プッシュ通知送信（PTT開始時に他クライアントに通知）
@@ -996,6 +1088,13 @@ class StreamServer {
             clearTimeout(client.offerTimeout);
             client.offerTimeout = null;
         }
+
+        // 二重Offer防止: 既にPeerConnectionがある、または処理中の場合は拒否
+        if (client.pc || client.offerProcessing) {
+            log(`${client.displayName}: offer rejected (pc=${!!client.pc}, processing=${!!client.offerProcessing})`);
+            return;
+        }
+        client.offerProcessing = true;
 
         const config = {
             iceServers: iceServers.map(s => ({ urls: s.urls })),
@@ -1567,14 +1666,23 @@ class StreamServer {
         this.micStoppedIntentionally = false;
         this.lastMicDataTime = Date.now();
 
+        // ドリフト計測リセット
+        this.ffmpegStartTime = Date.now();
+        this.avgFrameGap = 0;
+        this.activeFrameCount = 0;
+        this.lastFrameTime = 0;
+
         this.ffmpegProcess = spawn('ffmpeg', [
             // 入力の低遅延設定
             '-fflags', '+nobuffer+flush_packets',
             '-flags', 'low_delay',
             // 入力デバイス
             '-f', 'dshow',
+            '-sample_rate', String(MIC_SAMPLE_RATE),  // 入力サンプルレート（デバイスの実レートに合わせる）
             '-audio_buffer_size', '50',  // 50msバッファ（20msだと音割れ）
             '-i', `audio=${MIC_DEVICE}`,
+            // 音量調整
+            '-af', `volume=${MIC_VOLUME}`,  // 環境変数で設定可能
             // 出力設定
             '-ac', String(CHANNELS),
             '-ar', String(SAMPLE_RATE),
@@ -1591,6 +1699,17 @@ class StreamServer {
             'pipe:1'
         ], {
             stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        // FFmpegのstderrをログに出力（サンプルレート交渉の確認用）
+        this.ffmpegProcess.stderr.on('data', (data) => {
+            const lines = data.toString().trim().split('\n');
+            for (const line of lines) {
+                // 入力フォーマット情報をログ出力
+                if (line.includes('Input') || line.includes('Stream') || line.includes('Audio:') || line.includes('Hz')) {
+                    log(`[FFmpeg] ${line.trim()}`);
+                }
+            }
         });
 
         this.ffmpegProcess.on('error', (err) => {
@@ -1623,6 +1742,39 @@ class StreamServer {
             this.ffmpegProcess = null;
             log('Mic capture stopped');
         }
+    }
+
+    restartMicCapture(reason) {
+        log(`Restarting FFmpeg (reason: ${reason})`);
+        this.ffmpegRestartCount++;
+        this.stopMicCapture();
+
+        // RTPタイムスタンプ・シーケンスをリセット（ブラウザのジッタバッファがリシンク）
+        this.rtpSequence = 0;
+        this.rtpTimestamp = 0;
+
+        setTimeout(() => {
+            this.micStoppedIntentionally = false;
+            this.startMicCapture();
+        }, 100);
+    }
+
+    measureFrameGap() {
+        const now = Date.now();
+        if (this.lastFrameTime > 0) {
+            const gap = now - this.lastFrameTime;
+            // DTX除外: 100ms超はDTXによる無音スキップとみなす
+            if (gap < 100) {
+                this.activeFrameCount++;
+                if (this.avgFrameGap === 0) {
+                    this.avgFrameGap = gap;
+                } else {
+                    // 指数移動平均 (α=0.001, 時定数≈1000フレーム≈20秒)
+                    this.avgFrameGap = this.avgFrameGap * 0.999 + gap * 0.001;
+                }
+            }
+        }
+        this.lastFrameTime = now;
     }
 
     parseOggStream(stream) {
@@ -1658,12 +1810,15 @@ class StreamServer {
                         // Skip headers
                     } else {
                         headersParsed = true;
+                        this.measureFrameGap();
                         this.sendOpusToClients(payload);
                     }
                 } else {
+                    this.measureFrameGap();
                     this.sendOpusToClients(payload);
                 }
 
+                this.oggParserBufferSize = buffer.length - pageSize;
                 buffer = buffer.slice(pageSize);
             }
         });
@@ -2248,6 +2403,12 @@ if (require.main === module) {
 
     // 起動ログ
     log('Server started');
+    if (MIC_SAMPLE_RATE !== SAMPLE_RATE) {
+        log(`Mic input: ${MIC_SAMPLE_RATE}Hz → resampling to ${SAMPLE_RATE}Hz`);
+    }
+    if (FFMPEG_RESTART_HOURS > 0) {
+        log(`FFmpeg periodic restart: every ${FFMPEG_RESTART_HOURS}h`);
+    }
 
     // サーバーマイクモード表示とキーボード制御
     if (ENABLE_SERVER_MIC) {

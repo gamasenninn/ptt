@@ -1,5 +1,26 @@
 // WebRTC Audio Stream Client with PTT
 
+// 重複タブ検出 (BroadcastChannel)
+const tabChannel = (() => {
+    try { return new BroadcastChannel('ptt-instance'); }
+    catch (e) { return null; }  // 非対応ブラウザ
+})();
+let blockedByDuplicateTab = false;
+
+if (tabChannel) {
+    tabChannel.onmessage = (event) => {
+        if (event.data.type === 'check') {
+            // 別タブからの問い合わせ → 接続中なら応答
+            if (ws) {
+                tabChannel.postMessage({ type: 'active' });
+            }
+        } else if (event.data.type === 'active') {
+            // 別タブが接続中
+            blockedByDuplicateTab = true;
+        }
+    };
+}
+
 let ws = null;
 let pc = null;
 let audioContext = null;
@@ -26,6 +47,7 @@ const PLAYOUT_DELAY_HINT = 0.1;  // 100ms（遅延と安定性のバランス）
 let myClientId = null;
 let localStream = null;  // マイク音声ストリーム
 let rawMicStream = null;  // 生のマイク入力（クリーンアップ用）
+let previousDisplayName = null;  // 名前変更のロールバック用
 let isPttActive = false;  // PTTボタンが押されているか
 let pttState = 'idle';  // idle, transmitting, receiving
 let micAccessGranted = false;
@@ -280,6 +302,9 @@ function updateConnectionToggle(state) {
         case 'connected':
             text.textContent = '接続済み - タップで切断';
             break;
+        case 'blocked':
+            text.textContent = '別のタブで接続中です - タップで再試行';
+            break;
     }
 }
 
@@ -292,6 +317,19 @@ async function connect() {
     if (ws && ws.readyState === WebSocket.CONNECTING) {
         debugLog('Already connecting');
         return;
+    }
+
+    // 重複タブチェック
+    if (tabChannel) {
+        blockedByDuplicateTab = false;
+        tabChannel.postMessage({ type: 'check' });
+        await new Promise(r => setTimeout(r, 200));
+        if (blockedByDuplicateTab) {
+            debugLog('Blocked: another tab is already connected');
+            autoReconnect = false;
+            updateConnectionToggle('blocked');
+            return;
+        }
     }
 
     autoReconnect = true;  // 接続時は自動再接続を有効化
@@ -382,6 +420,21 @@ async function connect() {
             } else if (data.type === 'p2p_ice_candidate') {
                 // P2P ICE候補受信
                 handleP2PIceCandidate(data.from, data.candidate);
+            } else if (data.type === 'display_name_error') {
+                debugLog('Display name rejected: ' + data.displayName + ' (' + data.error + ')');
+                // localStorageをロールバック
+                if (previousDisplayName !== null) {
+                    localStorage.setItem('ptt_display_name', previousDisplayName);
+                    const input = document.getElementById('displayNameInput');
+                    if (input) input.value = previousDisplayName;
+                    previousDisplayName = null;
+                }
+                // ヒントテキストにエラー表示
+                const hint = document.getElementById('displayNameHint');
+                if (hint) {
+                    hint.textContent = 'この名前は使用中です';
+                    hint.style.color = '#f87171';
+                }
             }
         };
 
@@ -1166,8 +1219,10 @@ function saveDisplayName() {
 
     const name = input.value.trim();
     if (name) {
+        // ロールバック用に旧名を保存
+        previousDisplayName = localStorage.getItem('ptt_display_name') || '';
         localStorage.setItem('ptt_display_name', name);
-        // サーバーに通知
+        // サーバーに通知（サーバー側でユニークチェック）
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
                 type: 'set_display_name',
