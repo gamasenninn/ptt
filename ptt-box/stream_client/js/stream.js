@@ -948,8 +948,8 @@ async function attemptIceRestart() {
         const monoSdp = forceOpusMono(offer.sdp);
         await pc.setLocalDescription({ type: 'offer', sdp: monoSdp });
 
-        // ICE gathering完了を待つ（短いタイムアウト）
-        await waitForIceGatheringWithTimeout(3000);
+        // ICE gathering完了を待つ（Early Proceed最適化）
+        await waitForIceGatheringWithEarlyProceed(3000, 'ICE restart');
 
         // サーバーに新しいOfferを送信
         ws.send(JSON.stringify({
@@ -986,6 +986,66 @@ function waitForIceGatheringWithTimeout(timeout) {
             }
         };
         pc.addEventListener('icegatheringstatechange', handler);
+    });
+}
+
+// ICE gathering完了待ち（Early Proceed最適化版）
+// srflx/relay候補取得後500msで早期送信することで高速化
+function waitForIceGatheringWithEarlyProceed(timeout, context = '') {
+    return new Promise((resolve) => {
+        if (!pc || pc.iceGatheringState === 'complete') {
+            resolve();
+            return;
+        }
+
+        let earlyProceedTimer = null;
+        let resolved = false;
+
+        const cleanup = () => {
+            if (resolved) return;
+            resolved = true;
+            pc.removeEventListener('icegatheringstatechange', onGatheringChange);
+            pc.removeEventListener('icecandidate', onIceCandidate);
+        };
+
+        const timer = setTimeout(() => {
+            debugLog(context + ' ICE gathering timeout');
+            cleanup();
+            resolve();
+        }, timeout);
+
+        const proceedEarly = (reason) => {
+            if (earlyProceedTimer) return;
+            earlyProceedTimer = setTimeout(() => {
+                debugLog(context + ' early proceed: ' + reason);
+                clearTimeout(timer);
+                cleanup();
+                resolve();
+            }, 500);  // srflx/relay取得後500msで進む
+        };
+
+        const onGatheringChange = () => {
+            if (pc.iceGatheringState === 'complete') {
+                debugLog(context + ' ICE gathering complete');
+                clearTimeout(timer);
+                if (earlyProceedTimer) clearTimeout(earlyProceedTimer);
+                cleanup();
+                resolve();
+            }
+        };
+
+        const onIceCandidate = (event) => {
+            if (event.candidate) {
+                const type = event.candidate.type || 'unknown';
+                debugLog(context + ' candidate: ' + type);
+                if (type === 'relay' || type === 'srflx') {
+                    proceedEarly(type);
+                }
+            }
+        };
+
+        pc.addEventListener('icegatheringstatechange', onGatheringChange);
+        pc.addEventListener('icecandidate', onIceCandidate);
     });
 }
 
