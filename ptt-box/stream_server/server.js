@@ -233,10 +233,13 @@ class StreamServer {
         // FFmpegドリフト計測
         this.ffmpegStartTime = 0;
         this.ffmpegRestartCount = 0;
-        this.avgFrameGap = 0;        // フレーム間隔のEMA (ms)
+        this.avgFrameGap = 0;        // フレーム間隔のEMA (ms) - 参考値
         this.activeFrameCount = 0;   // DTX除外のアクティブフレーム数
         this.lastFrameTime = 0;      // 直前フレームの時刻
         this.oggParserBufferSize = 0; // OGGパーサーバッファサイズ
+        // RTPベースの真のドリフト計測
+        this.driftBaseTime = 0;      // 計測基準時刻（壁時計）
+        this.driftBaseRtpTs = 0;     // 計測基準RTPタイムスタンプ
 
         // 音声出力（スピーカー）
         this.speakerProcess = null;
@@ -328,11 +331,18 @@ class StreamServer {
             }
 
             // 音声健全性ログ
-            if (this.ffmpegProcess && this.activeFrameCount > 100) {
+            if (this.ffmpegProcess && this.activeFrameCount > 100 && this.driftBaseTime > 0) {
                 const ffmpegUptime = Math.round((Date.now() - this.ffmpegStartTime) / 60000);
                 const gapMs = this.avgFrameGap.toFixed(2);
-                const driftPpm = Math.round(((this.avgFrameGap / 20) - 1) * 1000000);
-                log(`[Audio] gap=${gapMs}ms, drift=${driftPpm > 0 ? '+' : ''}${driftPpm}ppm, buffer=${this.oggParserBufferSize}B, ffmpeg_uptime=${ffmpegUptime}min`);
+
+                // RTPベースの真のドリフト計測
+                // RTPタイムスタンプ（送信サンプル数）vs 壁時計で音声の実際のずれを計測
+                const elapsedMs = Date.now() - this.driftBaseTime;
+                const expectedRtpTs = this.driftBaseRtpTs + (elapsedMs * 48);  // 48サンプル/ms @ 48kHz
+                const actualRtpTs = this.rtpTimestamp;
+                const driftPpm = expectedRtpTs > 0 ? Math.round(((actualRtpTs - expectedRtpTs) / expectedRtpTs) * 1000000) : 0;
+
+                log(`[Audio] rtp_drift=${driftPpm > 0 ? '+' : ''}${driftPpm}ppm, gap=${gapMs}ms, buffer=${this.oggParserBufferSize}B, ffmpeg_uptime=${ffmpegUptime}min`);
 
                 // gap異常検出（サンプルレート誤検出の可能性）
                 // 正常範囲: 18-23ms (期待値20ms ± 15%)
@@ -345,10 +355,11 @@ class StreamServer {
                         this.restartMicCapture('abnormal_gap');
                     }
                 } else if (Math.abs(driftPpm) > 2000 && FFMPEG_RESTART_HOURS > 0) {
-                    log(`[Audio] WARNING: drift=${driftPpm}ppm exceeds 2000ppm, triggering FFmpeg restart`);
+                    // RTPドリフトが2000ppm超（7.2秒/時間）で自動再起動
+                    log(`[Audio] WARNING: rtp_drift=${driftPpm}ppm exceeds 2000ppm (${(driftPpm * 3.6 / 1000).toFixed(1)}s/hour), triggering FFmpeg restart`);
                     this.restartMicCapture('drift');
                 } else if (Math.abs(driftPpm) > 500) {
-                    log(`[Audio] WARNING: drift=${driftPpm}ppm exceeds 500ppm (${(driftPpm * 3.6 / 1000).toFixed(1)}s/hour accumulation)`);
+                    log(`[Audio] WARNING: rtp_drift=${driftPpm}ppm exceeds 500ppm (${(driftPpm * 3.6 / 1000).toFixed(1)}s/hour)`);
                 }
             }
         }, 300000);  // 5分ごと
@@ -573,7 +584,12 @@ class StreamServer {
                         ffmpegUptimeMin: this.ffmpegStartTime ? Math.round((Date.now() - this.ffmpegStartTime) / 60000) : 0,
                         ffmpegRestartCount: this.ffmpegRestartCount,
                         avgFrameGapMs: parseFloat(this.avgFrameGap.toFixed(2)),
-                        driftPpm: this.avgFrameGap > 0 ? Math.round(((this.avgFrameGap / 20) - 1) * 1000000) : 0,
+                        // RTPベースの真のドリフト（壁時計 vs RTPタイムスタンプ）
+                        rtpDriftPpm: this.driftBaseTime > 0 ? (() => {
+                            const elapsedMs = Date.now() - this.driftBaseTime;
+                            const expectedRtpTs = this.driftBaseRtpTs + (elapsedMs * 48);
+                            return Math.round(((this.rtpTimestamp - expectedRtpTs) / expectedRtpTs) * 1000000);
+                        })() : 0,
                         oggBufferSize: this.oggParserBufferSize
                     }
                 }
@@ -1671,6 +1687,9 @@ class StreamServer {
         this.avgFrameGap = 0;
         this.activeFrameCount = 0;
         this.lastFrameTime = 0;
+        // RTPベースドリフト計測の基準点（最初のフレーム到着時に設定）
+        this.driftBaseTime = 0;
+        this.driftBaseRtpTs = 0;
 
         this.ffmpegProcess = spawn('ffmpeg', [
             // 入力の低遅延設定
@@ -1761,6 +1780,13 @@ class StreamServer {
 
     measureFrameGap() {
         const now = Date.now();
+
+        // RTPベースドリフト計測: 最初のフレームで基準点を設定
+        if (this.driftBaseTime === 0) {
+            this.driftBaseTime = now;
+            this.driftBaseRtpTs = this.rtpTimestamp;
+        }
+
         if (this.lastFrameTime > 0) {
             const gap = now - this.lastFrameTime;
             // DTX除外: 100ms超はDTXによる無音スキップとみなす
