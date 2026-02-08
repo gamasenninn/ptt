@@ -354,13 +354,9 @@ class StreamServer {
                         log(`[Audio] Triggering FFmpeg restart due to abnormal gap`);
                         this.restartMicCapture('abnormal_gap');
                     }
-                } else if (Math.abs(driftPpm) > 2000 && FFMPEG_RESTART_HOURS > 0) {
-                    // RTPドリフトが2000ppm超（7.2秒/時間）で自動再起動
-                    log(`[Audio] WARNING: rtp_drift=${driftPpm}ppm exceeds 2000ppm (${(driftPpm * 3.6 / 1000).toFixed(1)}s/hour), triggering FFmpeg restart`);
-                    this.restartMicCapture('drift');
-                } else if (Math.abs(driftPpm) > 500) {
-                    log(`[Audio] WARNING: rtp_drift=${driftPpm}ppm exceeds 500ppm (${(driftPpm * 3.6 / 1000).toFixed(1)}s/hour)`);
                 }
+                // 注: rtp_driftはUSBデバイスクロックとシステムクロックの差を示す
+                // WebRTCのジッターバッファが補正するため、音声品質には影響しない
             }
         }, 300000);  // 5分ごと
 
