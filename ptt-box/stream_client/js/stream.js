@@ -522,12 +522,18 @@ async function setupWebRTC() {
             debugLog('Ignoring old connection state event');
             return;
         }
-        debugLog('Connection: ' + pc.connectionState);
+        // ICE restart中は詳細ログを出力
+        if (iceRestartInProgress) {
+            debugLog('Connection (during ICE restart): ' + pc.connectionState + ', iceConn=' + pc.iceConnectionState);
+        } else {
+            debugLog('Connection: ' + pc.connectionState);
+        }
+
         switch (pc.connectionState) {
             case 'connected':
                 // ICE Restart成功時のクリーンアップ
                 if (iceRestartInProgress) {
-                    debugLog('ICE restart successful');
+                    debugLog('ICE restart successful! Recovery time: answer applied -> connected');
                     clearTimeout(iceRestartTimer);
                     iceRestartTimer = null;
                     iceRestartInProgress = false;
@@ -547,18 +553,25 @@ async function setupWebRTC() {
                 requestWakeLock();  // スクリーンオフ防止
                 break;
             case 'connecting':
+                if (iceRestartInProgress) {
+                    debugLog('ICE restart - state transitioning to connecting (good sign)');
+                }
                 updateConnectionToggle('connecting');
                 break;
             case 'disconnected':
                 // ICE Restart中でなければ試行
                 if (!iceRestartInProgress) {
                     attemptIceRestart();
+                } else {
+                    debugLog('ICE restart - still disconnected, waiting for recovery...');
                 }
                 break;
             case 'failed':
                 // ICE Restart中でなければ試行
                 if (!iceRestartInProgress) {
                     attemptIceRestart();
+                } else {
+                    debugLog('ICE restart - connection failed during restart');
                 }
                 break;
         }
@@ -567,9 +580,18 @@ async function setupWebRTC() {
     // ICE接続状態の詳細ログ
     pc.oniceconnectionstatechange = () => {
         if (pc !== thisPC) return;  // 古い接続のイベントを無視
-        debugLog('ICE: ' + pc.iceConnectionState);
+        if (iceRestartInProgress) {
+            debugLog('ICE (during restart): ' + pc.iceConnectionState);
+            if (pc.iceConnectionState === 'checking') {
+                debugLog('ICE restart - checking candidates (connectivity checks in progress)');
+            } else if (pc.iceConnectionState === 'connected') {
+                debugLog('ICE restart - ICE layer connected!');
+            }
+        } else {
+            debugLog('ICE: ' + pc.iceConnectionState);
+        }
         if (pc.iceConnectionState === 'failed') {
-            debugLog('ERROR: ICE failed - TURN unreachable?');
+            debugLog('ERROR: ICE failed - TURN unreachable or all candidates failed');
         }
     };
 
@@ -940,24 +962,35 @@ async function attemptIceRestart() {
     }, ICE_RESTART_TIMEOUT);
 
     try {
+        debugLog('ICE restart - starting: connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState);
+
         // ブラウザのICE Restart APIを呼び出し（内部フラグをセット）
         pc.restartIce();
+        debugLog('ICE restart - restartIce() called');
 
         // 新しいOffer作成（restartIce()後なので新ICE資格情報が含まれる）
         const offer = await pc.createOffer();
         const monoSdp = forceOpusMono(offer.sdp);
         await pc.setLocalDescription({ type: 'offer', sdp: monoSdp });
+        debugLog('ICE restart - setLocalDescription done, iceGathering=' + pc.iceGatheringState);
 
         // ICE gathering完了を待つ（Early Proceed最適化）
         await waitForIceGatheringWithEarlyProceed(3000, 'ICE restart');
 
+        // SDPに含まれるICE候補タイプを確認
+        const sdp = pc.localDescription.sdp;
+        const hasSrflx = sdp.includes('typ srflx');
+        const hasRelay = sdp.includes('typ relay');
+        const hasHost = sdp.includes('typ host');
+        debugLog('ICE restart - candidates in SDP: host=' + hasHost + ', srflx=' + hasSrflx + ', relay=' + hasRelay);
+
         // サーバーに新しいOfferを送信
         ws.send(JSON.stringify({
             type: 'ice_restart_offer',
-            sdp: pc.localDescription.sdp
+            sdp: sdp
         }));
 
-        debugLog('ICE restart offer sent');
+        debugLog('ICE restart offer sent, waiting for answer...');
     } catch (e) {
         debugLog('ICE restart failed: ' + e.message);
         clearTimeout(iceRestartTimer);
@@ -1052,18 +1085,17 @@ function waitForIceGatheringWithEarlyProceed(timeout, context = '') {
 // ICE Restart Answer処理
 async function handleIceRestartAnswer(sdp) {
     debugLog('Received ICE restart answer');
+    debugLog('ICE restart - before: connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState + ', iceGatherState=' + pc.iceGatheringState);
+
     try {
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
         debugLog('ICE restart answer applied');
+        debugLog('ICE restart - after: connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState);
 
-        // Answer適用成功 → ICE Restartは成功と見なしてタイマークリア
-        // (connectionStateが変化しない場合があるため、ここでクリア)
-        if (iceRestartTimer) {
-            clearTimeout(iceRestartTimer);
-            iceRestartTimer = null;
-        }
-        iceRestartInProgress = false;
-        debugLog('ICE restart completed');
+        // Answer適用後、接続状態を監視するためタイマーは維持
+        // connectionstatechangeハンドラで'connected'になった時にクリアする
+        // ここではフラグのみクリアせず、タイマーも維持
+        debugLog('ICE restart - waiting for connection recovery...');
 
         // 接続状態を確認して適切なUIに更新
         if (pc.connectionState === 'connected') {

@@ -1206,8 +1206,13 @@ class StreamServer {
         if (client.pc && candidate) {
             try {
                 await client.pc.addIceCandidate(new RTCIceCandidate(candidate));
+                // ICE restart中は候補追加をログ
+                if (client.iceRestartInProgress) {
+                    const candidateType = candidate.candidate?.split(' ')[7] || 'unknown';
+                    log(`${client.displayName}: ICE candidate added during restart: ${candidateType}`);
+                }
             } catch (e) {
-                // Ignore
+                log(`${client.displayName}: ICE candidate error: ${e.message}`);
             }
         }
     }
@@ -1235,10 +1240,16 @@ class StreamServer {
         }
 
         try {
+            // ICE restart前の状態をログ
+            log(`${client.displayName}: ICE restart - before: connState=${client.pc.connectionState}, iceState=${client.pc.iceConnectionState}`);
+
             // クライアントからの新しいOfferを受け入れ、Answerを返す
             await client.pc.setRemoteDescription(new RTCSessionDescription(sdp, 'offer'));
+            log(`${client.displayName}: ICE restart - after setRemoteDescription: connState=${client.pc.connectionState}`);
+
             const answer = await client.pc.createAnswer();
             await client.pc.setLocalDescription(answer);
+            log(`${client.displayName}: ICE restart - after setLocalDescription: iceGathering=${client.pc.iceGatheringState}`);
 
             client.send({
                 type: 'ice_restart_answer',
