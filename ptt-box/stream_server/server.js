@@ -1029,6 +1029,37 @@ class StreamServer {
             case 'push_subscribe':
                 this.handlePushSubscribe(client, msg.subscription);
                 break;
+
+            case 'client_logs':
+                this.handleClientLogs(client, msg);
+                break;
+        }
+    }
+
+    // クライアントログをサーバーに保存
+    handleClientLogs(client, message) {
+        const { logs, lineCount } = message;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const safeName = (client.displayName || client.clientId).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const filename = `client-${safeName}-${timestamp}.log`;
+        const filepath = path.join(LOG_DIR, filename);
+
+        try {
+            fs.writeFileSync(filepath, logs, 'utf-8');
+            log(`${client.displayName}: Client logs saved (${lineCount} lines) -> ${filename}`);
+
+            // 成功通知
+            client.send({
+                type: 'logs_saved',
+                filename: filename,
+                lineCount: lineCount
+            });
+        } catch (e) {
+            logError(`Failed to save client logs: ${e.message}`);
+            client.send({
+                type: 'error',
+                message: 'ログの保存に失敗しました'
+            });
         }
     }
 

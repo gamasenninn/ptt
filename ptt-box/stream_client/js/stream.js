@@ -80,20 +80,56 @@ let volumeMeterSource = null;        // MediaStreamSource（disconnect用）
 let pushSubscription = null;
 let vapidPublicKey = null;
 
+// ログバッファ設定（リモートログ収集用）
+const LOG_BUFFER_SIZE = 500;  // 最大500行
+let logBuffer = [];
+
 function debugLog(msg) {
     console.log(msg);
+    const fullTime = new Date().toISOString();
+    const time = new Date().toLocaleTimeString();
+    const entry = `[${fullTime}] ${msg}`;
+
+    // 循環バッファに追加
+    logBuffer.push(entry);
+    if (logBuffer.length > LOG_BUFFER_SIZE) {
+        logBuffer.shift();
+    }
+
+    // DOM表示
     const debugEl = document.getElementById('debug');
     if (debugEl) {
-        const time = new Date().toLocaleTimeString();
         debugEl.innerHTML += `<div>[${time}] ${msg}</div>`;
         debugEl.scrollTop = debugEl.scrollHeight;
     }
 }
 
+// ログをサーバーに送信
+function sendLogsToServer() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        alert('サーバー未接続');
+        return;
+    }
+    if (logBuffer.length === 0) {
+        alert('ログがありません');
+        return;
+    }
+
+    ws.send(JSON.stringify({
+        type: 'client_logs',
+        logs: logBuffer.join('\n'),
+        lineCount: logBuffer.length
+    }));
+
+    debugLog('Logs sent to server (' + logBuffer.length + ' lines)');
+}
+
 function toggleDebug() {
     const debugEl = document.getElementById('debug');
+    const sendBtn = document.getElementById('sendLogsBtn');
     debugVisible = !debugVisible;
     debugEl.style.display = debugVisible ? 'block' : 'none';
+    if (sendBtn) sendBtn.style.display = debugVisible ? 'block' : 'none';
 }
 
 // デバッグボタン表示/非表示
@@ -435,6 +471,8 @@ async function connect() {
                     hint.textContent = 'この名前は使用中です';
                     hint.style.color = '#f87171';
                 }
+            } else if (data.type === 'logs_saved') {
+                debugLog('Logs saved: ' + data.filename + ' (' + data.lineCount + ' lines)');
             }
         };
 
