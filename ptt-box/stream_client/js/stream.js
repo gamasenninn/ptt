@@ -978,11 +978,23 @@ async function attemptIceRestart() {
         await waitForIceGatheringWithEarlyProceed(3000, 'ICE restart');
 
         // SDPに含まれるICE候補タイプを確認
-        const sdp = pc.localDescription.sdp;
-        const hasSrflx = sdp.includes('typ srflx');
-        const hasRelay = sdp.includes('typ relay');
-        const hasHost = sdp.includes('typ host');
+        let sdp = pc.localDescription.sdp;
+        let hasSrflx = sdp.includes('typ srflx');
+        let hasRelay = sdp.includes('typ relay');
+        let hasHost = sdp.includes('typ host');
         debugLog('ICE restart - candidates in SDP: host=' + hasHost + ', srflx=' + hasSrflx + ', relay=' + hasRelay);
+
+        // 候補が0個の場合、追加で待機（restartIce後のgatheringが遅れることがある）
+        if (!hasHost && !hasSrflx && !hasRelay) {
+            debugLog('ICE restart - no candidates, waiting additional 2s for gathering...');
+            await waitForIceGatheringWithTimeout(2000);
+            // 再度SDPを確認
+            sdp = pc.localDescription.sdp;
+            hasSrflx = sdp.includes('typ srflx');
+            hasRelay = sdp.includes('typ relay');
+            hasHost = sdp.includes('typ host');
+            debugLog('ICE restart - after additional wait: host=' + hasHost + ', srflx=' + hasSrflx + ', relay=' + hasRelay);
+        }
 
         // サーバーに新しいOfferを送信
         ws.send(JSON.stringify({
