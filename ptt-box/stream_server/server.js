@@ -1215,6 +1215,10 @@ class StreamServer {
                 // ただしICE Restart処理中はタイマーを開始しない
                 log(`${client.displayName}: WebRTC disconnected, waiting for ICE restart`);
                 if (!client.iceRestartTimer && !client.iceRestartInProgress) {
+                    // クライアントにICE restart要求を送信（クライアント側で検知できていない場合の対策）
+                    client.send({ type: 'request_ice_restart', reason: 'disconnected' });
+                    log(`${client.displayName}: ICE restart requested to client`);
+
                     client.iceRestartTimer = setTimeout(() => {
                         if (client.pc?.connectionState !== 'connected') {
                             log(`${client.displayName}: ICE restart timeout, closing WebSocket`);
@@ -1226,6 +1230,10 @@ class StreamServer {
                 // WebRTC接続失敗時もICE Restartを待つ
                 log(`${client.displayName}: WebRTC failed, waiting for ICE restart`);
                 if (!client.iceRestartTimer && !client.iceRestartInProgress) {
+                    // クライアントにICE restart要求を送信
+                    client.send({ type: 'request_ice_restart', reason: 'failed' });
+                    log(`${client.displayName}: ICE restart requested to client`);
+
                     client.iceRestartTimer = setTimeout(() => {
                         if (client.pc?.connectionState !== 'connected') {
                             log(`${client.displayName}: ICE restart timeout after failure, closing WebSocket`);

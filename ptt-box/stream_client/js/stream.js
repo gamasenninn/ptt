@@ -419,6 +419,15 @@ async function connect() {
                 debugLog('Answer applied successfully');
             } else if (data.type === 'ice_restart_answer') {
                 await handleIceRestartAnswer(data.sdp);
+            } else if (data.type === 'request_ice_restart') {
+                // サーバーからICE restart要求を受信（サーバー側でdisconnected検知した場合）
+                debugLog('Server requested ICE restart (reason: ' + data.reason + ')');
+                // クライアント側ですでに接続済みの場合は無視
+                if (pc && pc.connectionState === 'connected' && pc.iceConnectionState === 'connected') {
+                    debugLog('Server requested ICE restart, but already connected - ignoring');
+                } else if (!iceRestartInProgress && pc && pc.connectionState !== 'closed') {
+                    attemptIceRestart();
+                }
             } else if (data.type === 'ice-candidate' && data.candidate) {
                 // ICE restart中は候補タイプもログ
                 if (iceRestartInProgress) {
@@ -1006,6 +1015,16 @@ async function attemptIceRestart() {
         // タイムアウト時の状態をログ（デバッグ用）
         const finalState = pc ? 'connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState : 'pc=null';
         debugLog('ICE restart timeout (' + (ICE_RESTART_TIMEOUT/1000) + 's), attempt ' + iceRestartAttempts + ', state: ' + finalState);
+
+        // すでに接続済みの場合は成功扱い（タイムアウトでもconnectedなら問題なし）
+        if (pc && pc.connectionState === 'connected') {
+            debugLog('ICE restart - already connected, treating as success');
+            iceRestartInProgress = false;
+            iceRestartTimer = null;
+            iceRestartAttempts = 0;
+            return;
+        }
+
         iceRestartInProgress = false;
         iceRestartTimer = null;
 
