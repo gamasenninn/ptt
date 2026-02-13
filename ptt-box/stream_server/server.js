@@ -978,28 +978,19 @@ class StreamServer {
 
             case 'set_display_name':
                 if (msg.displayName && msg.displayName !== client.displayName) {
-                    // ユニークチェック: 他の接続中クライアントに同名がないか
-                    let nameTaken = false;
+                    // 同名の既存クライアントがあれば閉じる（ゴースト接続のクリーンアップ）
                     for (const [otherId, otherClient] of this.clients) {
                         if (otherId !== client.clientId &&
                             otherClient.displayName === msg.displayName) {
-                            nameTaken = true;
+                            log(`${msg.displayName}: Closing stale connection ${otherId} (replaced by ${client.clientId})`);
+                            otherClient.ws.close(1000, 'Replaced by new connection');
                             break;
                         }
                     }
 
-                    if (nameTaken) {
-                        client.send({
-                            type: 'display_name_error',
-                            error: 'name_taken',
-                            displayName: msg.displayName
-                        });
-                        log(`Display name rejected: ${msg.displayName} (already in use)`);
-                    } else {
-                        const oldName = client.displayName;
-                        client.displayName = msg.displayName;
-                        log(`Display name changed: ${oldName} → ${client.displayName}`);
-                    }
+                    const oldName = client.displayName;
+                    client.displayName = msg.displayName;
+                    log(`Display name changed: ${oldName} → ${client.displayName}`);
                 }
                 break;
 
@@ -1033,6 +1024,10 @@ class StreamServer {
             case 'client_logs':
                 this.handleClientLogs(client, msg);
                 break;
+
+            case 'request_p2p_reconnect':
+                this.handleP2PReconnectRequest(client);
+                break;
         }
     }
 
@@ -1061,6 +1056,44 @@ class StreamServer {
                 message: 'ログの保存に失敗しました'
             });
         }
+    }
+
+    // ICE Restart後のP2P再接続リクエスト
+    handleP2PReconnectRequest(client) {
+        log(`${client.displayName}: P2P reconnect requested (after ICE restart)`);
+
+        // ICE Restartタイマーをキャンセル（重要！クライアントがP2P再接続を要求 = ICE restart成功）
+        if (client.iceRestartTimer) {
+            clearTimeout(client.iceRestartTimer);
+            client.iceRestartTimer = null;
+            log(`${client.displayName}: ICE restart timer cancelled`);
+        }
+        client.iceRestartInProgress = false;
+
+        // 既存のP2P接続をクリーンアップ
+        const p2pConn = this.p2pConnections.get(client.clientId);
+        if (p2pConn) {
+            // クリーンアップタイマーをキャンセル（重要！）
+            if (p2pConn.cleanupTimer) {
+                clearTimeout(p2pConn.cleanupTimer);
+                p2pConn.cleanupTimer = null;
+                log(`${client.displayName}: P2P cleanup timer cancelled`);
+            }
+            if (p2pConn.pc) {
+                p2pConn.pc.onconnectionstatechange = null;
+                p2pConn.pc.onicecandidate = null;
+                p2pConn.pc.ontrack = null;
+                p2pConn.pc.close();
+            }
+            this.p2pConnections.delete(client.clientId);
+            log(`${client.displayName}: Old P2P connection closed`);
+        }
+
+        // クライアントリストを再送信
+        this.sendClientList(client);
+
+        // サーバーからのP2P接続を再確立
+        this.createP2PToClient(client);
     }
 
     // プッシュ通知subscription登録

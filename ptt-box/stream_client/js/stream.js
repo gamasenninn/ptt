@@ -589,12 +589,8 @@ async function setupWebRTC() {
                     iceRestartTimer = null;
                     iceRestartInProgress = false;
                     iceRestartAttempts = 0;  // リセット
-                    // ICE Restart後: P2P接続は維持されているので状態を確認
-                    if (pendingP2PConnections === 0) {
-                        updateConnectionToggle('connected');
-                    } else {
-                        updateConnectionToggle('preparing');
-                    }
+                    // ICE Restart後: P2P接続を再確立
+                    reconnectP2PAfterIceRestart();
                 } else {
                     // 通常の新規接続: P2P接続完了まで「準備中」
                     updateConnectionToggle('preparing');
@@ -1884,6 +1880,12 @@ function createSafeIceCandidate(candidate) {
 async function createP2PConnection(remoteClientId, isOfferer) {
     debugLog('Creating P2P to ' + remoteClientId + ' (offerer: ' + isOfferer + ')');
 
+    // 既存の接続があればクリーンアップ（二重接続防止）
+    if (p2pConnections.has(remoteClientId)) {
+        debugLog('P2P to ' + remoteClientId + ' already exists, cleaning up first');
+        cleanupP2PConnection(remoteClientId);
+    }
+
     const p2pPc = new RTCPeerConnection({
         iceServers: iceServers || [{ urls: 'stun:stun.l.google.com:19302' }]
     });
@@ -2036,6 +2038,17 @@ async function handleP2POffer(fromClientId, sdp) {
     debugLog('P2P offer from ' + fromClientId);
 
     let connInfo = p2pConnections.get(fromClientId);
+
+    // 既存の接続が不良状態の場合はクリーンアップして再作成
+    if (connInfo && connInfo.pc) {
+        const state = connInfo.pc.connectionState;
+        if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+            debugLog('P2P to ' + fromClientId + ' in bad state (' + state + '), recreating');
+            cleanupP2PConnection(fromClientId);
+            connInfo = null;
+        }
+    }
+
     if (!connInfo) {
         connInfo = await createP2PConnection(fromClientId, false);
     }
@@ -2168,6 +2181,25 @@ function cleanupAllP2PConnections() {
     p2pConnections.forEach((_, clientId) => {
         cleanupP2PConnection(clientId);
     });
+}
+
+// ICE Restart成功後にP2P接続を再確立
+function reconnectP2PAfterIceRestart() {
+    debugLog('Reconnecting P2P after ICE restart...');
+
+    // 全P2P接続をクリーンアップ
+    cleanupAllP2PConnections();
+
+    // 状態を更新
+    updateConnectionToggle('preparing');
+
+    // サーバーにP2P再接続をリクエスト
+    // サーバーが client_list と p2p_offer を送信してくれる
+    // handleClientList が P2P接続を作成する（既存フローを再利用）
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'request_p2p_reconnect' }));
+        debugLog('P2P reconnect requested to server');
+    }
 }
 
 // P2P ICE gathering待機
