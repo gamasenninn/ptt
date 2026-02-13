@@ -38,7 +38,9 @@ let wakeLock = null;  // スクリーンロック防止
 // ICE Restart関連
 let iceRestartInProgress = false;
 let iceRestartTimer = null;
-const ICE_RESTART_TIMEOUT = 10000;  // 10秒（基地局ハンドオフの猶予延長）
+let iceRestartAttempts = 0;  // クライアント側リトライ回数
+const ICE_RESTART_TIMEOUT = 3000;  // 3秒（短くしてリトライ回数を増やす）
+const MAX_ICE_RESTART_ATTEMPTS = 3;  // 最大3回試行
 
 // 音声バッファ設定（モバイル回線のジッター対策）
 const PLAYOUT_DELAY_HINT = 0.2;  // 200ms（基地局ハンドオフ時のジッター吸収）
@@ -418,7 +420,13 @@ async function connect() {
             } else if (data.type === 'ice_restart_answer') {
                 await handleIceRestartAnswer(data.sdp);
             } else if (data.type === 'ice-candidate' && data.candidate) {
-                debugLog('Received ICE candidate from server');
+                // ICE restart中は候補タイプもログ
+                if (iceRestartInProgress) {
+                    const candStr = data.candidate.candidate || '';
+                    const typeMatch = candStr.match(/typ (\w+)/);
+                    const candidateType = typeMatch ? typeMatch[1] : 'unknown';
+                    debugLog('ICE restart - received candidate: ' + candidateType);
+                }
                 await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
             } else if (data.type === 'error') {
                 updateStatus('エラー: ' + data.message, 'error');
@@ -542,6 +550,11 @@ async function setupWebRTC() {
     pc.onicecandidate = (event) => {
         if (pc !== thisPC) return;  // 古い接続のイベントを無視
         if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
+            // ICE restart中は候補送信をログ
+            if (iceRestartInProgress) {
+                const candidateType = event.candidate.type || 'unknown';
+                debugLog('ICE restart - sending candidate: ' + candidateType);
+            }
             ws.send(JSON.stringify({
                 type: 'ice-candidate',
                 candidate: {
@@ -571,10 +584,11 @@ async function setupWebRTC() {
             case 'connected':
                 // ICE Restart成功時のクリーンアップ
                 if (iceRestartInProgress) {
-                    debugLog('ICE restart successful! Recovery time: answer applied -> connected');
+                    debugLog('ICE restart successful! (attempt ' + iceRestartAttempts + ')');
                     clearTimeout(iceRestartTimer);
                     iceRestartTimer = null;
                     iceRestartInProgress = false;
+                    iceRestartAttempts = 0;  // リセット
                     // ICE Restart後: P2P接続は維持されているので状態を確認
                     if (pendingP2PConnections === 0) {
                         updateConnectionToggle('connected');
@@ -886,6 +900,7 @@ function cleanupConnection() {
         iceRestartTimer = null;
     }
     iceRestartInProgress = false;
+    iceRestartAttempts = 0;  // リセット
 
     // P2P接続タイムアウトをクリア
     clearP2PConnectionTimeout();
@@ -977,6 +992,7 @@ async function attemptIceRestart() {
     // 既に試行中、またはWebSocket/PCが使えない場合はフォールバック
     if (iceRestartInProgress || !ws || ws.readyState !== WebSocket.OPEN || !pc) {
         debugLog('ICE restart not possible, falling back to reconnect');
+        iceRestartAttempts = 0;  // リセット
         updateConnectionToggle('disconnected');
         enablePttButton(false);
         cleanupConnection();
@@ -984,19 +1000,32 @@ async function attemptIceRestart() {
         return;
     }
 
+    iceRestartAttempts++;
     iceRestartInProgress = true;
     updateConnectionToggle('connecting');
-    debugLog('Attempting ICE restart...');
+    debugLog('Attempting ICE restart... (attempt ' + iceRestartAttempts + '/' + MAX_ICE_RESTART_ATTEMPTS + ')');
 
-    // タイムアウト設定（5秒で完全再接続にフォールバック）
+    // タイムアウト設定（3秒でリトライまたはフォールバック）
     iceRestartTimer = setTimeout(() => {
-        debugLog('ICE restart timeout, falling back to reconnect');
+        // タイムアウト時の状態をログ（デバッグ用）
+        const finalState = pc ? 'connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState : 'pc=null';
+        debugLog('ICE restart timeout (' + (ICE_RESTART_TIMEOUT/1000) + 's), attempt ' + iceRestartAttempts + ', state: ' + finalState);
         iceRestartInProgress = false;
         iceRestartTimer = null;
-        updateConnectionToggle('disconnected');
-        enablePttButton(false);
-        cleanupConnection();
-        scheduleReconnect();
+
+        // まだ試行回数が残っていて、WebSocket/PCが有効ならリトライ
+        if (iceRestartAttempts < MAX_ICE_RESTART_ATTEMPTS && ws && ws.readyState === WebSocket.OPEN && pc) {
+            debugLog('ICE restart - retrying...');
+            attemptIceRestart();  // リトライ
+        } else {
+            // 最大試行回数に達した、または接続が無効
+            debugLog('ICE restart failed after ' + iceRestartAttempts + ' attempts, falling back to reconnect');
+            iceRestartAttempts = 0;  // リセット
+            updateConnectionToggle('disconnected');
+            enablePttButton(false);
+            cleanupConnection();
+            scheduleReconnect();
+        }
     }, ICE_RESTART_TIMEOUT);
 
     try {
@@ -1137,6 +1166,12 @@ async function handleIceRestartAnswer(sdp) {
     debugLog('Received ICE restart answer');
     debugLog('ICE restart - before: connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState + ', iceGatherState=' + pc.iceGatheringState);
 
+    // Answer内のICE候補を解析してログ
+    const answerHasHost = sdp.includes('typ host');
+    const answerHasSrflx = sdp.includes('typ srflx');
+    const answerHasRelay = sdp.includes('typ relay');
+    debugLog('ICE restart - answer candidates: host=' + answerHasHost + ', srflx=' + answerHasSrflx + ', relay=' + answerHasRelay);
+
     try {
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
         debugLog('ICE restart answer applied');
@@ -1146,6 +1181,13 @@ async function handleIceRestartAnswer(sdp) {
         // connectionstatechangeハンドラで'connected'になった時にクリアする
         // ここではフラグのみクリアせず、タイマーも維持
         debugLog('ICE restart - waiting for connection recovery...');
+
+        // 2秒後に状態をログ（デバッグ用中間チェック）
+        setTimeout(() => {
+            if (iceRestartInProgress && pc) {
+                debugLog('ICE restart - 2s check: connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState);
+            }
+        }, 2000);
 
         // 接続状態を確認して適切なUIに更新
         if (pc.connectionState === 'connected') {
