@@ -1070,6 +1070,10 @@ class StreamServer {
         }
         client.iceRestartInProgress = false;
 
+        // ICE restart成功後のクールダウン期間を設定
+        // この期間中は新しいiceRestartTimerを設定しない（一時的なdisconnected状態を無視）
+        client.iceRestartSuccessTime = Date.now();
+
         // 既存のP2P接続をクリーンアップ
         const p2pConn = this.p2pConnections.get(client.clientId);
         if (p2pConn) {
@@ -1212,9 +1216,16 @@ class StreamServer {
                 }
             } else if (client.pc.connectionState === 'disconnected') {
                 // WebRTC切断時はICE Restartを待つ（即座に閉じない）
-                // ただしICE Restart処理中はタイマーを開始しない
+                // ただしICE Restart処理中、またはICE restart成功直後はタイマーを開始しない
                 log(`${client.displayName}: WebRTC disconnected, waiting for ICE restart`);
-                if (!client.iceRestartTimer && !client.iceRestartInProgress) {
+
+                // ICE restart成功後のクールダウン期間チェック（10秒間）
+                const cooldownMs = 10000;
+                const timeSinceSuccess = client.iceRestartSuccessTime
+                    ? Date.now() - client.iceRestartSuccessTime
+                    : Infinity;
+
+                if (!client.iceRestartTimer && !client.iceRestartInProgress && timeSinceSuccess > cooldownMs) {
                     // クライアントにICE restart要求を送信（クライアント側で検知できていない場合の対策）
                     client.send({ type: 'request_ice_restart', reason: 'disconnected' });
                     log(`${client.displayName}: ICE restart requested to client`);
@@ -1225,11 +1236,21 @@ class StreamServer {
                             client.ws.close(1000, 'ICE restart timeout');
                         }
                     }, ICE_RESTART_TIMEOUT);
+                } else if (timeSinceSuccess <= cooldownMs) {
+                    log(`${client.displayName}: ICE restart cooldown active (${Math.round(timeSinceSuccess/1000)}s since success)`);
                 }
             } else if (client.pc.connectionState === 'failed') {
                 // WebRTC接続失敗時もICE Restartを待つ
+                // ただしICE restart成功直後はタイマーを開始しない
                 log(`${client.displayName}: WebRTC failed, waiting for ICE restart`);
-                if (!client.iceRestartTimer && !client.iceRestartInProgress) {
+
+                // ICE restart成功後のクールダウン期間チェック（10秒間）
+                const cooldownMs = 10000;
+                const timeSinceSuccess = client.iceRestartSuccessTime
+                    ? Date.now() - client.iceRestartSuccessTime
+                    : Infinity;
+
+                if (!client.iceRestartTimer && !client.iceRestartInProgress && timeSinceSuccess > cooldownMs) {
                     // クライアントにICE restart要求を送信
                     client.send({ type: 'request_ice_restart', reason: 'failed' });
                     log(`${client.displayName}: ICE restart requested to client`);
@@ -1240,6 +1261,8 @@ class StreamServer {
                             client.ws.close(1000, 'ICE restart failed');
                         }
                     }, ICE_RESTART_TIMEOUT);
+                } else if (timeSinceSuccess <= cooldownMs) {
+                    log(`${client.displayName}: ICE restart cooldown active (${Math.round(timeSinceSuccess/1000)}s since success)`);
                 }
             }
         };
