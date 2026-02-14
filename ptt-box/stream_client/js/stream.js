@@ -38,10 +38,12 @@ let wakeLock = null;  // スクリーンロック防止
 // ICE Restart関連
 let iceRestartInProgress = false;
 let iceRestartTimer = null;
-const ICE_RESTART_TIMEOUT = 5000;  // 5秒
+let iceRestartAttempts = 0;  // クライアント側リトライ回数
+const ICE_RESTART_TIMEOUT = 3000;  // 3秒（短くしてリトライ回数を増やす）
+const MAX_ICE_RESTART_ATTEMPTS = 3;  // 最大3回試行
 
 // 音声バッファ設定（モバイル回線のジッター対策）
-const PLAYOUT_DELAY_HINT = 0.1;  // 100ms（遅延と安定性のバランス）
+const PLAYOUT_DELAY_HINT = 0.2;  // 200ms（基地局ハンドオフ時のジッター吸収）
 
 // PTT関連
 let myClientId = null;
@@ -80,20 +82,56 @@ let volumeMeterSource = null;        // MediaStreamSource（disconnect用）
 let pushSubscription = null;
 let vapidPublicKey = null;
 
+// ログバッファ設定（リモートログ収集用）
+const LOG_BUFFER_SIZE = 500;  // 最大500行
+let logBuffer = [];
+
 function debugLog(msg) {
     console.log(msg);
+    const fullTime = new Date().toISOString();
+    const time = new Date().toLocaleTimeString();
+    const entry = `[${fullTime}] ${msg}`;
+
+    // 循環バッファに追加
+    logBuffer.push(entry);
+    if (logBuffer.length > LOG_BUFFER_SIZE) {
+        logBuffer.shift();
+    }
+
+    // DOM表示
     const debugEl = document.getElementById('debug');
     if (debugEl) {
-        const time = new Date().toLocaleTimeString();
         debugEl.innerHTML += `<div>[${time}] ${msg}</div>`;
         debugEl.scrollTop = debugEl.scrollHeight;
     }
 }
 
+// ログをサーバーに送信
+function sendLogsToServer() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        alert('サーバー未接続');
+        return;
+    }
+    if (logBuffer.length === 0) {
+        alert('ログがありません');
+        return;
+    }
+
+    ws.send(JSON.stringify({
+        type: 'client_logs',
+        logs: logBuffer.join('\n'),
+        lineCount: logBuffer.length
+    }));
+
+    debugLog('Logs sent to server (' + logBuffer.length + ' lines)');
+}
+
 function toggleDebug() {
     const debugEl = document.getElementById('debug');
+    const sendBtn = document.getElementById('sendLogsBtn');
     debugVisible = !debugVisible;
     debugEl.style.display = debugVisible ? 'block' : 'none';
+    if (sendBtn) sendBtn.style.display = debugVisible ? 'block' : 'none';
 }
 
 // デバッグボタン表示/非表示
@@ -381,8 +419,23 @@ async function connect() {
                 debugLog('Answer applied successfully');
             } else if (data.type === 'ice_restart_answer') {
                 await handleIceRestartAnswer(data.sdp);
+            } else if (data.type === 'request_ice_restart') {
+                // サーバーからICE restart要求を受信（サーバー側でdisconnected検知した場合）
+                debugLog('Server requested ICE restart (reason: ' + data.reason + ')');
+                // クライアント側ですでに接続済みの場合は無視
+                if (pc && pc.connectionState === 'connected' && pc.iceConnectionState === 'connected') {
+                    debugLog('Server requested ICE restart, but already connected - ignoring');
+                } else if (!iceRestartInProgress && pc && pc.connectionState !== 'closed') {
+                    attemptIceRestart();
+                }
             } else if (data.type === 'ice-candidate' && data.candidate) {
-                debugLog('Received ICE candidate from server');
+                // ICE restart中は候補タイプもログ
+                if (iceRestartInProgress) {
+                    const candStr = data.candidate.candidate || '';
+                    const typeMatch = candStr.match(/typ (\w+)/);
+                    const candidateType = typeMatch ? typeMatch[1] : 'unknown';
+                    debugLog('ICE restart - received candidate: ' + candidateType);
+                }
                 await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
             } else if (data.type === 'error') {
                 updateStatus('エラー: ' + data.message, 'error');
@@ -435,6 +488,8 @@ async function connect() {
                     hint.textContent = 'この名前は使用中です';
                     hint.style.color = '#f87171';
                 }
+            } else if (data.type === 'logs_saved') {
+                debugLog('Logs saved: ' + data.filename + ' (' + data.lineCount + ' lines)');
             }
         };
 
@@ -504,6 +559,11 @@ async function setupWebRTC() {
     pc.onicecandidate = (event) => {
         if (pc !== thisPC) return;  // 古い接続のイベントを無視
         if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
+            // ICE restart中は候補送信をログ
+            if (iceRestartInProgress) {
+                const candidateType = event.candidate.type || 'unknown';
+                debugLog('ICE restart - sending candidate: ' + candidateType);
+            }
             ws.send(JSON.stringify({
                 type: 'ice-candidate',
                 candidate: {
@@ -522,21 +582,24 @@ async function setupWebRTC() {
             debugLog('Ignoring old connection state event');
             return;
         }
-        debugLog('Connection: ' + pc.connectionState);
+        // ICE restart中は詳細ログを出力
+        if (iceRestartInProgress) {
+            debugLog('Connection (during ICE restart): ' + pc.connectionState + ', iceConn=' + pc.iceConnectionState);
+        } else {
+            debugLog('Connection: ' + pc.connectionState);
+        }
+
         switch (pc.connectionState) {
             case 'connected':
                 // ICE Restart成功時のクリーンアップ
                 if (iceRestartInProgress) {
-                    debugLog('ICE restart successful');
+                    debugLog('ICE restart successful! (attempt ' + iceRestartAttempts + ')');
                     clearTimeout(iceRestartTimer);
                     iceRestartTimer = null;
                     iceRestartInProgress = false;
-                    // ICE Restart後: P2P接続は維持されているので状態を確認
-                    if (pendingP2PConnections === 0) {
-                        updateConnectionToggle('connected');
-                    } else {
-                        updateConnectionToggle('preparing');
-                    }
+                    iceRestartAttempts = 0;  // リセット
+                    // ICE Restart後: P2P接続を再確立
+                    reconnectP2PAfterIceRestart();
                 } else {
                     // 通常の新規接続: P2P接続完了まで「準備中」
                     updateConnectionToggle('preparing');
@@ -547,18 +610,25 @@ async function setupWebRTC() {
                 requestWakeLock();  // スクリーンオフ防止
                 break;
             case 'connecting':
+                if (iceRestartInProgress) {
+                    debugLog('ICE restart - state transitioning to connecting (good sign)');
+                }
                 updateConnectionToggle('connecting');
                 break;
             case 'disconnected':
                 // ICE Restart中でなければ試行
                 if (!iceRestartInProgress) {
                     attemptIceRestart();
+                } else {
+                    debugLog('ICE restart - still disconnected, waiting for recovery...');
                 }
                 break;
             case 'failed':
                 // ICE Restart中でなければ試行
                 if (!iceRestartInProgress) {
                     attemptIceRestart();
+                } else {
+                    debugLog('ICE restart - connection failed during restart');
                 }
                 break;
         }
@@ -567,9 +637,18 @@ async function setupWebRTC() {
     // ICE接続状態の詳細ログ
     pc.oniceconnectionstatechange = () => {
         if (pc !== thisPC) return;  // 古い接続のイベントを無視
-        debugLog('ICE: ' + pc.iceConnectionState);
+        if (iceRestartInProgress) {
+            debugLog('ICE (during restart): ' + pc.iceConnectionState);
+            if (pc.iceConnectionState === 'checking') {
+                debugLog('ICE restart - checking candidates (connectivity checks in progress)');
+            } else if (pc.iceConnectionState === 'connected') {
+                debugLog('ICE restart - ICE layer connected!');
+            }
+        } else {
+            debugLog('ICE: ' + pc.iceConnectionState);
+        }
         if (pc.iceConnectionState === 'failed') {
-            debugLog('ERROR: ICE failed - TURN unreachable?');
+            debugLog('ERROR: ICE failed - TURN unreachable or all candidates failed');
         }
     };
 
@@ -826,6 +905,7 @@ function cleanupConnection() {
         iceRestartTimer = null;
     }
     iceRestartInProgress = false;
+    iceRestartAttempts = 0;  // リセット
 
     // P2P接続タイムアウトをクリア
     clearP2PConnectionTimeout();
@@ -917,6 +997,7 @@ async function attemptIceRestart() {
     // 既に試行中、またはWebSocket/PCが使えない場合はフォールバック
     if (iceRestartInProgress || !ws || ws.readyState !== WebSocket.OPEN || !pc) {
         debugLog('ICE restart not possible, falling back to reconnect');
+        iceRestartAttempts = 0;  // リセット
         updateConnectionToggle('disconnected');
         enablePttButton(false);
         cleanupConnection();
@@ -924,40 +1005,86 @@ async function attemptIceRestart() {
         return;
     }
 
+    iceRestartAttempts++;
     iceRestartInProgress = true;
     updateConnectionToggle('connecting');
-    debugLog('Attempting ICE restart...');
+    debugLog('Attempting ICE restart... (attempt ' + iceRestartAttempts + '/' + MAX_ICE_RESTART_ATTEMPTS + ')');
 
-    // タイムアウト設定（5秒で完全再接続にフォールバック）
+    // タイムアウト設定（3秒でリトライまたはフォールバック）
     iceRestartTimer = setTimeout(() => {
-        debugLog('ICE restart timeout, falling back to reconnect');
+        // タイムアウト時の状態をログ（デバッグ用）
+        const finalState = pc ? 'connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState : 'pc=null';
+        debugLog('ICE restart timeout (' + (ICE_RESTART_TIMEOUT/1000) + 's), attempt ' + iceRestartAttempts + ', state: ' + finalState);
+
+        // すでに接続済みの場合は成功扱い（タイムアウトでもconnectedなら問題なし）
+        if (pc && pc.connectionState === 'connected') {
+            debugLog('ICE restart - already connected, treating as success');
+            iceRestartInProgress = false;
+            iceRestartTimer = null;
+            iceRestartAttempts = 0;
+            return;
+        }
+
         iceRestartInProgress = false;
         iceRestartTimer = null;
-        updateConnectionToggle('disconnected');
-        enablePttButton(false);
-        cleanupConnection();
-        scheduleReconnect();
+
+        // まだ試行回数が残っていて、WebSocket/PCが有効ならリトライ
+        if (iceRestartAttempts < MAX_ICE_RESTART_ATTEMPTS && ws && ws.readyState === WebSocket.OPEN && pc) {
+            debugLog('ICE restart - retrying...');
+            attemptIceRestart();  // リトライ
+        } else {
+            // 最大試行回数に達した、または接続が無効
+            debugLog('ICE restart failed after ' + iceRestartAttempts + ' attempts, falling back to reconnect');
+            iceRestartAttempts = 0;  // リセット
+            updateConnectionToggle('disconnected');
+            enablePttButton(false);
+            cleanupConnection();
+            scheduleReconnect();
+        }
     }, ICE_RESTART_TIMEOUT);
 
     try {
+        debugLog('ICE restart - starting: connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState);
+
         // ブラウザのICE Restart APIを呼び出し（内部フラグをセット）
         pc.restartIce();
+        debugLog('ICE restart - restartIce() called');
 
         // 新しいOffer作成（restartIce()後なので新ICE資格情報が含まれる）
         const offer = await pc.createOffer();
         const monoSdp = forceOpusMono(offer.sdp);
         await pc.setLocalDescription({ type: 'offer', sdp: monoSdp });
+        debugLog('ICE restart - setLocalDescription done, iceGathering=' + pc.iceGatheringState);
 
-        // ICE gathering完了を待つ（短いタイムアウト）
-        await waitForIceGatheringWithTimeout(3000);
+        // ICE gathering完了を待つ（Early Proceed最適化）
+        await waitForIceGatheringWithEarlyProceed(3000, 'ICE restart');
+
+        // SDPに含まれるICE候補タイプを確認
+        let sdp = pc.localDescription.sdp;
+        let hasSrflx = sdp.includes('typ srflx');
+        let hasRelay = sdp.includes('typ relay');
+        let hasHost = sdp.includes('typ host');
+        debugLog('ICE restart - candidates in SDP: host=' + hasHost + ', srflx=' + hasSrflx + ', relay=' + hasRelay);
+
+        // 候補が0個の場合、追加で待機（restartIce後のgatheringが遅れることがある）
+        if (!hasHost && !hasSrflx && !hasRelay) {
+            debugLog('ICE restart - no candidates, waiting additional 2s for gathering...');
+            await waitForIceGatheringWithTimeout(2000);
+            // 再度SDPを確認
+            sdp = pc.localDescription.sdp;
+            hasSrflx = sdp.includes('typ srflx');
+            hasRelay = sdp.includes('typ relay');
+            hasHost = sdp.includes('typ host');
+            debugLog('ICE restart - after additional wait: host=' + hasHost + ', srflx=' + hasSrflx + ', relay=' + hasRelay);
+        }
 
         // サーバーに新しいOfferを送信
         ws.send(JSON.stringify({
             type: 'ice_restart_offer',
-            sdp: pc.localDescription.sdp
+            sdp: sdp
         }));
 
-        debugLog('ICE restart offer sent');
+        debugLog('ICE restart offer sent, waiting for answer...');
     } catch (e) {
         debugLog('ICE restart failed: ' + e.message);
         clearTimeout(iceRestartTimer);
@@ -989,21 +1116,93 @@ function waitForIceGatheringWithTimeout(timeout) {
     });
 }
 
+// ICE gathering完了待ち（Early Proceed最適化版）
+// srflx/relay候補取得後500msで早期送信することで高速化
+function waitForIceGatheringWithEarlyProceed(timeout, context = '') {
+    return new Promise((resolve) => {
+        if (!pc || pc.iceGatheringState === 'complete') {
+            resolve();
+            return;
+        }
+
+        let earlyProceedTimer = null;
+        let resolved = false;
+
+        const cleanup = () => {
+            if (resolved) return;
+            resolved = true;
+            pc.removeEventListener('icegatheringstatechange', onGatheringChange);
+            pc.removeEventListener('icecandidate', onIceCandidate);
+        };
+
+        const timer = setTimeout(() => {
+            debugLog(context + ' ICE gathering timeout');
+            cleanup();
+            resolve();
+        }, timeout);
+
+        const proceedEarly = (reason) => {
+            if (earlyProceedTimer) return;
+            earlyProceedTimer = setTimeout(() => {
+                debugLog(context + ' early proceed: ' + reason);
+                clearTimeout(timer);
+                cleanup();
+                resolve();
+            }, 500);  // srflx/relay取得後500msで進む
+        };
+
+        const onGatheringChange = () => {
+            if (pc.iceGatheringState === 'complete') {
+                debugLog(context + ' ICE gathering complete');
+                clearTimeout(timer);
+                if (earlyProceedTimer) clearTimeout(earlyProceedTimer);
+                cleanup();
+                resolve();
+            }
+        };
+
+        const onIceCandidate = (event) => {
+            if (event.candidate) {
+                const type = event.candidate.type || 'unknown';
+                debugLog(context + ' candidate: ' + type);
+                if (type === 'relay' || type === 'srflx') {
+                    proceedEarly(type);
+                }
+            }
+        };
+
+        pc.addEventListener('icegatheringstatechange', onGatheringChange);
+        pc.addEventListener('icecandidate', onIceCandidate);
+    });
+}
+
 // ICE Restart Answer処理
 async function handleIceRestartAnswer(sdp) {
     debugLog('Received ICE restart answer');
+    debugLog('ICE restart - before: connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState + ', iceGatherState=' + pc.iceGatheringState);
+
+    // Answer内のICE候補を解析してログ
+    const answerHasHost = sdp.includes('typ host');
+    const answerHasSrflx = sdp.includes('typ srflx');
+    const answerHasRelay = sdp.includes('typ relay');
+    debugLog('ICE restart - answer candidates: host=' + answerHasHost + ', srflx=' + answerHasSrflx + ', relay=' + answerHasRelay);
+
     try {
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
         debugLog('ICE restart answer applied');
+        debugLog('ICE restart - after: connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState);
 
-        // Answer適用成功 → ICE Restartは成功と見なしてタイマークリア
-        // (connectionStateが変化しない場合があるため、ここでクリア)
-        if (iceRestartTimer) {
-            clearTimeout(iceRestartTimer);
-            iceRestartTimer = null;
-        }
-        iceRestartInProgress = false;
-        debugLog('ICE restart completed');
+        // Answer適用後、接続状態を監視するためタイマーは維持
+        // connectionstatechangeハンドラで'connected'になった時にクリアする
+        // ここではフラグのみクリアせず、タイマーも維持
+        debugLog('ICE restart - waiting for connection recovery...');
+
+        // 2秒後に状態をログ（デバッグ用中間チェック）
+        setTimeout(() => {
+            if (iceRestartInProgress && pc) {
+                debugLog('ICE restart - 2s check: connState=' + pc.connectionState + ', iceConnState=' + pc.iceConnectionState);
+            }
+        }, 2000);
 
         // 接続状態を確認して適切なUIに更新
         if (pc.connectionState === 'connected') {
@@ -1700,6 +1899,12 @@ function createSafeIceCandidate(candidate) {
 async function createP2PConnection(remoteClientId, isOfferer) {
     debugLog('Creating P2P to ' + remoteClientId + ' (offerer: ' + isOfferer + ')');
 
+    // 既存の接続があればクリーンアップ（二重接続防止）
+    if (p2pConnections.has(remoteClientId)) {
+        debugLog('P2P to ' + remoteClientId + ' already exists, cleaning up first');
+        cleanupP2PConnection(remoteClientId);
+    }
+
     const p2pPc = new RTCPeerConnection({
         iceServers: iceServers || [{ urls: 'stun:stun.l.google.com:19302' }]
     });
@@ -1731,6 +1936,7 @@ async function createP2PConnection(remoteClientId, isOfferer) {
         // ジッターバッファを広げる（モバイル回線対策）
         if (event.receiver && event.receiver.playoutDelayHint !== undefined) {
             event.receiver.playoutDelayHint = PLAYOUT_DELAY_HINT;
+            debugLog('P2P playout delay set: ' + PLAYOUT_DELAY_HINT + 's');
         }
 
         // 音声再生用要素を作成
@@ -1851,6 +2057,17 @@ async function handleP2POffer(fromClientId, sdp) {
     debugLog('P2P offer from ' + fromClientId);
 
     let connInfo = p2pConnections.get(fromClientId);
+
+    // 既存の接続が不良状態の場合はクリーンアップして再作成
+    if (connInfo && connInfo.pc) {
+        const state = connInfo.pc.connectionState;
+        if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+            debugLog('P2P to ' + fromClientId + ' in bad state (' + state + '), recreating');
+            cleanupP2PConnection(fromClientId);
+            connInfo = null;
+        }
+    }
+
     if (!connInfo) {
         connInfo = await createP2PConnection(fromClientId, false);
     }
@@ -1983,6 +2200,25 @@ function cleanupAllP2PConnections() {
     p2pConnections.forEach((_, clientId) => {
         cleanupP2PConnection(clientId);
     });
+}
+
+// ICE Restart成功後にP2P接続を再確立
+function reconnectP2PAfterIceRestart() {
+    debugLog('Reconnecting P2P after ICE restart...');
+
+    // 全P2P接続をクリーンアップ
+    cleanupAllP2PConnections();
+
+    // 状態を更新
+    updateConnectionToggle('preparing');
+
+    // サーバーにP2P再接続をリクエスト
+    // サーバーが client_list と p2p_offer を送信してくれる
+    // handleClientList が P2P接続を作成する（既存フローを再利用）
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'request_p2p_reconnect' }));
+        debugLog('P2P reconnect requested to server');
+    }
 }
 
 // P2P ICE gathering待機

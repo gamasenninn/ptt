@@ -45,8 +45,9 @@ const SERVER_MIC_MODE = process.env.SERVER_MIC_MODE || 'always';  // 'always' or
 const RELAY_PORT = process.env.RELAY_PORT || 'COM3';
 const RELAY_BAUD_RATE = parseInt(process.env.RELAY_BAUD_RATE) || 9600;
 const ENABLE_RELAY = process.env.ENABLE_RELAY !== 'false';  // デフォルト有効
-const ICE_RESTART_TIMEOUT = parseInt(process.env.ICE_RESTART_TIMEOUT) || 5000;  // ICE Restart タイムアウト（5秒）
+const ICE_RESTART_TIMEOUT = parseInt(process.env.ICE_RESTART_TIMEOUT) || 10000;  // ICE Restart タイムアウト（10秒）
 const MAX_ICE_RESTART_ATTEMPTS = 5;  // ICE Restart 最大試行回数
+const ICE_RESTART_COOLDOWN = 10000;  // ICE Restart成功後のクールダウン期間（10秒）
 const OFFER_TIMEOUT = 10000;  // Offer待ちタイムアウト（10秒）
 const FFMPEG_RESTART_HOURS = parseFloat(process.env.FFMPEG_RESTART_HOURS) || 0;  // FFmpeg定期再起動（時間、0=無効）
 
@@ -233,10 +234,13 @@ class StreamServer {
         // FFmpegドリフト計測
         this.ffmpegStartTime = 0;
         this.ffmpegRestartCount = 0;
-        this.avgFrameGap = 0;        // フレーム間隔のEMA (ms)
+        this.avgFrameGap = 0;        // フレーム間隔のEMA (ms) - 参考値
         this.activeFrameCount = 0;   // DTX除外のアクティブフレーム数
         this.lastFrameTime = 0;      // 直前フレームの時刻
         this.oggParserBufferSize = 0; // OGGパーサーバッファサイズ
+        // RTPベースの真のドリフト計測
+        this.driftBaseTime = 0;      // 計測基準時刻（壁時計）
+        this.driftBaseRtpTs = 0;     // 計測基準RTPタイムスタンプ
 
         // 音声出力（スピーカー）
         this.speakerProcess = null;
@@ -328,11 +332,18 @@ class StreamServer {
             }
 
             // 音声健全性ログ
-            if (this.ffmpegProcess && this.activeFrameCount > 100) {
+            if (this.ffmpegProcess && this.activeFrameCount > 100 && this.driftBaseTime > 0) {
                 const ffmpegUptime = Math.round((Date.now() - this.ffmpegStartTime) / 60000);
                 const gapMs = this.avgFrameGap.toFixed(2);
-                const driftPpm = Math.round(((this.avgFrameGap / 20) - 1) * 1000000);
-                log(`[Audio] gap=${gapMs}ms, drift=${driftPpm > 0 ? '+' : ''}${driftPpm}ppm, buffer=${this.oggParserBufferSize}B, ffmpeg_uptime=${ffmpegUptime}min`);
+
+                // RTPベースの真のドリフト計測
+                // RTPタイムスタンプ（送信サンプル数）vs 壁時計で音声の実際のずれを計測
+                const elapsedMs = Date.now() - this.driftBaseTime;
+                const expectedRtpTs = this.driftBaseRtpTs + (elapsedMs * 48);  // 48サンプル/ms @ 48kHz
+                const actualRtpTs = this.rtpTimestamp;
+                const driftPpm = expectedRtpTs > 0 ? Math.round(((actualRtpTs - expectedRtpTs) / expectedRtpTs) * 1000000) : 0;
+
+                log(`[Audio] rtp_drift=${driftPpm > 0 ? '+' : ''}${driftPpm}ppm, gap=${gapMs}ms, buffer=${this.oggParserBufferSize}B, ffmpeg_uptime=${ffmpegUptime}min`);
 
                 // gap異常検出（サンプルレート誤検出の可能性）
                 // 正常範囲: 18-23ms (期待値20ms ± 15%)
@@ -344,12 +355,9 @@ class StreamServer {
                         log(`[Audio] Triggering FFmpeg restart due to abnormal gap`);
                         this.restartMicCapture('abnormal_gap');
                     }
-                } else if (Math.abs(driftPpm) > 2000 && FFMPEG_RESTART_HOURS > 0) {
-                    log(`[Audio] WARNING: drift=${driftPpm}ppm exceeds 2000ppm, triggering FFmpeg restart`);
-                    this.restartMicCapture('drift');
-                } else if (Math.abs(driftPpm) > 500) {
-                    log(`[Audio] WARNING: drift=${driftPpm}ppm exceeds 500ppm (${(driftPpm * 3.6 / 1000).toFixed(1)}s/hour accumulation)`);
                 }
+                // 注: rtp_driftはUSBデバイスクロックとシステムクロックの差を示す
+                // WebRTCのジッターバッファが補正するため、音声品質には影響しない
             }
         }, 300000);  // 5分ごと
 
@@ -573,7 +581,12 @@ class StreamServer {
                         ffmpegUptimeMin: this.ffmpegStartTime ? Math.round((Date.now() - this.ffmpegStartTime) / 60000) : 0,
                         ffmpegRestartCount: this.ffmpegRestartCount,
                         avgFrameGapMs: parseFloat(this.avgFrameGap.toFixed(2)),
-                        driftPpm: this.avgFrameGap > 0 ? Math.round(((this.avgFrameGap / 20) - 1) * 1000000) : 0,
+                        // RTPベースの真のドリフト（壁時計 vs RTPタイムスタンプ）
+                        rtpDriftPpm: this.driftBaseTime > 0 ? (() => {
+                            const elapsedMs = Date.now() - this.driftBaseTime;
+                            const expectedRtpTs = this.driftBaseRtpTs + (elapsedMs * 48);
+                            return Math.round(((this.rtpTimestamp - expectedRtpTs) / expectedRtpTs) * 1000000);
+                        })() : 0,
                         oggBufferSize: this.oggParserBufferSize
                     }
                 }
@@ -966,28 +979,19 @@ class StreamServer {
 
             case 'set_display_name':
                 if (msg.displayName && msg.displayName !== client.displayName) {
-                    // ユニークチェック: 他の接続中クライアントに同名がないか
-                    let nameTaken = false;
+                    // 同名の既存クライアントがあれば閉じる（ゴースト接続のクリーンアップ）
                     for (const [otherId, otherClient] of this.clients) {
                         if (otherId !== client.clientId &&
                             otherClient.displayName === msg.displayName) {
-                            nameTaken = true;
+                            log(`${msg.displayName}: Closing stale connection ${otherId} (replaced by ${client.clientId})`);
+                            otherClient.ws.close(1000, 'Replaced by new connection');
                             break;
                         }
                     }
 
-                    if (nameTaken) {
-                        client.send({
-                            type: 'display_name_error',
-                            error: 'name_taken',
-                            displayName: msg.displayName
-                        });
-                        log(`Display name rejected: ${msg.displayName} (already in use)`);
-                    } else {
-                        const oldName = client.displayName;
-                        client.displayName = msg.displayName;
-                        log(`Display name changed: ${oldName} → ${client.displayName}`);
-                    }
+                    const oldName = client.displayName;
+                    client.displayName = msg.displayName;
+                    log(`Display name changed: ${oldName} → ${client.displayName}`);
                 }
                 break;
 
@@ -1017,7 +1021,84 @@ class StreamServer {
             case 'push_subscribe':
                 this.handlePushSubscribe(client, msg.subscription);
                 break;
+
+            case 'client_logs':
+                this.handleClientLogs(client, msg);
+                break;
+
+            case 'request_p2p_reconnect':
+                this.handleP2PReconnectRequest(client);
+                break;
         }
+    }
+
+    // クライアントログをサーバーに保存
+    handleClientLogs(client, message) {
+        const { logs, lineCount } = message;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const safeName = (client.displayName || client.clientId).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const filename = `client-${safeName}-${timestamp}.log`;
+        const filepath = path.join(LOG_DIR, filename);
+
+        try {
+            fs.writeFileSync(filepath, logs, 'utf-8');
+            log(`${client.displayName}: Client logs saved (${lineCount} lines) -> ${filename}`);
+
+            // 成功通知
+            client.send({
+                type: 'logs_saved',
+                filename: filename,
+                lineCount: lineCount
+            });
+        } catch (e) {
+            logError(`Failed to save client logs: ${e.message}`);
+            client.send({
+                type: 'error',
+                message: 'ログの保存に失敗しました'
+            });
+        }
+    }
+
+    // ICE Restart後のP2P再接続リクエスト
+    handleP2PReconnectRequest(client) {
+        log(`${client.displayName}: P2P reconnect requested (after ICE restart)`);
+
+        // ICE Restartタイマーをキャンセル（重要！クライアントがP2P再接続を要求 = ICE restart成功）
+        if (client.iceRestartTimer) {
+            clearTimeout(client.iceRestartTimer);
+            client.iceRestartTimer = null;
+            log(`${client.displayName}: ICE restart timer cancelled`);
+        }
+        client.iceRestartInProgress = false;
+
+        // ICE restart成功後のクールダウン期間を設定
+        // この期間中は新しいiceRestartTimerを設定しない（一時的なdisconnected状態を無視）
+        client.iceRestartSuccessTime = Date.now();
+
+        // 既存のP2P接続をクリーンアップ
+        const p2pConn = this.p2pConnections.get(client.clientId);
+        if (p2pConn) {
+            // クリーンアップタイマーをキャンセル（重要！）
+            if (p2pConn.cleanupTimer) {
+                clearTimeout(p2pConn.cleanupTimer);
+                p2pConn.cleanupTimer = null;
+                log(`${client.displayName}: P2P cleanup timer cancelled`);
+            }
+            if (p2pConn.pc) {
+                p2pConn.pc.onconnectionstatechange = null;
+                p2pConn.pc.onicecandidate = null;
+                p2pConn.pc.ontrack = null;
+                p2pConn.pc.close();
+            }
+            this.p2pConnections.delete(client.clientId);
+            log(`${client.displayName}: Old P2P connection closed`);
+        }
+
+        // クライアントリストを再送信
+        this.sendClientList(client);
+
+        // サーバーからのP2P接続を再確立
+        this.createP2PToClient(client);
     }
 
     // プッシュ通知subscription登録
@@ -1136,26 +1217,51 @@ class StreamServer {
                 }
             } else if (client.pc.connectionState === 'disconnected') {
                 // WebRTC切断時はICE Restartを待つ（即座に閉じない）
-                // ただしICE Restart処理中はタイマーを開始しない
+                // ただしICE Restart処理中、またはICE restart成功直後はタイマーを開始しない
                 log(`${client.displayName}: WebRTC disconnected, waiting for ICE restart`);
-                if (!client.iceRestartTimer && !client.iceRestartInProgress) {
+
+                // ICE restart成功後のクールダウン期間チェック
+                const timeSinceSuccess = client.iceRestartSuccessTime
+                    ? Date.now() - client.iceRestartSuccessTime
+                    : Infinity;
+
+                if (!client.iceRestartTimer && !client.iceRestartInProgress && timeSinceSuccess > ICE_RESTART_COOLDOWN) {
+                    // クライアントにICE restart要求を送信（クライアント側で検知できていない場合の対策）
+                    client.send({ type: 'request_ice_restart', reason: 'disconnected' });
+                    log(`${client.displayName}: ICE restart requested to client`);
+
                     client.iceRestartTimer = setTimeout(() => {
                         if (client.pc?.connectionState !== 'connected') {
                             log(`${client.displayName}: ICE restart timeout, closing WebSocket`);
                             client.ws.close(1000, 'ICE restart timeout');
                         }
                     }, ICE_RESTART_TIMEOUT);
+                } else if (timeSinceSuccess <= ICE_RESTART_COOLDOWN) {
+                    log(`${client.displayName}: ICE restart cooldown active (${Math.round(timeSinceSuccess/1000)}s since success)`);
                 }
             } else if (client.pc.connectionState === 'failed') {
                 // WebRTC接続失敗時もICE Restartを待つ
+                // ただしICE restart成功直後はタイマーを開始しない
                 log(`${client.displayName}: WebRTC failed, waiting for ICE restart`);
-                if (!client.iceRestartTimer && !client.iceRestartInProgress) {
+
+                // ICE restart成功後のクールダウン期間チェック
+                const timeSinceSuccess = client.iceRestartSuccessTime
+                    ? Date.now() - client.iceRestartSuccessTime
+                    : Infinity;
+
+                if (!client.iceRestartTimer && !client.iceRestartInProgress && timeSinceSuccess > ICE_RESTART_COOLDOWN) {
+                    // クライアントにICE restart要求を送信
+                    client.send({ type: 'request_ice_restart', reason: 'failed' });
+                    log(`${client.displayName}: ICE restart requested to client`);
+
                     client.iceRestartTimer = setTimeout(() => {
                         if (client.pc?.connectionState !== 'connected') {
                             log(`${client.displayName}: ICE restart timeout after failure, closing WebSocket`);
                             client.ws.close(1000, 'ICE restart failed');
                         }
                     }, ICE_RESTART_TIMEOUT);
+                } else if (timeSinceSuccess <= ICE_RESTART_COOLDOWN) {
+                    log(`${client.displayName}: ICE restart cooldown active (${Math.round(timeSinceSuccess/1000)}s since success)`);
                 }
             }
         };
@@ -1194,8 +1300,13 @@ class StreamServer {
         if (client.pc && candidate) {
             try {
                 await client.pc.addIceCandidate(new RTCIceCandidate(candidate));
+                // ICE restart中は候補追加をログ
+                if (client.iceRestartInProgress) {
+                    const candidateType = candidate.candidate?.split(' ')[7] || 'unknown';
+                    log(`${client.displayName}: ICE candidate added during restart: ${candidateType}`);
+                }
             } catch (e) {
-                // Ignore
+                log(`${client.displayName}: ICE candidate error: ${e.message}`);
             }
         }
     }
@@ -1209,6 +1320,11 @@ class StreamServer {
         // 最大試行回数を超えたら切断
         if (client.iceRestartAttempts > MAX_ICE_RESTART_ATTEMPTS) {
             log(`${client.displayName}: too many ICE restart attempts, closing connection`);
+            // 既存タイマーをクリア
+            if (client.iceRestartTimer) {
+                clearTimeout(client.iceRestartTimer);
+                client.iceRestartTimer = null;
+            }
             client.ws.close(1000, 'ICE restart attempts exceeded');
             return;
         }
@@ -1223,10 +1339,16 @@ class StreamServer {
         }
 
         try {
+            // ICE restart前の状態をログ
+            log(`${client.displayName}: ICE restart - before: connState=${client.pc.connectionState}, iceState=${client.pc.iceConnectionState}`);
+
             // クライアントからの新しいOfferを受け入れ、Answerを返す
             await client.pc.setRemoteDescription(new RTCSessionDescription(sdp, 'offer'));
+            log(`${client.displayName}: ICE restart - after setRemoteDescription: connState=${client.pc.connectionState}`);
+
             const answer = await client.pc.createAnswer();
             await client.pc.setLocalDescription(answer);
+            log(`${client.displayName}: ICE restart - after setLocalDescription: iceGathering=${client.pc.iceGatheringState}`);
 
             client.send({
                 type: 'ice_restart_answer',
@@ -1498,7 +1620,7 @@ class StreamServer {
         this.p2pConnections.set(client.clientId, connInfo);
 
         // 接続状態
-        const P2P_CLEANUP_TIMEOUT = 10000;  // 10秒（メインICE restart 5秒より長め）
+        const P2P_CLEANUP_TIMEOUT = 15000;  // 15秒（クライアントICE restart 10秒より長め）
         p2pPc.onconnectionstatechange = () => {
             log(`P2P to ${client.displayName}: ${p2pPc.connectionState}`);
 
@@ -1507,7 +1629,7 @@ class StreamServer {
                 if (connInfo.cleanupTimer) {
                     clearTimeout(connInfo.cleanupTimer);
                 }
-                // 10秒後にクリーンアップ（ICE restart猶予期間）
+                // 15秒後にクリーンアップ（ICE restart猶予期間）
                 connInfo.cleanupTimer = setTimeout(() => {
                     if (this.p2pConnections.has(client.clientId) &&
                         p2pPc.connectionState !== 'connected') {
@@ -1671,6 +1793,9 @@ class StreamServer {
         this.avgFrameGap = 0;
         this.activeFrameCount = 0;
         this.lastFrameTime = 0;
+        // RTPベースドリフト計測の基準点（最初のフレーム到着時に設定）
+        this.driftBaseTime = 0;
+        this.driftBaseRtpTs = 0;
 
         this.ffmpegProcess = spawn('ffmpeg', [
             // 入力の低遅延設定
@@ -1761,6 +1886,13 @@ class StreamServer {
 
     measureFrameGap() {
         const now = Date.now();
+
+        // RTPベースドリフト計測: 最初のフレームで基準点を設定
+        if (this.driftBaseTime === 0) {
+            this.driftBaseTime = now;
+            this.driftBaseRtpTs = this.rtpTimestamp;
+        }
+
         if (this.lastFrameTime > 0) {
             const gap = now - this.lastFrameTime;
             // DTX除外: 100ms超はDTXによる無音スキップとみなす
