@@ -13,4 +13,7 @@ dependencies = [
     "ctranslate2==4.2.1",
     "tokenizers==0.19.1",
     "python-dotenv>=1.0.0",
+    # AI Assistant dependencies
+    "openai>=1.0.0",
+    "edge-tts>=6.1.0",
 ]

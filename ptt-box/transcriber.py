@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 from pathlib import Path
 from faster_whisper import WhisperModel
 from watchdog.observers import Observer
@@ -15,6 +16,9 @@ MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "large-v3")
 DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
 
+# AI Assistant 有効化フラグ
+ENABLE_AI_ASSISTANT = os.environ.get("ENABLE_AI_ASSISTANT", "true").lower() == "true"
+
 # ========== Whisperモデル（グローバル） ==========
 model = None
 
@@ -26,22 +30,48 @@ def get_model():
         print("モデル読み込み完了")
     return model
 
+
+def process_ai_assistant(text: str):
+    """
+    文字起こしテキストをAIアシスタントに渡してウェイクワード検出を行う。
+    バックグラウンドスレッドで実行し、文字起こしをブロックしない。
+    """
+    def run():
+        try:
+            from ai_assistant import process_transcription
+            process_transcription(text)
+        except ImportError as e:
+            print(f"  [AI] ai_assistant モジュール読み込みエラー: {e}")
+        except Exception as e:
+            print(f"  [AI] エラー: {e}")
+
+    # バックグラウンドで実行
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+
 def format_time(seconds):
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     milliseconds = int((seconds % 1) * 1000)
     return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d},{milliseconds:03d}"
 
-def transcribe_to_srt(wav_path):
-    """WAVファイルを文字起こししてSRTファイルを保存"""
+def transcribe_to_srt(wav_path, quiet=False):
+    """WAVファイルを文字起こししてSRTファイルを保存
+
+    Args:
+        wav_path: WAVファイルパス
+        quiet: Trueの場合、詳細ログを抑制（初期スキャン用）
+    """
     wav_path = Path(wav_path)
     srt_path = wav_path.with_suffix(".srt")
 
     if srt_path.exists():
-        print(f"スキップ（SRT存在）: {wav_path.name}")
+        if not quiet:
+            print(f"スキップ（SRT存在）: {wav_path.name}")
         return
 
-    print(f"文字起こし開始: {wav_path.name}")
+    if not quiet:
+        print(f"文字起こし開始: {wav_path.name}")
 
     m = get_model()
     segments, info = m.transcribe(
@@ -52,24 +82,33 @@ def transcribe_to_srt(wav_path):
         vad_parameters=dict(min_silence_duration_ms=1000),
     )
 
-    print(f"  言語: {info.language} (確率: {info.language_probability:.2f})")
+    if not quiet:
+        print(f"  言語: {info.language} (確率: {info.language_probability:.2f})")
 
     # ジェネレータを一度リストに変換してから処理
     segment_list = list(segments)
 
     if len(segment_list) == 0:
-        print(f"  セグメントなし（無音ファイル？）")
+        if not quiet:
+            print(f"  セグメントなし（無音ファイル？）")
         return
 
     with open(srt_path, "w", encoding="utf-8") as f:
         for i, segment in enumerate(segment_list, start=1):
             text = segment.text.strip()
-            print(f"  [{segment.start:.2f}s -> {segment.end:.2f}s] {text}")
+            if not quiet:
+                print(f"  [{segment.start:.2f}s -> {segment.end:.2f}s] {text}")
             f.write(f"{i}\n")
             f.write(f"{format_time(segment.start)} --> {format_time(segment.end)}\n")
             f.write(f"{text}\n\n")
 
-    print(f"保存完了: {srt_path.name} ({len(segment_list)}セグメント)")
+    if not quiet:
+        print(f"保存完了: {srt_path.name} ({len(segment_list)}セグメント)")
+
+    # AI Assistant: ウェイクワード検出チェック（初期スキャンでは実行しない）
+    if ENABLE_AI_ASSISTANT and not quiet:
+        full_text = " ".join(segment.text.strip() for segment in segment_list)
+        process_ai_assistant(full_text)
 
 def scan_missing_srt():
     """起動時に*.wavをスキャンし、対応する*.srtがないものを処理"""
@@ -81,11 +120,13 @@ def scan_missing_srt():
     missing = [f for f in wav_files if not f.with_suffix(".srt").exists()]
 
     if missing:
-        print(f"未処理ファイル: {len(missing)}件")
+        print(f"  開始... ({len(missing)}件)")
+        print(f"  処理中...", end="", flush=True)
         for wav_path in missing:
-            transcribe_to_srt(wav_path)
+            transcribe_to_srt(wav_path, quiet=True)
+        print(" 完了")
     else:
-        print("未処理ファイルなし")
+        print("  未処理ファイルなし")
 
 class WavHandler(FileSystemEventHandler):
     """新規WAVファイル検出ハンドラー"""
@@ -127,6 +168,7 @@ def main():
     print("=" * 50)
     print(f"  監視フォルダ: {RECORDINGS_DIR}")
     print(f"  モデル: {MODEL_SIZE}")
+    print(f"  AIアシスタント: {'有効' if ENABLE_AI_ASSISTANT else '無効'}")
     print()
 
     # 初期スキャン
