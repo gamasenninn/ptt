@@ -44,22 +44,15 @@ SANDBOX_PATH = Path(os.environ.get("SANDBOX_PATH", Path(__file__).parent / "sand
 WAKE_WORDS_STR = os.environ.get("WAKE_WORDS", "OKガーコ,okガーコ,オーケーガーコ,ガーコちゃん")
 WAKE_WORDS = [w.strip() for w in WAKE_WORDS_STR.split(",")]
 
-# システムプロンプト
-SYSTEM_PROMPT = """あなたはPTTトランシーバーのAIアシスタント「ガーコ」です。
-音声で読み上げられるため、簡潔に応答してください。
+# システムプロンプト（外部ファイルから読み込み）
+SYSTEM_PROMPT_PATH = Path(os.environ.get("SYSTEM_PROMPT_PATH", Path(__file__).parent / "ASSISTANT.md"))
 
-【必須ルール】
-1. ユーザーが名前・所属・好みなどを伝えたら、必ず memory_write_note で保存する
-2. ユーザーについて質問されたら、必ず memory_search_notes で検索してから答える
-3. 「覚えて」と言われなくても、重要な情報は自動保存する
-
-利用可能なツール:
-- memory_write_note: 情報を保存（title, folder, content を指定）
-- memory_search_notes: 情報を検索（query で検索）
-- filesystem_*: ファイル操作
-- sqlite_*: データベース操作
-- time_*: 時刻取得
-"""
+def load_system_prompt() -> str:
+    """システムプロンプトを外部ファイルから読み込む"""
+    if SYSTEM_PROMPT_PATH.exists():
+        return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+    else:
+        return "あなたはAIアシスタントです。簡潔に応答してください。"
 
 
 def log(msg: str):
@@ -215,7 +208,7 @@ class MCPAssistant:
         log(f"クエリ処理: {query}")
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": load_system_prompt()},
             {"role": "user", "content": query}
         ]
 
