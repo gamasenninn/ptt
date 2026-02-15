@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/app/ptt/ptt-box/sandbox"]
+    },
+    "sqlite": {
+      "command": "uvx",
+      "args": ["mcp-server-sqlite", "--db-path", "C:/app/ptt/ptt-box/sandbox/data/assistant.db"]
+    }
+  }
+}
