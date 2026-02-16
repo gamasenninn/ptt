@@ -162,9 +162,20 @@ class MCPAssistant:
 
         try:
             from fastmcp import Client
+            import re
 
             with open(self.config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
+                config_text = f.read()
+
+            # 環境変数を展開 (${VAR_NAME} 形式)
+            def expand_env_vars(text: str) -> str:
+                def replacer(match):
+                    var_name = match.group(1)
+                    return os.environ.get(var_name, "")
+                return re.sub(r'\$\{(\w+)\}', replacer, text)
+
+            config_text = expand_env_vars(config_text)
+            config = json.loads(config_text)
 
             # FastMCP クライアント作成
             self.mcp_client = Client(config)
