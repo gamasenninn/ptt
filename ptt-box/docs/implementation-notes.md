@@ -935,3 +935,154 @@ Windowsのサウンド設定で、マイクデバイスの既定の形式が4800
 1. **クリッピング（歪み）**: 値を上げすぎると音が割れる。特に大きな声のときに注意
 2. **単位の違い**: MIC_VOLUMEは倍率、OUTPUT_GAIN_DBはdB（対数）
 3. **dBの目安**: +6dB ≈ 2倍、+12dB ≈ 4倍、+20dB ≈ 10倍
+
+---
+
+## uv ワークスペースでの依存関係インストール
+
+### 症状
+
+```
+C:\app\ptt>uv sync
+Resolved 128 packages in 1ms
+Audited in 0.00ms
+```
+
+`uv sync` を実行しても「Audited」と表示され、パッケージがインストールされない。
+
+### 原因
+
+このプロジェクトはuvワークスペース構成になっている：
+
+```
+ptt/                    ← ルート (dependencies = [])
+└── ptt-box/            ← ワークスペースメンバー (依存関係あり)
+```
+
+ルートの `pyproject.toml` には `dependencies = []`（空）があり、`ptt-box` はワークスペースメンバー。
+`uv sync` はデフォルトでルートプロジェクトのみを同期するため、ptt-boxの依存関係がインストールされない。
+
+### 解決方法
+
+```bash
+# ptt-box の依存関係をインストール
+uv sync --package ptt-box
+
+# または ptt-box ディレクトリから
+cd ptt-box
+uv sync
+```
+
+---
+
+## setuptools/pkg_resources 互換性問題
+
+### 症状
+
+```
+File "C:\app\ptt\.venv\lib\site-packages\ctranslate2\__init__.py", line 8, in <module>
+    import pkg_resources
+ModuleNotFoundError: No module named 'pkg_resources'
+```
+
+`transcriber.py` や `ai_assistant.py` 起動時に `pkg_resources` が見つからないエラー。
+
+### 原因
+
+1. `ctranslate2`（faster-whisperの依存）が `pkg_resources` を使用
+2. `pkg_resources` は `setuptools` パッケージに含まれる
+3. setuptools 70+ では `pkg_resources` が非推奨となり、別パッケージに分離
+4. uv が最新の setuptools 82+ をインストールすると `pkg_resources` が欠落
+
+### 解決方法
+
+`pyproject.toml` に setuptools のバージョン制約を追加：
+
+```toml
+dependencies = [
+    "setuptools<70",  # pkg_resources required by ctranslate2
+    # ...
+]
+```
+
+### 注意
+
+`uv run` は実行前に自動で `uv sync` を行うため、`pyproject.toml` で固定しないと毎回最新版に戻される。
+`.venv` に直接 `uv pip install "setuptools<70"` しても `uv run` で上書きされる。
+
+---
+
+## WebSocket接続パスの設定
+
+### 症状
+
+ブラウザから WebSocket 接続を試みると即座にエラーになる：
+
+```
+Connecting to ws://localhost:9320...
+WebSocket error
+Disconnected
+```
+
+### 原因
+
+`server.js` では WebSocket サーバーがパス `/ws` で待ち受けている：
+
+```javascript
+this.wss = new WebSocket.Server({ server: this.server, path: '/ws' });
+```
+
+クライアントがルートパス `ws://localhost:9320` に接続しようとすると失敗する。
+
+### 解決方法
+
+クライアント側で `/ws` パスを指定：
+
+```javascript
+// NG
+const ws = new WebSocket('ws://localhost:9320');
+
+// OK
+const ws = new WebSocket('ws://localhost:9320/ws');
+```
+
+---
+
+## AI専用WebSocketクライアントの接続維持
+
+### 症状
+
+WebSocket接続後、約10秒で切断される：
+
+```
+Connected to stream_server
+... (10秒後)
+Disconnected
+```
+
+### 原因
+
+`server.js` は WebRTC の Offer を 10秒以内に期待する（`OFFER_TIMEOUT`）。
+AI テスト用クライアントなど WebRTC を使用しない場合、Offer が来ないためタイムアウトで切断される。
+
+### 解決方法
+
+クライアントから `ai_only` メッセージを送信して Offer タイムアウトをキャンセル：
+
+```javascript
+// クライアント側（接続直後に送信）
+ws.onopen = () => {
+    ws.send(JSON.stringify({ type: 'ai_only' }));
+};
+```
+
+```javascript
+// サーバー側（server.js handleMessage）
+case 'ai_only':
+    if (client.offerTimeout) {
+        clearTimeout(client.offerTimeout);
+        client.offerTimeout = null;
+    }
+    client.aiOnly = true;
+    break;
+```
