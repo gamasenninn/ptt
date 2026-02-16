@@ -439,14 +439,21 @@ class AssistantService:
         # クエリ処理
         response_text = await self.assistant.process_query(query)
 
-        # TTS生成・再生
+        # TTS生成・再生（バックグラウンドで実行、レスポンスを先に返す）
         if TTS_ENABLED:
-            audio_path = await text_to_speech(response_text)
+            asyncio.create_task(self._play_tts(response_text))
+
+        return web.json_response({"response": response_text})
+
+    async def _play_tts(self, text: str):
+        """TTSをバックグラウンドで再生"""
+        try:
+            audio_path = await text_to_speech(text)
             if audio_path:
                 play_audio(audio_path)
                 audio_path.unlink(missing_ok=True)
-
-        return web.json_response({"response": response_text})
+        except Exception as e:
+            log(f"TTS再生エラー: {e}", level="error")
 
     async def handle_status(self, request):
         """GET /status - ステータス取得"""

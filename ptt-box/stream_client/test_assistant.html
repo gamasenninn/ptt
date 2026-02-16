@@ -163,6 +163,23 @@
             color: #888;
             margin-top: 10px;
         }
+        .ai-response {
+            background: #0f0f23;
+            border-radius: 4px;
+            padding: 15px;
+            min-height: 80px;
+            font-size: 16px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            color: #eee;
+        }
+        .ai-response.loading {
+            color: #888;
+            font-style: italic;
+        }
+        .ai-response.error {
+            color: #ff4757;
+        }
     </style>
 </head>
 <body>
@@ -192,10 +209,16 @@
             </button>
             <span id="micStatus" style="color: #888; font-size: 14px; align-self: center;">Not enabled</span>
         </div>
-        <button class="btn-mic" id="micBtn" onclick="toggleSpeechRecognition()" disabled>
-            Start Listening
+        <button class="btn-mic" id="micBtn" disabled>
+            Push to Talk
         </button>
-        <p class="info-text">Chrome/Edge recommended. Say wake word and your query.</p>
+        <p class="info-text">Chrome/Edge recommended. Hold button while speaking, release to send.</p>
+    </div>
+
+    <!-- AI Response Panel -->
+    <div class="panel">
+        <h2>AI Response</h2>
+        <div id="aiResponse" class="ai-response">Waiting for query...</div>
     </div>
 
     <!-- Manual Query Panel -->
@@ -222,6 +245,8 @@
         let isListening = false;
         let micStream = null;
         let micEnabled = false;
+        let currentTranscript = '';  // PTT中に蓄積する確定テキスト
+        let interimTranscript = '';  // 中間結果（未確定）
 
         // Get WebSocket URL (same origin as page)
         function getWsUrl() {
@@ -274,28 +299,25 @@
             recognition.interimResults = true;
 
             recognition.onresult = (event) => {
-                let interimTranscript = '';
-                let finalTranscript = '';
+                interimTranscript = '';  // リセット
 
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
-                        finalTranscript += transcript;
+                        // 確定したテキストを蓄積
+                        currentTranscript += transcript;
                     } else {
-                        interimTranscript += transcript;
+                        // 中間結果をグローバル変数に保存
+                        interimTranscript = transcript;
                     }
                 }
 
                 const resultEl = document.getElementById('sttResult');
-                if (finalTranscript) {
-                    resultEl.textContent = finalTranscript;
-                    resultEl.classList.remove('interim');
-                    document.getElementById('queryInput').value = finalTranscript;
-                    sendQuery();
-                    stopSpeechRecognition();
-                } else if (interimTranscript) {
-                    resultEl.textContent = interimTranscript;
-                    resultEl.classList.add('interim');
+                // 蓄積テキスト + 中間結果を表示
+                const displayText = currentTranscript + interimTranscript;
+                if (displayText) {
+                    resultEl.textContent = displayText;
+                    resultEl.classList.toggle('interim', interimTranscript.length > 0);
                 }
             };
 
@@ -317,14 +339,6 @@
             };
         }
 
-        function toggleSpeechRecognition() {
-            if (isListening) {
-                stopSpeechRecognition();
-            } else {
-                startSpeechRecognition();
-            }
-        }
-
         function startSpeechRecognition() {
             if (!recognition) {
                 addLog('error', 'Speech recognition not initialized');
@@ -334,6 +348,9 @@
                 addLog('error', 'Please enable microphone first');
                 return;
             }
+            // PTT開始時にリセット
+            currentTranscript = '';
+            interimTranscript = '';
             isListening = true;
             try {
                 recognition.start();
@@ -344,6 +361,7 @@
             document.getElementById('micBtn').classList.add('listening');
             document.getElementById('sttResult').textContent = 'Listening...';
             document.getElementById('sttResult').classList.add('interim');
+            addLog('info', 'PTT started');
         }
 
         function stopSpeechRecognition() {
@@ -355,8 +373,23 @@
                     // Not started, ignore
                 }
             }
-            document.getElementById('micBtn').textContent = 'Start Listening';
+            document.getElementById('micBtn').textContent = 'Push to Talk';
             document.getElementById('micBtn').classList.remove('listening');
+
+            // PTT終了時に確定テキスト + 中間結果を結合して送信
+            const transcript = (currentTranscript + interimTranscript).trim();
+            if (transcript) {
+                document.getElementById('sttResult').textContent = transcript;
+                document.getElementById('sttResult').classList.remove('interim');
+                document.getElementById('queryInput').value = transcript;
+                addLog('info', `PTT ended: "${transcript}"`);
+                sendQuery();
+            } else {
+                document.getElementById('sttResult').textContent = 'No speech detected';
+                addLog('info', 'PTT ended: no speech');
+            }
+            currentTranscript = '';
+            interimTranscript = '';
         }
 
         // WebSocket functions
@@ -436,6 +469,12 @@
 
             const checkWakeWord = document.getElementById('checkWakeWord').checked;
 
+            // Show loading state
+            const responseEl = document.getElementById('aiResponse');
+            responseEl.textContent = 'Thinking...';
+            responseEl.classList.add('loading');
+            responseEl.classList.remove('error');
+
             // Always use stream_server proxy (ai_query message type)
             sendMessage({
                 type: 'ai_query',
@@ -445,13 +484,21 @@
         }
 
         function handleResponse(data) {
+            const responseEl = document.getElementById('aiResponse');
+
             // Handle proxied AI response
             if (data.type === 'ai_response') {
+                responseEl.classList.remove('loading', 'error');
+
                 if (data.error) {
+                    responseEl.textContent = `Error: ${data.error}`;
+                    responseEl.classList.add('error');
                     addLog('error', `AI Error: ${data.error}`);
                 } else if (data.skipped) {
+                    responseEl.textContent = `Skipped: ${data.reason || 'No wake word'}`;
                     addLog('received', `Skipped: ${data.reason || 'No wake word'}`);
                 } else if (data.response) {
+                    responseEl.textContent = data.response;
                     addLog('received', `AI Response: ${data.response}`);
                 }
                 return;
@@ -491,7 +538,38 @@
                 document.getElementById('enableMicBtn').disabled = true;
                 document.getElementById('micStatus').textContent = 'Not supported';
                 document.getElementById('micStatus').style.color = '#ff4757';
+                return;
             }
+
+            // PTTボタンのイベント設定
+            const micBtn = document.getElementById('micBtn');
+
+            // マウスイベント
+            micBtn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                if (micEnabled) startSpeechRecognition();
+            });
+            micBtn.addEventListener('mouseup', (e) => {
+                e.preventDefault();
+                if (isListening) stopSpeechRecognition();
+            });
+            micBtn.addEventListener('mouseleave', (e) => {
+                // ボタンから離れた場合も停止
+                if (isListening) stopSpeechRecognition();
+            });
+
+            // タッチイベント（モバイル対応）
+            micBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (micEnabled) startSpeechRecognition();
+            });
+            micBtn.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                if (isListening) stopSpeechRecognition();
+            });
+            micBtn.addEventListener('touchcancel', (e) => {
+                if (isListening) stopSpeechRecognition();
+            });
         })();
     </script>
 </body>
