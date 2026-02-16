@@ -21,6 +21,7 @@ import json
 import asyncio
 import tempfile
 import subprocess
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Any
@@ -28,6 +29,37 @@ from dotenv import load_dotenv
 
 # ========== 環境変数読み込み ==========
 load_dotenv()
+
+# ========== ログ設定 ==========
+LOG_DIR = Path(os.environ.get("ASSISTANT_LOG_DIR", Path(__file__).parent / "logs"))
+LOG_RETENTION_DAYS = int(os.environ.get("ASSISTANT_LOG_RETENTION_DAYS", "30"))
+ENABLE_FILE_LOG = os.environ.get("ASSISTANT_ENABLE_FILE_LOG", "true").lower() == "true"
+
+# ログディレクトリ作成
+if ENABLE_FILE_LOG:
+    LOG_DIR.mkdir(exist_ok=True)
+
+# ロガー設定
+logger = logging.getLogger("ai_assistant")
+logger.setLevel(logging.DEBUG)
+
+# コンソールハンドラ
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter("[%(asctime)s] [AI] %(message)s", datefmt="%H:%M:%S"))
+logger.addHandler(console_handler)
+
+# ファイルハンドラ（日付別ファイル）
+if ENABLE_FILE_LOG:
+    today = datetime.now().strftime("%Y-%m-%d")
+    log_file = LOG_DIR / f"assistant-{today}.log"
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    ))
+    logger.addHandler(file_handler)
 
 # ========== 設定 ==========
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -59,10 +91,16 @@ def load_system_prompt() -> str:
         return "あなたはAIアシスタントです。簡潔に応答してください。"
 
 
-def log(msg: str):
+def log(msg: str, level: str = "info"):
     """ログ出力"""
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"[{timestamp}] [AI] {msg}", flush=True)
+    if level == "debug":
+        logger.debug(msg)
+    elif level == "warning":
+        logger.warning(msg)
+    elif level == "error":
+        logger.error(msg)
+    else:
+        logger.info(msg)
 
 
 # ========== ウェイクワード検出 ==========
@@ -180,7 +218,10 @@ class MCPAssistant:
             return "MCPクライアントが初期化されていません"
 
         try:
-            log(f"ツール実行: {name}({json.dumps(arguments, ensure_ascii=False)[:50]}...)")
+            args_str = json.dumps(arguments, ensure_ascii=False)
+            log(f"ツール実行: {name}({args_str[:50]}...)")
+            log(f"ツール引数: {name} -> {args_str}", level="debug")
+
             result = await self.mcp_client.call_tool(name, arguments)
 
             # 結果を文字列化
@@ -193,15 +234,19 @@ class MCPAssistant:
                             texts.append(item.text)
                         else:
                             texts.append(str(item))
-                    return "\n".join(texts)
-                return str(result.content)
+                    result_str = "\n".join(texts)
+                else:
+                    result_str = str(result.content)
             elif isinstance(result, dict):
-                return json.dumps(result, ensure_ascii=False, indent=2)
+                result_str = json.dumps(result, ensure_ascii=False, indent=2)
             else:
-                return str(result)
+                result_str = str(result)
+
+            log(f"ツール結果: {name} -> {result_str[:200]}...", level="debug")
+            return result_str
 
         except Exception as e:
-            log(f"ツール実行エラー: {e}")
+            log(f"ツール実行エラー: {name} -> {e}", level="error")
             return f"ツール実行エラー: {e}"
 
     async def process_query(self, query: str) -> str:
@@ -210,6 +255,7 @@ class MCPAssistant:
             return "OpenAI APIが設定されていません"
 
         log(f"クエリ処理: {query}")
+        log(f"クエリ詳細: model={AI_MODEL}, max_tokens={AI_RESPONSE_MAX_TOKENS}", level="debug")
 
         messages = [
             {"role": "system", "content": load_system_prompt()},
@@ -217,10 +263,13 @@ class MCPAssistant:
         ]
 
         tools = self._convert_tools_to_openai() if self.tools else None
+        tool_calls_made = []
 
         try:
             # 最大5回のツール呼び出しループ
             for iteration in range(5):
+                log(f"APIリクエスト (iteration={iteration+1})", level="debug")
+
                 response = self.openai_client.chat.completions.create(
                     model=AI_MODEL,
                     max_tokens=AI_RESPONSE_MAX_TOKENS,
@@ -229,32 +278,41 @@ class MCPAssistant:
                 )
 
                 choice = response.choices[0]
+                log(f"API応答: finish_reason={choice.finish_reason}", level="debug")
 
                 # ツール呼び出しがなければ終了
                 if not choice.message.tool_calls:
                     result = choice.message.content or ""
                     log(f"応答生成完了: {result[:50]}...")
+                    log(f"応答全文: {result}", level="debug")
+
+                    # ツール使用状況をログ
+                    if tool_calls_made:
+                        log(f"使用ツール: {', '.join(tool_calls_made)}", level="debug")
+                    else:
+                        log(f"ツール未使用で回答", level="debug")
+
                     return result
 
                 # ツール呼び出しを実行
                 messages.append(choice.message)
 
                 for tool_call in choice.message.tool_calls:
+                    tool_name = tool_call.function.name
+                    tool_calls_made.append(tool_name)
                     arguments = json.loads(tool_call.function.arguments)
-                    result = await self._execute_tool(
-                        tool_call.function.name,
-                        arguments
-                    )
+                    result = await self._execute_tool(tool_name, arguments)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "content": result
                     })
 
+            log("最大反復回数に到達", level="warning")
             return "処理が複雑すぎます。もう少し簡単な質問をしてください。"
 
         except Exception as e:
-            log(f"エラー: {e}")
+            log(f"エラー: {e}", level="error")
             return f"エラーが発生しました: {e}"
 
 
