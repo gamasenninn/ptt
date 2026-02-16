@@ -2,8 +2,10 @@ import os
 import time
 import json
 import asyncio
+import logging
 import threading
 from pathlib import Path
+from datetime import datetime
 from faster_whisper import WhisperModel
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -23,15 +25,58 @@ ENABLE_AI_ASSISTANT = os.environ.get("ENABLE_AI_ASSISTANT", "true").lower() == "
 ASSISTANT_HOST = os.environ.get("ASSISTANT_HOST", os.environ.get("ASSISTANT_WS_HOST", "localhost"))
 ASSISTANT_PORT = int(os.environ.get("ASSISTANT_PORT", os.environ.get("ASSISTANT_WS_PORT", "9321")))
 
+# ========== ログ設定 ==========
+LOG_DIR = Path(os.environ.get("TRANSCRIBER_LOG_DIR", Path(__file__).parent / "logs"))
+ENABLE_FILE_LOG = os.environ.get("TRANSCRIBER_ENABLE_FILE_LOG", "true").lower() == "true"
+
+# ログディレクトリ作成
+if ENABLE_FILE_LOG:
+    LOG_DIR.mkdir(exist_ok=True)
+
+# ロガー設定
+logger = logging.getLogger("transcriber")
+logger.setLevel(logging.DEBUG)
+
+# コンソールハンドラ
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S"))
+logger.addHandler(console_handler)
+
+# ファイルハンドラ（日付別ファイル）
+if ENABLE_FILE_LOG:
+    today = datetime.now().strftime("%Y-%m-%d")
+    log_file = LOG_DIR / f"transcriber-{today}.log"
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    ))
+    logger.addHandler(file_handler)
+
+
+def log(msg: str, level: str = "info"):
+    """ログ出力"""
+    if level == "debug":
+        logger.debug(msg)
+    elif level == "warning":
+        logger.warning(msg)
+    elif level == "error":
+        logger.error(msg)
+    else:
+        logger.info(msg)
+
+
 # ========== Whisperモデル（グローバル） ==========
 model = None
 
 def get_model():
     global model
     if model is None:
-        print(f"モデル読み込み中: {MODEL_SIZE} ({DEVICE}, {COMPUTE_TYPE})...")
+        log(f"モデル読み込み中: {MODEL_SIZE} ({DEVICE}, {COMPUTE_TYPE})...")
         model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
-        print("モデル読み込み完了")
+        log("モデル読み込み完了")
     return model
 
 
@@ -57,16 +102,17 @@ def process_ai_assistant(text: str):
             response = asyncio.run(send_query())
 
             if "skipped" in response:
-                pass  # ウェイクワードなし、何もしない
+                log("AI: ウェイクワードなし、スキップ", level="debug")
             elif "error" in response:
-                print(f"  [AI] エラー: {response['error']}")
+                log(f"AI: エラー: {response['error']}", level="error")
             elif "response" in response:
-                print(f"  [AI] 応答完了")
+                log(f"AI: 応答完了")
+                log(f"AI応答: {response['response']}", level="debug")
 
         except Exception as e:
             # アシスタントサービスが起動していない場合は静かに失敗
             if "Cannot connect" not in str(e) and "Connection refused" not in str(e):
-                print(f"  [AI] エラー: {e}")
+                log(f"AI: エラー: {e}", level="error")
 
     # バックグラウンドで実行
     thread = threading.Thread(target=run, daemon=True)
@@ -90,11 +136,11 @@ def transcribe_to_srt(wav_path, quiet=False):
 
     if srt_path.exists():
         if not quiet:
-            print(f"スキップ（SRT存在）: {wav_path.name}")
+            log(f"スキップ（SRT存在）: {wav_path.name}")
         return
 
     if not quiet:
-        print(f"文字起こし開始: {wav_path.name}")
+        log(f"文字起こし開始: {wav_path.name}")
 
     m = get_model()
     segments, info = m.transcribe(
@@ -106,27 +152,27 @@ def transcribe_to_srt(wav_path, quiet=False):
     )
 
     if not quiet:
-        print(f"  言語: {info.language} (確率: {info.language_probability:.2f})")
+        log(f"  言語: {info.language} (確率: {info.language_probability:.2f})")
 
     # ジェネレータを一度リストに変換してから処理
     segment_list = list(segments)
 
     if len(segment_list) == 0:
         if not quiet:
-            print(f"  セグメントなし（無音ファイル？）")
+            log(f"  セグメントなし（無音ファイル？）")
         return
 
     with open(srt_path, "w", encoding="utf-8") as f:
         for i, segment in enumerate(segment_list, start=1):
             text = segment.text.strip()
             if not quiet:
-                print(f"  [{segment.start:.2f}s -> {segment.end:.2f}s] {text}")
+                log(f"  [{segment.start:.2f}s -> {segment.end:.2f}s] {text}")
             f.write(f"{i}\n")
             f.write(f"{format_time(segment.start)} --> {format_time(segment.end)}\n")
             f.write(f"{text}\n\n")
 
     if not quiet:
-        print(f"保存完了: {srt_path.name} ({len(segment_list)}セグメント)")
+        log(f"保存完了: {srt_path.name} ({len(segment_list)}セグメント)")
 
     # AI Assistant: ウェイクワード検出チェック（初期スキャンでは実行しない）
     if ENABLE_AI_ASSISTANT and not quiet:
@@ -136,20 +182,19 @@ def transcribe_to_srt(wav_path, quiet=False):
 def scan_missing_srt():
     """起動時に*.wavをスキャンし、対応する*.srtがないものを処理"""
     if not RECORDINGS_DIR.exists():
-        print(f"フォルダが存在しません: {RECORDINGS_DIR}")
+        log(f"フォルダが存在しません: {RECORDINGS_DIR}", level="warning")
         return
 
     wav_files = list(RECORDINGS_DIR.glob("*.wav"))
     missing = [f for f in wav_files if not f.with_suffix(".srt").exists()]
 
     if missing:
-        print(f"  開始... ({len(missing)}件)")
-        print(f"  処理中...", end="", flush=True)
+        log(f"  未処理ファイル: {len(missing)}件")
         for wav_path in missing:
             transcribe_to_srt(wav_path, quiet=True)
-        print(" 完了")
+        log("  初期スキャン完了")
     else:
-        print("  未処理ファイルなし")
+        log("  未処理ファイルなし")
 
 class WavHandler(FileSystemEventHandler):
     """新規WAVファイル検出ハンドラー"""
@@ -183,7 +228,7 @@ class WavHandler(FileSystemEventHandler):
             time.sleep(1)
             elapsed += 1
 
-        print(f"  警告: ファイル完了待ちタイムアウト: {filepath}")
+        log(f"警告: ファイル完了待ちタイムアウト: {filepath}", level="warning")
 
 def main():
     print("=" * 50)
@@ -194,13 +239,14 @@ def main():
     print(f"  AIアシスタント: {'有効' if ENABLE_AI_ASSISTANT else '無効'}")
     print()
 
+    log("サービス起動")
+
     # 初期スキャン
-    print("[1] 初期スキャン")
+    log("[1] 初期スキャン")
     scan_missing_srt()
-    print()
 
     # フォルダ監視開始
-    print("[2] フォルダ監視開始")
+    log("[2] フォルダ監視開始")
     print("  Ctrl+C で終了")
     print()
 
@@ -216,6 +262,7 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
+        log("サービス終了")
         print("\n終了")
 
     observer.join()
