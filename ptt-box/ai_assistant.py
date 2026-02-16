@@ -390,18 +390,58 @@ async def text_to_speech(text: str) -> Path | None:
         return None
 
 
-def play_audio(audio_path: Path) -> bool:
-    """音声ファイルを再生"""
+# TTS再生プロセス管理
+_tts_process = None
+_tts_audio_path = None
+
+
+async def play_audio_async(audio_path: Path) -> bool:
+    """音声ファイルを非同期で再生"""
+    global _tts_process, _tts_audio_path
     try:
-        result = subprocess.run(
-            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error", str(audio_path)],
-            capture_output=True,
-            text=True
+        _tts_audio_path = audio_path
+        _tts_process = await asyncio.create_subprocess_exec(
+            "ffplay", "-nodisp", "-autoexit", "-loglevel", "error", str(audio_path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL
         )
-        return result.returncode == 0
+        await _tts_process.wait()  # 非同期で再生完了まで待機
+        _tts_process = None
+        return True
     except Exception as e:
         log(f"再生エラー: {e}")
+        _tts_process = None
         return False
+
+
+def stop_audio() -> bool:
+    """再生中の音声を停止"""
+    global _tts_process, _tts_audio_path
+    if _tts_process is not None:
+        try:
+            _tts_process.terminate()
+            _tts_process = None
+            log("TTS再生を停止しました")
+            # 一時ファイルを削除（プロセス終了を少し待つ）
+            if _tts_audio_path:
+                audio_path = _tts_audio_path
+                _tts_audio_path = None
+                # 別スレッドで遅延削除（ファイルロック解放待ち）
+                def delayed_delete():
+                    import time as t
+                    t.sleep(0.5)
+                    try:
+                        if audio_path.exists():
+                            audio_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass  # 削除失敗は無視（tempファイルなので問題なし）
+                import threading
+                threading.Thread(target=delayed_delete, daemon=True).start()
+            return True
+        except Exception as e:
+            log(f"TTS停止エラー: {e}", level="error")
+            return False
+    return False
 
 
 # ========== HTTP サービス ==========
@@ -450,8 +490,10 @@ class AssistantService:
         try:
             audio_path = await text_to_speech(text)
             if audio_path:
-                play_audio(audio_path)
-                audio_path.unlink(missing_ok=True)
+                await play_audio_async(audio_path)
+                # 正常終了時のみファイル削除（stop_audioで停止した場合はそちらで削除）
+                if audio_path.exists():
+                    audio_path.unlink(missing_ok=True)
         except Exception as e:
             log(f"TTS再生エラー: {e}", level="error")
 
@@ -473,6 +515,13 @@ class AssistantService:
             "conversation_history_size": len(self.assistant.conversation_history) // 2,  # ペア数
             "session_remaining_seconds": session_remaining
         })
+
+    async def handle_stop_tts(self, request):
+        """POST /stop_tts - TTS再生停止"""
+        from aiohttp import web
+
+        stopped = stop_audio()
+        return web.json_response({"stopped": stopped})
 
     async def start(self):
         """サービスを起動"""
@@ -496,6 +545,7 @@ class AssistantService:
         # HTTPサーバー起動
         app = web.Application()
         app.router.add_post('/query', self.handle_query)
+        app.router.add_post('/stop_tts', self.handle_stop_tts)
         app.router.add_get('/status', self.handle_status)
 
         self.runner = web.AppRunner(app)

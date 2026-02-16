@@ -180,6 +180,15 @@
         .ai-response.error {
             color: #ff4757;
         }
+        .btn-stop {
+            background: #ff6b6b;
+            color: #fff;
+            margin-top: 10px;
+            width: 100%;
+        }
+        .btn-stop:hover:not(:disabled) {
+            background: #ee5a5a;
+        }
     </style>
 </head>
 <body>
@@ -219,6 +228,7 @@
     <div class="panel">
         <h2>AI Response</h2>
         <div id="aiResponse" class="ai-response">Waiting for query...</div>
+        <button class="btn-stop" id="stopTtsBtn" onclick="stopTTS()">Stop Audio</button>
     </div>
 
     <!-- Manual Query Panel -->
@@ -483,6 +493,11 @@
             });
         }
 
+        function stopTTS() {
+            sendMessage({ type: 'ai_stop_tts' });
+            addLog('info', 'Stop TTS requested');
+        }
+
         function handleResponse(data) {
             const responseEl = document.getElementById('aiResponse');
 
@@ -500,6 +515,16 @@
                 } else if (data.response) {
                     responseEl.textContent = data.response;
                     addLog('received', `AI Response: ${data.response}`);
+                }
+                return;
+            }
+
+            // Handle TTS stopped response
+            if (data.type === 'ai_tts_stopped') {
+                if (data.stopped) {
+                    addLog('info', 'TTS stopped');
+                } else {
+                    addLog('info', 'TTS was not playing');
                 }
                 return;
             }

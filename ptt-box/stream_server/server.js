@@ -1047,6 +1047,10 @@ class StreamServer {
             case 'ai_query':
                 this.handleAIQuery(client, msg);
                 break;
+
+            case 'ai_stop_tts':
+                this.handleAIStopTTS(client);
+                break;
         }
     }
 
@@ -1164,6 +1168,29 @@ class StreamServer {
                 logError(`AI query error: ${e.message}`);
                 client.send({ type: 'ai_response', error: e.message });
             }
+        }
+    }
+
+    // AI Assistant TTS停止をプロキシ (HTTP)
+    async handleAIStopTTS(client) {
+        log(`${client.displayName}: AI stop TTS requested`);
+
+        try {
+            const response = await fetch(`${AI_ASSISTANT_URL}/stop_tts`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                client.send({ type: 'ai_tts_stopped', ...data });
+                log(`${client.displayName}: TTS stopped: ${data.stopped}`);
+            } else {
+                client.send({ type: 'ai_tts_stopped', stopped: false, error: 'Request failed' });
+            }
+        } catch (e) {
+            log(`AI stop TTS error: ${e.message}`);
+            client.send({ type: 'ai_tts_stopped', stopped: false, error: e.message });
         }
     }
 
