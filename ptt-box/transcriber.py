@@ -1,7 +1,7 @@
 import os
 import time
 import json
-import socket
+import asyncio
 import threading
 from pathlib import Path
 from faster_whisper import WhisperModel
@@ -18,10 +18,10 @@ MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "large-v3")
 DEVICE = os.environ.get("WHISPER_DEVICE", "cuda")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
 
-# AI Assistant 設定
+# AI Assistant 設定 (後方互換: 旧WS_*変数もサポート)
 ENABLE_AI_ASSISTANT = os.environ.get("ENABLE_AI_ASSISTANT", "true").lower() == "true"
-ASSISTANT_HOST = os.environ.get("ASSISTANT_WS_HOST", "localhost")
-ASSISTANT_PORT = int(os.environ.get("ASSISTANT_WS_PORT", "9321"))
+ASSISTANT_HOST = os.environ.get("ASSISTANT_HOST", os.environ.get("ASSISTANT_WS_HOST", "localhost"))
+ASSISTANT_PORT = int(os.environ.get("ASSISTANT_PORT", os.environ.get("ASSISTANT_WS_PORT", "9321")))
 
 # ========== Whisperモデル（グローバル） ==========
 model = None
@@ -37,49 +37,36 @@ def get_model():
 
 def process_ai_assistant(text: str):
     """
-    文字起こしテキストをAIアシスタントサービスに送信する。
+    文字起こしテキストをAIアシスタントサービスにHTTP経由で送信する。
     バックグラウンドスレッドで実行し、文字起こしをブロックしない。
     """
+    async def send_query():
+        import aiohttp
+
+        url = f"http://{ASSISTANT_HOST}:{ASSISTANT_PORT}/query"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json={"query": text, "check_wake_word": True},
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                return await resp.json()
+
     def run():
         try:
-            # TCP接続でアシスタントにクエリ送信
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(30)  # 30秒タイムアウト
-                sock.connect((ASSISTANT_HOST, ASSISTANT_PORT))
+            response = asyncio.run(send_query())
 
-                # リクエスト送信（ウェイクワードチェックを依頼）
-                request = {
-                    "type": "query",
-                    "query": text,
-                    "check_wake_word": True
-                }
-                sock.sendall((json.dumps(request, ensure_ascii=False) + "\n").encode())
+            if "skipped" in response:
+                pass  # ウェイクワードなし、何もしない
+            elif "error" in response:
+                print(f"  [AI] エラー: {response['error']}")
+            elif "response" in response:
+                print(f"  [AI] 応答完了")
 
-                # レスポンス受信
-                response_data = b""
-                while True:
-                    chunk = sock.recv(4096)
-                    if not chunk:
-                        break
-                    response_data += chunk
-                    if b"\n" in response_data:
-                        break
-
-                response = json.loads(response_data.decode())
-
-                if "skipped" in response:
-                    pass  # ウェイクワードなし、何もしない
-                elif "error" in response:
-                    print(f"  [AI] エラー: {response['error']}")
-                elif "response" in response:
-                    print(f"  [AI] 応答完了")
-
-        except ConnectionRefusedError:
-            pass  # アシスタントサービスが起動していない場合は静かに失敗
-        except socket.timeout:
-            print(f"  [AI] タイムアウト")
         except Exception as e:
-            print(f"  [AI] エラー: {e}")
+            # アシスタントサービスが起動していない場合は静かに失敗
+            if "Cannot connect" not in str(e) and "Connection refused" not in str(e):
+                print(f"  [AI] エラー: {e}")
 
     # バックグラウンドで実行
     thread = threading.Thread(target=run, daemon=True)

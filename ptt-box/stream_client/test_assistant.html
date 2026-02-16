@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Assistant E2E Test</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 {
+            text-align: center;
+            color: #00d9ff;
+        }
+        .panel {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .panel h2 {
+            margin-top: 0;
+            color: #00d9ff;
+            font-size: 1.1em;
+        }
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ff4757;
+        }
+        .status-dot.connected {
+            background: #2ed573;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #333;
+            border-radius: 4px;
+            background: #0f0f23;
+            color: #fff;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-primary {
+            background: #00d9ff;
+            color: #000;
+        }
+        .btn-primary:hover:not(:disabled) {
+            background: #00b8d9;
+        }
+        .btn-secondary {
+            background: #333;
+            color: #fff;
+        }
+        .btn-secondary:hover:not(:disabled) {
+            background: #444;
+        }
+        .btn-mic {
+            background: #ff4757;
+            color: #fff;
+            width: 100%;
+            padding: 20px;
+            font-size: 18px;
+        }
+        .btn-mic.listening {
+            background: #2ed573;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+        .button-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .log-container {
+            background: #0f0f23;
+            border-radius: 4px;
+            padding: 15px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+        }
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .log-entry.sent {
+            background: #1e3a5f;
+            border-left: 3px solid #00d9ff;
+        }
+        .log-entry.received {
+            background: #1e4035;
+            border-left: 3px solid #2ed573;
+        }
+        .log-entry.error {
+            background: #4a1e1e;
+            border-left: 3px solid #ff4757;
+        }
+        .log-entry.info {
+            background: #3d3d1e;
+            border-left: 3px solid #ffa502;
+        }
+        .log-time {
+            color: #888;
+            font-size: 11px;
+        }
+        .checkbox-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+        .checkbox-row input {
+            width: 18px;
+            height: 18px;
+        }
+        .stt-result {
+            background: #0f0f23;
+            border-radius: 4px;
+            padding: 15px;
+            min-height: 60px;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+        .stt-result.interim {
+            color: #888;
+            font-style: italic;
+        }
+        .info-text {
+            font-size: 12px;
+            color: #888;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>AI Assistant E2E Test</h1>
+
+    <!-- Connection Panel -->
+    <div class="panel">
+        <h2>WebSocket Connection (via stream_server)</h2>
+        <div class="connection-status">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">Disconnected</span>
+        </div>
+        <div class="button-row">
+            <button class="btn-primary" id="connectBtn" onclick="toggleConnection()">Connect</button>
+            <button class="btn-secondary" onclick="clearLog()">Clear Log</button>
+        </div>
+        <p class="info-text">Connects to stream_server which proxies requests to ai_assistant (HTTP)</p>
+    </div>
+
+    <!-- Speech Recognition Panel -->
+    <div class="panel">
+        <h2>Speech Recognition (Web Speech API)</h2>
+        <div id="sttResult" class="stt-result">Click "Enable Mic" first, then use the listening button.</div>
+        <div class="button-row" style="margin-bottom: 15px;">
+            <button class="btn-secondary" id="enableMicBtn" onclick="enableMicrophone()">
+                Enable Mic
+            </button>
+            <span id="micStatus" style="color: #888; font-size: 14px; align-self: center;">Not enabled</span>
+        </div>
+        <button class="btn-mic" id="micBtn" onclick="toggleSpeechRecognition()" disabled>
+            Start Listening
+        </button>
+        <p class="info-text">Chrome/Edge recommended. Say wake word and your query.</p>
+    </div>
+
+    <!-- Manual Query Panel -->
+    <div class="panel">
+        <h2>Manual Query</h2>
+        <input type="text" id="queryInput" placeholder="Enter query (e.g., OK, what time is it?)"
+               onkeypress="if(event.key==='Enter') sendQuery()">
+        <div class="checkbox-row">
+            <input type="checkbox" id="checkWakeWord" checked>
+            <label for="checkWakeWord">Check wake word</label>
+        </div>
+        <button class="btn-primary" onclick="sendQuery()">Send Query</button>
+    </div>
+
+    <!-- Log Panel -->
+    <div class="panel">
+        <h2>Communication Log</h2>
+        <div class="log-container" id="logContainer"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let recognition = null;
+        let isListening = false;
+        let micStream = null;
+        let micEnabled = false;
+
+        // Get WebSocket URL (same origin as page)
+        function getWsUrl() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.hostname || 'localhost';
+            const port = window.location.port || '9320';
+            return `${protocol}//${host}:${port}/ws`;
+        }
+
+        // Request microphone permission once
+        async function enableMicrophone() {
+            const statusEl = document.getElementById('micStatus');
+            const enableBtn = document.getElementById('enableMicBtn');
+            const micBtn = document.getElementById('micBtn');
+
+            try {
+                micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                micEnabled = true;
+
+                statusEl.textContent = 'Enabled';
+                statusEl.style.color = '#2ed573';
+                enableBtn.textContent = 'Mic Enabled';
+                enableBtn.disabled = true;
+                micBtn.disabled = false;
+
+                initSpeechRecognition();
+                addLog('info', 'Microphone enabled');
+
+            } catch (err) {
+                statusEl.textContent = 'Denied';
+                statusEl.style.color = '#ff4757';
+                addLog('error', `Microphone permission denied: ${err.message}`);
+            }
+        }
+
+        // Initialize Speech Recognition
+        function initSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                addLog('info', 'Web Speech API not supported in this browser');
+                document.getElementById('micBtn').disabled = true;
+                return;
+            }
+
+            recognition = new SpeechRecognition();
+            recognition.lang = 'ja-JP';
+            recognition.continuous = true;
+            recognition.interimResults = true;
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript;
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+
+                const resultEl = document.getElementById('sttResult');
+                if (finalTranscript) {
+                    resultEl.textContent = finalTranscript;
+                    resultEl.classList.remove('interim');
+                    document.getElementById('queryInput').value = finalTranscript;
+                    sendQuery();
+                    stopSpeechRecognition();
+                } else if (interimTranscript) {
+                    resultEl.textContent = interimTranscript;
+                    resultEl.classList.add('interim');
+                }
+            };
+
+            recognition.onerror = (event) => {
+                if (event.error !== 'aborted') {
+                    addLog('error', `Speech recognition error: ${event.error}`);
+                }
+                stopSpeechRecognition();
+            };
+
+            recognition.onend = () => {
+                if (isListening) {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        // Ignore if already started
+                    }
+                }
+            };
+        }
+
+        function toggleSpeechRecognition() {
+            if (isListening) {
+                stopSpeechRecognition();
+            } else {
+                startSpeechRecognition();
+            }
+        }
+
+        function startSpeechRecognition() {
+            if (!recognition) {
+                addLog('error', 'Speech recognition not initialized');
+                return;
+            }
+            if (!micEnabled) {
+                addLog('error', 'Please enable microphone first');
+                return;
+            }
+            isListening = true;
+            try {
+                recognition.start();
+            } catch (e) {
+                // Already started, ignore
+            }
+            document.getElementById('micBtn').textContent = 'Listening...';
+            document.getElementById('micBtn').classList.add('listening');
+            document.getElementById('sttResult').textContent = 'Listening...';
+            document.getElementById('sttResult').classList.add('interim');
+        }
+
+        function stopSpeechRecognition() {
+            isListening = false;
+            if (recognition) {
+                try {
+                    recognition.stop();
+                } catch (e) {
+                    // Not started, ignore
+                }
+            }
+            document.getElementById('micBtn').textContent = 'Start Listening';
+            document.getElementById('micBtn').classList.remove('listening');
+        }
+
+        // WebSocket functions
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            } else {
+                connect();
+            }
+        }
+
+        function connect() {
+            const url = getWsUrl();
+            addLog('info', `Connecting to ${url}...`);
+
+            try {
+                ws = new WebSocket(url);
+
+                ws.onopen = () => {
+                    updateConnectionStatus(true);
+                    addLog('info', 'Connected to stream_server');
+                    // AI専用モードを宣言（WebRTC不要）
+                    ws.send(JSON.stringify({ type: 'ai_only' }));
+                };
+
+                ws.onclose = () => {
+                    updateConnectionStatus(false);
+                    addLog('info', 'Disconnected');
+                };
+
+                ws.onerror = (error) => {
+                    addLog('error', 'WebSocket error');
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleResponse(data);
+                    } catch (e) {
+                        addLog('error', `Parse error: ${e.message}`);
+                    }
+                };
+            } catch (e) {
+                addLog('error', `Connection failed: ${e.message}`);
+            }
+        }
+
+        function updateConnectionStatus(connected) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            const btn = document.getElementById('connectBtn');
+
+            if (connected) {
+                dot.classList.add('connected');
+                text.textContent = 'Connected';
+                btn.textContent = 'Disconnect';
+            } else {
+                dot.classList.remove('connected');
+                text.textContent = 'Disconnected';
+                btn.textContent = 'Connect';
+            }
+        }
+
+        function sendMessage(message) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addLog('error', 'Not connected');
+                return;
+            }
+            const json = JSON.stringify(message);
+            ws.send(json);
+            addLog('sent', json);
+        }
+
+        function sendQuery() {
+            const query = document.getElementById('queryInput').value.trim();
+            if (!query) return;
+
+            const checkWakeWord = document.getElementById('checkWakeWord').checked;
+
+            // Always use stream_server proxy (ai_query message type)
+            sendMessage({
+                type: 'ai_query',
+                query: query,
+                check_wake_word: checkWakeWord
+            });
+        }
+
+        function handleResponse(data) {
+            // Handle proxied AI response
+            if (data.type === 'ai_response') {
+                if (data.error) {
+                    addLog('error', `AI Error: ${data.error}`);
+                } else if (data.skipped) {
+                    addLog('received', `Skipped: ${data.reason || 'No wake word'}`);
+                } else if (data.response) {
+                    addLog('received', `AI Response: ${data.response}`);
+                }
+                return;
+            }
+
+            // Handle other messages
+            addLog('received', JSON.stringify(data));
+        }
+
+        function addLog(type, message) {
+            const container = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+
+            const time = new Date().toLocaleTimeString();
+            entry.innerHTML = `<span class="log-time">${time}</span> ${escapeHtml(message)}`;
+
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('logContainer').innerHTML = '';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initialize
+        (function() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                document.getElementById('micBtn').disabled = true;
+                document.getElementById('enableMicBtn').disabled = true;
+                document.getElementById('micStatus').textContent = 'Not supported';
+                document.getElementById('micStatus').style.color = '#ff4757';
+            }
+        })();
+    </script>
+</body>
+</html>

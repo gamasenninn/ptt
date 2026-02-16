@@ -1,5 +1,5 @@
 """
-AI音声アシスタント テストクライアント
+AI音声アシスタント テストクライアント (HTTP版)
 
 ai_assistant.py サービスに接続してテストを行う。
 
@@ -27,53 +27,57 @@ import os
 
 load_dotenv()
 
-HOST = os.environ.get("ASSISTANT_WS_HOST", "localhost")
-PORT = int(os.environ.get("ASSISTANT_WS_PORT", "9321"))
+# 後方互換: 旧WS_*変数もサポート
+HOST = os.environ.get("ASSISTANT_HOST", os.environ.get("ASSISTANT_WS_HOST", "localhost"))
+PORT = int(os.environ.get("ASSISTANT_PORT", os.environ.get("ASSISTANT_WS_PORT", "9321")))
+BASE_URL = f"http://{HOST}:{PORT}"
 
 
-async def send_message(message: dict) -> dict:
-    """サービスにメッセージを送信"""
+async def send_query(query: str, check_wake_word: bool = True) -> dict:
+    """HTTPでクエリを送信"""
+    import aiohttp
+
+    url = f"{BASE_URL}/query"
     try:
-        reader, writer = await asyncio.open_connection(HOST, PORT)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json={"query": query, "check_wake_word": check_wake_word},
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                return await resp.json()
+    except aiohttp.ClientConnectorError:
+        return {"error": f"接続失敗: {url} - サービスが起動していません"}
+    except asyncio.TimeoutError:
+        return {"error": "タイムアウト"}
+    except Exception as e:
+        return {"error": f"エラー: {e}"}
 
-        # 送信
-        data = json.dumps(message, ensure_ascii=False) + "\n"
-        writer.write(data.encode())
-        await writer.drain()
 
-        # 受信
-        response_data = await reader.readline()
-        response = json.loads(response_data.decode())
+async def get_status() -> dict:
+    """ステータスを取得"""
+    import aiohttp
 
-        writer.close()
-        await writer.wait_closed()
-
-        return response
-
-    except ConnectionRefusedError:
-        return {"error": f"接続失敗: {HOST}:{PORT} - サービスが起動していません"}
+    url = f"{BASE_URL}/status"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                return await resp.json()
+    except aiohttp.ClientConnectorError:
+        return {"error": f"接続失敗: {url} - サービスが起動していません"}
     except Exception as e:
         return {"error": f"エラー: {e}"}
 
 
 async def query(text: str, check_wake_word: bool = True) -> str:
     """クエリを送信して応答を取得"""
-    response = await send_message({
-        "type": "query",
-        "query": text,
-        "check_wake_word": check_wake_word
-    })
+    response = await send_query(text, check_wake_word)
 
     if "error" in response:
         return f"エラー: {response['error']}"
     if "skipped" in response:
         return f"スキップ: {response.get('reason', 'ウェイクワードなし')}"
     return response.get("response", "応答なし")
-
-
-async def status() -> dict:
-    """ステータスを取得"""
-    return await send_message({"type": "status"})
 
 
 async def interactive_mode():
@@ -91,7 +95,7 @@ async def interactive_mode():
                 continue
 
             if text == "!status":
-                result = await status()
+                result = await get_status()
                 print(f"  {result}")
             elif text.startswith("!direct "):
                 query_text = text[8:].strip()
@@ -108,14 +112,14 @@ async def interactive_mode():
 
 async def main():
     print("=" * 50)
-    print("  AI音声アシスタント テストクライアント")
+    print("  AI音声アシスタント テストクライアント (HTTP)")
     print("=" * 50)
-    print(f"  接続先: {HOST}:{PORT}")
+    print(f"  接続先: {BASE_URL}")
     print()
 
     if len(sys.argv) > 1:
         if sys.argv[1] == "--status":
-            result = await status()
+            result = await get_status()
             print(f"ステータス: {json.dumps(result, ensure_ascii=False, indent=2)}")
 
         elif sys.argv[1] == "--direct":

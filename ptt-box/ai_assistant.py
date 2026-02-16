@@ -1,7 +1,7 @@
 """
 AI音声アシスタント (FastMCP対応版)
 
-独立したサービスとして動作し、TCP経由でクエリを受け付ける。
+独立したサービスとして動作し、HTTP経由でクエリを受け付ける。
 FastMCP を使用して外部ツール（filesystem, sqlite等）と連携。
 
 Usage:
@@ -10,6 +10,10 @@ Usage:
 
   # CLIテスト（サービス起動中に別ターミナルで）
   uv run python test_assistant.py "OKガーコ、在庫を確認して"
+
+  # curlテスト
+  curl -X POST http://localhost:9321/query -H "Content-Type: application/json" -d '{"query": "今何時？"}'
+  curl http://localhost:9321/status
 """
 import os
 import sys
@@ -32,9 +36,9 @@ AI_RESPONSE_MAX_TOKENS = int(os.environ.get("AI_RESPONSE_MAX_TOKENS", "500"))
 TTS_VOICE = os.environ.get("TTS_VOICE", "ja-JP-NanamiNeural")
 TTS_ENABLED = os.environ.get("TTS_ENABLED", "true").lower() == "true"
 
-# TCPサーバー設定
-WS_HOST = os.environ.get("ASSISTANT_WS_HOST", "localhost")
-WS_PORT = int(os.environ.get("ASSISTANT_WS_PORT", "9321"))
+# HTTPサーバー設定 (後方互換: 旧WS_*変数もサポート)
+HTTP_HOST = os.environ.get("ASSISTANT_HOST", os.environ.get("ASSISTANT_WS_HOST", "localhost"))
+HTTP_PORT = int(os.environ.get("ASSISTANT_PORT", os.environ.get("ASSISTANT_WS_PORT", "9321")))
 
 # MCP設定
 MCP_CONFIG_PATH = Path(os.environ.get("MCP_CONFIG_PATH", Path(__file__).parent / "mcp_config.json"))
@@ -290,121 +294,103 @@ def play_audio(audio_path: Path) -> bool:
         return False
 
 
-# ========== TCP サービス ==========
+# ========== HTTP サービス ==========
 
 class AssistantService:
-    """TCPサービス"""
+    """HTTPサービス (aiohttp)"""
 
-    def __init__(self, host: str = WS_HOST, port: int = WS_PORT):
+    def __init__(self, host: str = HTTP_HOST, port: int = HTTP_PORT):
         self.host = host
         self.port = port
         self.assistant = MCPAssistant()
+        self.runner = None
 
-    async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        """クライアント接続を処理"""
-        addr = writer.get_extra_info('peername')
-        log(f"接続: {addr}")
+    async def handle_query(self, request):
+        """POST /query - クエリ処理"""
+        from aiohttp import web
 
         try:
-            while True:
-                data = await reader.readline()
-                if not data:
-                    break
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
 
-                try:
-                    message = json.loads(data.decode())
-                    await self._handle_message(message, writer)
-                except json.JSONDecodeError:
-                    await self._send_response(writer, {"error": "Invalid JSON"})
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            log(f"エラー: {e}")
-        finally:
-            writer.close()
-            await writer.wait_closed()
-            log(f"切断: {addr}")
+        query = data.get("query", "")
+        if not query:
+            return web.json_response({"error": "Empty query"}, status=400)
 
-    async def _handle_message(self, message: dict, writer: asyncio.StreamWriter):
-        """メッセージを処理"""
-        msg_type = message.get("type", "query")
-
-        if msg_type == "query":
-            query = message.get("query", "")
+        # ウェイクワードチェック
+        if data.get("check_wake_word", False):
+            query = check_wake_word(query)
             if not query:
-                await self._send_response(writer, {"error": "Empty query"})
-                return
+                return web.json_response({"skipped": True, "reason": "No wake word"})
 
-            # ウェイクワードチェック
-            if message.get("check_wake_word", False):
-                query = check_wake_word(query)
-                if not query:
-                    await self._send_response(writer, {"skipped": True, "reason": "No wake word"})
-                    return
+        log(f"クエリ受信: {query[:50]}...")
 
-            # クエリ処理
-            response_text = await self.assistant.process_query(query)
+        # クエリ処理
+        response_text = await self.assistant.process_query(query)
 
-            # TTS生成・再生
-            if TTS_ENABLED:
-                audio_path = await text_to_speech(response_text)
-                if audio_path:
-                    play_audio(audio_path)
-                    audio_path.unlink(missing_ok=True)
+        # TTS生成・再生
+        if TTS_ENABLED:
+            audio_path = await text_to_speech(response_text)
+            if audio_path:
+                play_audio(audio_path)
+                audio_path.unlink(missing_ok=True)
 
-            await self._send_response(writer, {"response": response_text})
+        return web.json_response({"response": response_text})
 
-        elif msg_type == "ping":
-            await self._send_response(writer, {"type": "pong"})
+    async def handle_status(self, request):
+        """GET /status - ステータス取得"""
+        from aiohttp import web
 
-        elif msg_type == "status":
-            await self._send_response(writer, {
-                "status": "running",
-                "tools": len(self.assistant.tools),
-                "tool_names": [t.name if hasattr(t, 'name') else t.get('name') for t in self.assistant.tools]
-            })
-
-        else:
-            await self._send_response(writer, {"error": f"Unknown type: {msg_type}"})
-
-    async def _send_response(self, writer: asyncio.StreamWriter, response: dict):
-        """レスポンスを送信"""
-        writer.write((json.dumps(response, ensure_ascii=False) + "\n").encode())
-        await writer.drain()
+        return web.json_response({
+            "status": "running",
+            "tools": len(self.assistant.tools),
+            "tool_names": [t.name if hasattr(t, 'name') else t.get('name') for t in self.assistant.tools]
+        })
 
     async def start(self):
         """サービスを起動"""
+        from aiohttp import web
+
         print("=" * 50)
-        print("  AI音声アシスタント (FastMCP対応)")
+        print("  AI音声アシスタント (HTTP)")
         print("=" * 50)
         print(f"  モデル: {AI_MODEL}")
         print(f"  TTSボイス: {TTS_VOICE}")
         print(f"  ウェイクワード: {WAKE_WORDS}")
-        print(f"  サーバー: {self.host}:{self.port}")
+        print(f"  HTTP: http://{self.host}:{self.port}")
         print()
 
         # MCPアシスタント起動
         await self.assistant.start()
         print()
 
-        # TCPサーバー起動
-        server = await asyncio.start_server(
-            self.handle_client,
-            self.host,
-            self.port
-        )
+        # HTTPサーバー起動
+        app = web.Application()
+        app.router.add_post('/query', self.handle_query)
+        app.router.add_get('/status', self.handle_status)
 
-        log(f"サービス起動完了 - {self.host}:{self.port}")
+        self.runner = web.AppRunner(app)
+        await self.runner.setup()
+        site = web.TCPSite(self.runner, self.host, self.port)
+        await site.start()
+
+        log(f"サービス起動完了 - http://{self.host}:{self.port}")
         print("  Ctrl+C で終了")
         print()
 
         try:
-            async with server:
-                await server.serve_forever()
+            await asyncio.Future()  # 永久待機
         except asyncio.CancelledError:
             pass
         finally:
-            await self.assistant.stop()
+            await self.stop()
+
+    async def stop(self):
+        """サービスを停止"""
+        await self.assistant.stop()
+        if self.runner:
+            await self.runner.cleanup()
 
 
 # ========== メイン ==========
