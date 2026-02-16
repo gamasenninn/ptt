@@ -227,8 +227,10 @@
         function getWsUrl() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const host = window.location.hostname || 'localhost';
-            const port = window.location.port || '9320';
-            return `${protocol}//${host}:${port}/ws`;
+            const port = window.location.port;
+            // ポートが指定されている場合のみ追加（リバースプロキシ経由の場合は不要）
+            const portPart = port ? `:${port}` : '';
+            return `${protocol}//${host}${portPart}/ws`;
         }
 
         // Request microphone permission once

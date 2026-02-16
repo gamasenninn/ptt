@@ -22,6 +22,7 @@ import asyncio
 import tempfile
 import subprocess
 import logging
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import Any
@@ -65,6 +66,10 @@ if ENABLE_FILE_LOG:
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
 AI_RESPONSE_MAX_TOKENS = int(os.environ.get("AI_RESPONSE_MAX_TOKENS", "500"))
+
+# 会話履歴設定
+HISTORY_SIZE = int(os.environ.get("ASSISTANT_HISTORY_SIZE", "10"))  # 保持する会話ペア数
+SESSION_TIMEOUT = int(os.environ.get("ASSISTANT_SESSION_TIMEOUT", "300"))  # セッションタイムアウト（秒）
 TTS_VOICE = os.environ.get("TTS_VOICE", "ja-JP-NanamiNeural")
 TTS_ENABLED = os.environ.get("TTS_ENABLED", "true").lower() == "true"
 
@@ -134,6 +139,9 @@ class MCPAssistant:
         self.mcp_client = None
         self.openai_client = None
         self.tools: list[dict] = []
+        # 会話履歴
+        self.conversation_history: list[dict] = []
+        self.last_interaction: float = 0
 
     async def start(self):
         """アシスタントを起動"""
@@ -249,18 +257,37 @@ class MCPAssistant:
             log(f"ツール実行エラー: {name} -> {e}", level="error")
             return f"ツール実行エラー: {e}"
 
+    def clear_history(self) -> None:
+        """会話履歴をクリア"""
+        self.conversation_history = []
+        self.last_interaction = 0
+        log("会話履歴をクリアしました")
+
     async def process_query(self, query: str) -> str:
         """クエリを処理して応答を生成"""
         if not self.openai_client:
             return "OpenAI APIが設定されていません"
 
-        log(f"クエリ処理: {query}")
-        log(f"クエリ詳細: model={AI_MODEL}, max_tokens={AI_RESPONSE_MAX_TOKENS}", level="debug")
+        # 履歴クリアコマンド
+        if query.strip() in ["リセット", "クリア", "会話をクリア", "履歴クリア", "reset", "clear"]:
+            self.clear_history()
+            return "会話履歴をクリアしました。"
 
+        # セッションタイムアウトチェック
+        now = time.time()
+        if self.last_interaction > 0 and (now - self.last_interaction) > SESSION_TIMEOUT:
+            log(f"セッションタイムアウト ({SESSION_TIMEOUT}秒経過) - 履歴クリア")
+            self.conversation_history = []
+
+        log(f"クエリ処理: {query}")
+        log(f"クエリ詳細: model={AI_MODEL}, max_tokens={AI_RESPONSE_MAX_TOKENS}, history={len(self.conversation_history)}件", level="debug")
+
+        # メッセージ構築（システムプロンプト + 会話履歴 + 今回のクエリ）
         messages = [
-            {"role": "system", "content": load_system_prompt()},
-            {"role": "user", "content": query}
+            {"role": "system", "content": load_system_prompt()}
         ]
+        messages.extend(self.conversation_history)
+        messages.append({"role": "user", "content": query})
 
         tools = self._convert_tools_to_openai() if self.tools else None
         tool_calls_made = []
@@ -291,6 +318,20 @@ class MCPAssistant:
                         log(f"使用ツール: {', '.join(tool_calls_made)}", level="debug")
                     else:
                         log(f"ツール未使用で回答", level="debug")
+
+                    # 会話履歴に追加
+                    self.conversation_history.append({"role": "user", "content": query})
+                    self.conversation_history.append({"role": "assistant", "content": result})
+
+                    # 履歴サイズ制限（古いものを削除）
+                    max_messages = HISTORY_SIZE * 2  # user + assistant で1ペア
+                    if len(self.conversation_history) > max_messages:
+                        removed_count = len(self.conversation_history) - max_messages
+                        self.conversation_history = self.conversation_history[-max_messages:]
+                        log(f"履歴トリム: {removed_count // 2}ペア削除 → {HISTORY_SIZE}ペア保持")
+
+                    # タイムスタンプ更新
+                    self.last_interaction = now
 
                     return result
 
@@ -400,10 +441,19 @@ class AssistantService:
         """GET /status - ステータス取得"""
         from aiohttp import web
 
+        # セッション残り時間計算
+        session_remaining = None
+        if self.assistant.last_interaction > 0:
+            elapsed = time.time() - self.assistant.last_interaction
+            remaining = SESSION_TIMEOUT - elapsed
+            session_remaining = max(0, int(remaining))
+
         return web.json_response({
             "status": "running",
             "tools": len(self.assistant.tools),
-            "tool_names": [t.name if hasattr(t, 'name') else t.get('name') for t in self.assistant.tools]
+            "tool_names": [t.name if hasattr(t, 'name') else t.get('name') for t in self.assistant.tools],
+            "conversation_history_size": len(self.assistant.conversation_history) // 2,  # ペア数
+            "session_remaining_seconds": session_remaining
         })
 
     async def start(self):
@@ -416,6 +466,8 @@ class AssistantService:
         print(f"  モデル: {AI_MODEL}")
         print(f"  TTSボイス: {TTS_VOICE}")
         print(f"  ウェイクワード: {WAKE_WORDS}")
+        print(f"  履歴保持: {HISTORY_SIZE}ペア")
+        print(f"  セッションタイムアウト: {SESSION_TIMEOUT}秒")
         print(f"  HTTP: http://{self.host}:{self.port}")
         print()
 
