@@ -105,14 +105,31 @@
             gap: 10px;
             margin-bottom: 10px;
         }
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .panel-header h2 {
+            color: #00d9ff;
+            font-size: 1.1em;
+        }
         .log-container {
             background: #0f0f23;
             border-radius: 4px;
             padding: 15px;
-            height: 300px;
+            height: 200px;
             overflow-y: auto;
             font-family: 'Monaco', 'Menlo', monospace;
             font-size: 13px;
+            transition: height 0.3s ease, padding 0.3s ease, opacity 0.3s ease;
+        }
+        .log-container.collapsed {
+            height: 0;
+            padding: 0 15px;
+            opacity: 0;
+            overflow: hidden;
         }
         .log-entry {
             margin-bottom: 8px;
@@ -239,23 +256,38 @@
         .btn-stop:hover:not(:disabled) {
             background: #ee5a5a;
         }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            margin: 0;
+            color: #00d9ff;
+        }
+        .header .connection-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            padding: 8px 16px;
+            border-radius: 4px;
+            background: #16213e;
+            transition: background 0.2s;
+        }
+        .header .connection-toggle:hover {
+            background: #1a2a4e;
+        }
     </style>
 </head>
 <body>
-    <h1>AI Assistant E2E Test</h1>
-
-    <!-- Connection Panel -->
-    <div class="panel">
-        <h2>WebSocket Connection (via stream_server)</h2>
-        <div class="connection-status">
+    <div class="header">
+        <h1>AI Assistant</h1>
+        <div class="connection-toggle" onclick="toggleConnection()">
             <div class="status-dot" id="statusDot"></div>
             <span id="statusText">Disconnected</span>
         </div>
-        <div class="button-row">
-            <button class="btn-primary" id="connectBtn" onclick="toggleConnection()">Connect</button>
-            <button class="btn-secondary" onclick="clearLog()">Clear Log</button>
-        </div>
-        <p class="info-text">Connects to stream_server which proxies requests to ai_assistant (HTTP)</p>
     </div>
 
     <!-- Query Input Panel (unified voice + text input) -->
@@ -271,33 +303,24 @@
             </div>
         </div>
 
-        <!-- Button row: mic controls -->
-        <div class="button-row">
-            <button class="btn-secondary" id="enableMicBtn" onclick="enableMicrophone()">
-                Enable Mic
+        <!-- Button row: Voice Input + Send Query -->
+        <div class="button-row" style="gap: 10px;">
+            <button class="btn-voice" id="voiceInputBtn" style="flex: 1;">
+                🎤 Enable Mic
             </button>
-            <button class="btn-voice" id="voiceInputBtn" disabled>
-                🎤 Voice Input
+            <button class="btn-primary" id="sendBtn" onclick="sendQuery()" style="flex: 1;">
+                Send Query
             </button>
-            <button class="btn-secondary" id="clearBtn" onclick="clearInput()">
-                Clear
-            </button>
-        </div>
-
-        <!-- Status text -->
-        <div style="margin-bottom: 10px;">
-            <span id="micStatus" style="color: #888; font-size: 12px;">Click "Enable Mic" first</span>
         </div>
 
         <!-- Options row -->
-        <div class="checkbox-row">
-            <input type="checkbox" id="checkWakeWord" checked>
-            <label for="checkWakeWord">Check wake word</label>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px;">
+            <span id="micStatus" style="color: #888; font-size: 12px;"></span>
+            <label style="font-size: 12px; color: #888;">
+                <input type="checkbox" id="checkWakeWord" checked style="width: 14px; height: 14px; margin-right: 4px;">
+                Wake word
+            </label>
         </div>
-
-        <!-- Send button -->
-        <button class="btn-primary" onclick="sendQuery()" style="width: 100%;">Send Query</button>
-        <p class="info-text">Hold "Voice Input" to speak. Voice input appears in preview, then appends to text area on release. Ctrl+Enter to send.</p>
     </div>
 
     <!-- AI Response Panel -->
@@ -307,10 +330,15 @@
         <button class="btn-stop" id="stopTtsBtn" onclick="stopTTS()">Stop Audio</button>
     </div>
 
-    <!-- Log Panel -->
-    <div class="panel">
-        <h2>Communication Log</h2>
-        <div class="log-container" id="logContainer"></div>
+    <!-- Log Panel (collapsible, default hidden) -->
+    <div class="panel" id="logPanel">
+        <div class="panel-header" onclick="toggleLogPanel()">
+            <h2 style="margin: 0; cursor: pointer;">
+                <span id="logToggleIcon">▶</span> Communication Log
+            </h2>
+            <button class="btn-secondary" onclick="event.stopPropagation(); clearLog();" style="padding: 6px 12px; font-size: 12px;">Clear</button>
+        </div>
+        <div class="log-container collapsed" id="logContainer"></div>
     </div>
 
     <script>
@@ -322,6 +350,7 @@
         // 音声認識の状態（シンプル化）
         let voiceFinalText = '';     // 確定テキスト（セッション全体で蓄積）
         let voiceInterimText = '';   // 中間結果（未確定）
+        let savedCursorPos = 0;      // PTT開始時のカーソル位置
 
         // Get WebSocket URL (same origin as page)
         function getWsUrl() {
@@ -336,24 +365,21 @@
         // Request microphone permission once
         async function enableMicrophone() {
             const statusEl = document.getElementById('micStatus');
-            const enableBtn = document.getElementById('enableMicBtn');
             const voiceBtn = document.getElementById('voiceInputBtn');
 
             try {
                 micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 micEnabled = true;
 
-                statusEl.textContent = 'Mic enabled - hold Voice Input to speak';
+                statusEl.textContent = 'Hold to speak';
                 statusEl.style.color = '#2ed573';
-                enableBtn.textContent = 'Mic Enabled';
-                enableBtn.disabled = true;
-                voiceBtn.disabled = false;
+                voiceBtn.textContent = '🎤 Voice Input';
 
                 initSpeechRecognition();
                 addLog('info', 'Microphone enabled');
 
             } catch (err) {
-                statusEl.textContent = 'Permission denied';
+                statusEl.textContent = 'Mic permission denied';
                 statusEl.style.color = '#ff4757';
                 addLog('error', `Microphone permission denied: ${err.message}`);
             }
@@ -442,6 +468,10 @@
             const voiceBtn = document.getElementById('voiceInputBtn');
             const preview = document.getElementById('voicePreview');
             const previewContent = document.getElementById('voicePreviewContent');
+            const textarea = document.getElementById('queryInput');
+
+            // カーソル位置を保存（ボタンクリックでフォーカスが外れる前に）
+            savedCursorPos = textarea.selectionStart;
 
             // 状態リセット
             voiceFinalText = '';
@@ -489,10 +519,29 @@
             // プレビューを非表示
             preview.classList.remove('active');
 
-            // 有効なテキストがあればメインtextareaに追記
+            // 有効なテキストがあればカーソル位置に挿入
             if (finalText && finalText !== 'Listening...') {
-                const existingText = textarea.value.trim();
-                textarea.value = existingText ? existingText + ' ' + finalText : finalText;
+                const text = textarea.value;
+                const pos = savedCursorPos;
+
+                // 前後のテキストを取得
+                const before = text.substring(0, pos);
+                const after = text.substring(pos);
+
+                // 必要に応じてスペースを追加
+                const needSpaceBefore = before.length > 0 && !before.endsWith(' ') && !before.endsWith('\n');
+                const needSpaceAfter = after.length > 0 && !after.startsWith(' ') && !after.startsWith('\n');
+
+                const insertText = (needSpaceBefore ? ' ' : '') + finalText + (needSpaceAfter ? ' ' : '');
+
+                // 挿入
+                textarea.value = before + insertText + after;
+
+                // カーソルを挿入テキストの末尾に移動
+                const newCursorPos = pos + insertText.length;
+                textarea.focus();
+                textarea.selectionStart = textarea.selectionEnd = newCursorPos;
+
                 addLog('info', `Voice input: "${finalText}"`);
             } else {
                 addLog('info', 'Voice input: no speech detected');
@@ -501,12 +550,6 @@
             // 状態リセット
             voiceFinalText = '';
             voiceInterimText = '';
-        }
-
-        // Clear input textarea
-        function clearInput() {
-            document.getElementById('queryInput').value = '';
-            addLog('info', 'Input cleared');
         }
 
         // WebSocket functions
@@ -557,16 +600,13 @@
         function updateConnectionStatus(connected) {
             const dot = document.getElementById('statusDot');
             const text = document.getElementById('statusText');
-            const btn = document.getElementById('connectBtn');
 
             if (connected) {
                 dot.classList.add('connected');
                 text.textContent = 'Connected';
-                btn.textContent = 'Disconnect';
             } else {
                 dot.classList.remove('connected');
                 text.textContent = 'Disconnected';
-                btn.textContent = 'Connect';
             }
         }
 
@@ -581,7 +621,8 @@
         }
 
         function sendQuery() {
-            const query = document.getElementById('queryInput').value.trim();
+            const textarea = document.getElementById('queryInput');
+            const query = textarea.value.trim();
             if (!query) return;
 
             const checkWakeWord = document.getElementById('checkWakeWord').checked;
@@ -598,6 +639,9 @@
                 query: query,
                 check_wake_word: checkWakeWord
             });
+
+            // 送信後に自動クリア
+            textarea.value = '';
         }
 
         function stopTTS() {
@@ -656,6 +700,13 @@
             document.getElementById('logContainer').innerHTML = '';
         }
 
+        function toggleLogPanel() {
+            const container = document.getElementById('logContainer');
+            const icon = document.getElementById('logToggleIcon');
+            container.classList.toggle('collapsed');
+            icon.textContent = container.classList.contains('collapsed') ? '▶' : '▼';
+        }
+
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -667,7 +718,7 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
                 document.getElementById('voiceInputBtn').disabled = true;
-                document.getElementById('enableMicBtn').disabled = true;
+                document.getElementById('voiceInputBtn').textContent = 'Not Supported';
                 document.getElementById('micStatus').textContent = 'Speech API not supported';
                 document.getElementById('micStatus').style.color = '#ff4757';
                 return;
@@ -684,9 +735,12 @@
 
             voiceBtn.addEventListener('mousedown', (e) => {
                 e.preventDefault();
-                if (micEnabled) {
+                if (!micEnabled) {
+                    // マイク未有効 → 有効化
+                    enableMicrophone();
+                } else {
+                    // マイク有効 → 音声入力開始
                     startSpeechRecognition();
-                    // ドキュメントレベルでmouseupを監視（ボタン外でも検知）
                     document.addEventListener('mouseup', handleMouseUp);
                 }
             });
@@ -694,7 +748,11 @@
             // タッチイベント（モバイル対応）
             voiceBtn.addEventListener('touchstart', (e) => {
                 e.preventDefault();
-                if (micEnabled) startSpeechRecognition();
+                if (!micEnabled) {
+                    enableMicrophone();
+                } else {
+                    startSpeechRecognition();
+                }
             });
             voiceBtn.addEventListener('touchend', (e) => {
                 e.preventDefault();
