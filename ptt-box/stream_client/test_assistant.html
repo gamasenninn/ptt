@@ -82,14 +82,17 @@
         .btn-secondary:hover:not(:disabled) {
             background: #444;
         }
-        .btn-mic {
-            background: #ff4757;
+        .btn-voice {
+            background: #4a4a6a;
             color: #fff;
-            width: 100%;
-            padding: 20px;
-            font-size: 18px;
+            flex: 1;
+            padding: 12px 16px;
+            font-size: 14px;
         }
-        .btn-mic.listening {
+        .btn-voice:hover:not(:disabled) {
+            background: #5a5a7a;
+        }
+        .btn-voice.listening {
             background: #2ed573;
             animation: pulse 1.5s infinite;
         }
@@ -146,17 +149,56 @@
             width: 18px;
             height: 18px;
         }
-        .stt-result {
-            background: #0f0f23;
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #333;
             border-radius: 4px;
-            padding: 15px;
-            min-height: 60px;
-            margin-bottom: 15px;
+            background: #0f0f23;
+            color: #fff;
             font-size: 16px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 80px;
+            margin-bottom: 10px;
         }
-        .stt-result.interim {
-            color: #888;
+        textarea::placeholder {
+            color: #666;
+        }
+        .voice-preview {
+            display: none;
+            background: #1a3a2e;
+            border: 2px solid #2ed573;
+            border-radius: 4px;
+            padding: 12px;
+            margin-bottom: 10px;
+            min-height: 50px;
+            font-size: 16px;
+            color: #fff;
+        }
+        .voice-preview.active {
+            display: block;
+            animation: pulse-border 1.5s infinite;
+        }
+        .voice-preview .label {
+            font-size: 12px;
+            color: #2ed573;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .voice-preview .content {
+            color: #fff;
+            min-height: 24px;
+        }
+        .voice-preview .content.interim {
+            color: #aaa;
             font-style: italic;
+        }
+        @keyframes pulse-border {
+            0%, 100% { border-color: #2ed573; }
+            50% { border-color: #1a8a4e; }
         }
         .info-text {
             font-size: 12px;
@@ -208,20 +250,45 @@
         <p class="info-text">Connects to stream_server which proxies requests to ai_assistant (HTTP)</p>
     </div>
 
-    <!-- Speech Recognition Panel -->
+    <!-- Query Input Panel (unified voice + text input) -->
     <div class="panel">
-        <h2>Speech Recognition (Web Speech API)</h2>
-        <div id="sttResult" class="stt-result">Click "Enable Mic" first, then use the listening button.</div>
-        <div class="button-row" style="margin-bottom: 15px;">
+        <h2>Query Input</h2>
+        <textarea id="queryInput" rows="3"
+                  placeholder="Type here or use voice input... (Ctrl+Enter to send)"></textarea>
+
+        <!-- Voice Preview (PTT中のみ表示) -->
+        <div id="voicePreview" class="voice-preview">
+            <div class="label">🎤 Voice Input</div>
+            <div id="voicePreviewContent" class="content">Listening...</div>
+        </div>
+
+        <!-- Button row: mic controls -->
+        <div class="button-row">
             <button class="btn-secondary" id="enableMicBtn" onclick="enableMicrophone()">
                 Enable Mic
             </button>
-            <span id="micStatus" style="color: #888; font-size: 14px; align-self: center;">Not enabled</span>
+            <button class="btn-voice" id="voiceInputBtn" disabled>
+                🎤 Voice Input
+            </button>
+            <button class="btn-secondary" id="clearBtn" onclick="clearInput()">
+                Clear
+            </button>
         </div>
-        <button class="btn-mic" id="micBtn" disabled>
-            Push to Talk
-        </button>
-        <p class="info-text">Chrome/Edge recommended. Hold button while speaking, release to send.</p>
+
+        <!-- Status text -->
+        <div style="margin-bottom: 10px;">
+            <span id="micStatus" style="color: #888; font-size: 12px;">Click "Enable Mic" first</span>
+        </div>
+
+        <!-- Options row -->
+        <div class="checkbox-row">
+            <input type="checkbox" id="checkWakeWord" checked>
+            <label for="checkWakeWord">Check wake word</label>
+        </div>
+
+        <!-- Send button -->
+        <button class="btn-primary" onclick="sendQuery()" style="width: 100%;">Send Query</button>
+        <p class="info-text">Hold "Voice Input" to speak. Voice input appears in preview, then appends to text area on release. Ctrl+Enter to send.</p>
     </div>
 
     <!-- AI Response Panel -->
@@ -229,18 +296,6 @@
         <h2>AI Response</h2>
         <div id="aiResponse" class="ai-response">Waiting for query...</div>
         <button class="btn-stop" id="stopTtsBtn" onclick="stopTTS()">Stop Audio</button>
-    </div>
-
-    <!-- Manual Query Panel -->
-    <div class="panel">
-        <h2>Manual Query</h2>
-        <input type="text" id="queryInput" placeholder="Enter query (e.g., OK, what time is it?)"
-               onkeypress="if(event.key==='Enter') sendQuery()">
-        <div class="checkbox-row">
-            <input type="checkbox" id="checkWakeWord" checked>
-            <label for="checkWakeWord">Check wake word</label>
-        </div>
-        <button class="btn-primary" onclick="sendQuery()">Send Query</button>
     </div>
 
     <!-- Log Panel -->
@@ -255,8 +310,9 @@
         let isListening = false;
         let micStream = null;
         let micEnabled = false;
-        let currentTranscript = '';  // PTT中に蓄積する確定テキスト
-        let interimTranscript = '';  // 中間結果（未確定）
+        // 音声認識の状態（シンプル化）
+        let voiceFinalText = '';     // 確定テキスト（セッション全体で蓄積）
+        let voiceInterimText = '';   // 中間結果（未確定）
 
         // Get WebSocket URL (same origin as page)
         function getWsUrl() {
@@ -272,23 +328,23 @@
         async function enableMicrophone() {
             const statusEl = document.getElementById('micStatus');
             const enableBtn = document.getElementById('enableMicBtn');
-            const micBtn = document.getElementById('micBtn');
+            const voiceBtn = document.getElementById('voiceInputBtn');
 
             try {
                 micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 micEnabled = true;
 
-                statusEl.textContent = 'Enabled';
+                statusEl.textContent = 'Mic enabled - hold Voice Input to speak';
                 statusEl.style.color = '#2ed573';
                 enableBtn.textContent = 'Mic Enabled';
                 enableBtn.disabled = true;
-                micBtn.disabled = false;
+                voiceBtn.disabled = false;
 
                 initSpeechRecognition();
                 addLog('info', 'Microphone enabled');
 
             } catch (err) {
-                statusEl.textContent = 'Denied';
+                statusEl.textContent = 'Permission denied';
                 statusEl.style.color = '#ff4757';
                 addLog('error', `Microphone permission denied: ${err.message}`);
             }
@@ -299,7 +355,7 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
                 addLog('info', 'Web Speech API not supported in this browser');
-                document.getElementById('micBtn').disabled = true;
+                document.getElementById('voiceInputBtn').disabled = true;
                 return;
             }
 
@@ -309,26 +365,34 @@
             recognition.interimResults = true;
 
             recognition.onresult = (event) => {
-                interimTranscript = '';  // リセット
+                // 現在のセッションの結果を取得
+                let sessionFinal = '';
+                let sessionInterim = '';
 
-                for (let i = event.resultIndex; i < event.results.length; i++) {
+                for (let i = 0; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
-                        // 確定したテキストを蓄積
-                        currentTranscript += transcript;
+                        sessionFinal += transcript;
                     } else {
-                        // 中間結果をグローバル変数に保存
-                        interimTranscript = transcript;
+                        sessionInterim += transcript;
                     }
                 }
 
-                const resultEl = document.getElementById('sttResult');
-                // 蓄積テキスト + 中間結果を表示
-                const displayText = currentTranscript + interimTranscript;
+                // プレビューを更新（メインtextareaは触らない）
+                const previewContent = document.getElementById('voicePreviewContent');
+                const displayText = voiceFinalText + sessionFinal + sessionInterim;
+
                 if (displayText) {
-                    resultEl.textContent = displayText;
-                    resultEl.classList.toggle('interim', interimTranscript.length > 0);
+                    previewContent.textContent = displayText;
+                    previewContent.classList.toggle('interim', sessionInterim.length > 0);
+                } else {
+                    previewContent.textContent = 'Listening...';
+                    previewContent.classList.add('interim');
                 }
+
+                // 最終結果用に保存
+                voiceInterimText = sessionInterim;
+                // sessionFinalは再起動時にリセットされるので、voiceFinalTextには後で追加
             };
 
             recognition.onerror = (event) => {
@@ -340,6 +404,13 @@
 
             recognition.onend = () => {
                 if (isListening) {
+                    // 再起動前に現在の確定テキストを保存
+                    const previewContent = document.getElementById('voicePreviewContent');
+                    const currentText = previewContent.textContent;
+                    if (currentText && currentText !== 'Listening...') {
+                        // 中間結果を除いた確定部分を保存
+                        voiceFinalText = currentText.replace(voiceInterimText, '');
+                    }
                     try {
                         recognition.start();
                     } catch (e) {
@@ -358,20 +429,30 @@
                 addLog('error', 'Please enable microphone first');
                 return;
             }
-            // PTT開始時にリセット
-            currentTranscript = '';
-            interimTranscript = '';
+
+            const voiceBtn = document.getElementById('voiceInputBtn');
+            const preview = document.getElementById('voicePreview');
+            const previewContent = document.getElementById('voicePreviewContent');
+
+            // 状態リセット
+            voiceFinalText = '';
+            voiceInterimText = '';
             isListening = true;
+
+            // プレビュー表示
+            previewContent.textContent = 'Listening...';
+            previewContent.classList.add('interim');
+            preview.classList.add('active');
+
             try {
                 recognition.start();
             } catch (e) {
                 // Already started, ignore
             }
-            document.getElementById('micBtn').textContent = 'Listening...';
-            document.getElementById('micBtn').classList.add('listening');
-            document.getElementById('sttResult').textContent = 'Listening...';
-            document.getElementById('sttResult').classList.add('interim');
-            addLog('info', 'PTT started');
+
+            voiceBtn.textContent = '🎤 Listening...';
+            voiceBtn.classList.add('listening');
+            addLog('info', 'Voice input started');
         }
 
         function stopSpeechRecognition() {
@@ -383,23 +464,40 @@
                     // Not started, ignore
                 }
             }
-            document.getElementById('micBtn').textContent = 'Push to Talk';
-            document.getElementById('micBtn').classList.remove('listening');
 
-            // PTT終了時に確定テキスト + 中間結果を結合して送信
-            const transcript = (currentTranscript + interimTranscript).trim();
-            if (transcript) {
-                document.getElementById('sttResult').textContent = transcript;
-                document.getElementById('sttResult').classList.remove('interim');
-                document.getElementById('queryInput').value = transcript;
-                addLog('info', `PTT ended: "${transcript}"`);
-                sendQuery();
+            const textarea = document.getElementById('queryInput');
+            const voiceBtn = document.getElementById('voiceInputBtn');
+            const preview = document.getElementById('voicePreview');
+            const previewContent = document.getElementById('voicePreviewContent');
+
+            // ボタン状態を戻す
+            voiceBtn.textContent = '🎤 Voice Input';
+            voiceBtn.classList.remove('listening');
+
+            // プレビューから最終テキストを取得
+            const finalText = previewContent.textContent.trim();
+
+            // プレビューを非表示
+            preview.classList.remove('active');
+
+            // 有効なテキストがあればメインtextareaに追記
+            if (finalText && finalText !== 'Listening...') {
+                const existingText = textarea.value.trim();
+                textarea.value = existingText ? existingText + ' ' + finalText : finalText;
+                addLog('info', `Voice input: "${finalText}"`);
             } else {
-                document.getElementById('sttResult').textContent = 'No speech detected';
-                addLog('info', 'PTT ended: no speech');
+                addLog('info', 'Voice input: no speech detected');
             }
-            currentTranscript = '';
-            interimTranscript = '';
+
+            // 状態リセット
+            voiceFinalText = '';
+            voiceInterimText = '';
+        }
+
+        // Clear input textarea
+        function clearInput() {
+            document.getElementById('queryInput').value = '';
+            addLog('info', 'Input cleared');
         }
 
         // WebSocket functions
@@ -559,41 +657,51 @@
         (function() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
-                document.getElementById('micBtn').disabled = true;
+                document.getElementById('voiceInputBtn').disabled = true;
                 document.getElementById('enableMicBtn').disabled = true;
-                document.getElementById('micStatus').textContent = 'Not supported';
+                document.getElementById('micStatus').textContent = 'Speech API not supported';
                 document.getElementById('micStatus').style.color = '#ff4757';
                 return;
             }
 
-            // PTTボタンのイベント設定
-            const micBtn = document.getElementById('micBtn');
+            // Voice Inputボタンのイベント設定
+            const voiceBtn = document.getElementById('voiceInputBtn');
 
-            // マウスイベント
-            micBtn.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                if (micEnabled) startSpeechRecognition();
-            });
-            micBtn.addEventListener('mouseup', (e) => {
-                e.preventDefault();
+            // マウスイベント（ドキュメントレベルでmouseupを監視）
+            const handleMouseUp = () => {
+                document.removeEventListener('mouseup', handleMouseUp);
                 if (isListening) stopSpeechRecognition();
-            });
-            micBtn.addEventListener('mouseleave', (e) => {
-                // ボタンから離れた場合も停止
-                if (isListening) stopSpeechRecognition();
+            };
+
+            voiceBtn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                if (micEnabled) {
+                    startSpeechRecognition();
+                    // ドキュメントレベルでmouseupを監視（ボタン外でも検知）
+                    document.addEventListener('mouseup', handleMouseUp);
+                }
             });
 
             // タッチイベント（モバイル対応）
-            micBtn.addEventListener('touchstart', (e) => {
+            voiceBtn.addEventListener('touchstart', (e) => {
                 e.preventDefault();
                 if (micEnabled) startSpeechRecognition();
             });
-            micBtn.addEventListener('touchend', (e) => {
+            voiceBtn.addEventListener('touchend', (e) => {
                 e.preventDefault();
                 if (isListening) stopSpeechRecognition();
             });
-            micBtn.addEventListener('touchcancel', (e) => {
+            voiceBtn.addEventListener('touchcancel', () => {
                 if (isListening) stopSpeechRecognition();
+            });
+
+            // Textarea: Ctrl+Enter で送信
+            const textarea = document.getElementById('queryInput');
+            textarea.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && e.ctrlKey) {
+                    e.preventDefault();
+                    sendQuery();
+                }
             });
         })();
     </script>
