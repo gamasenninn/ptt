@@ -149,6 +149,10 @@
             width: 18px;
             height: 18px;
         }
+        .textarea-container {
+            position: relative;
+            margin-bottom: 10px;
+        }
         textarea {
             width: 100%;
             padding: 12px;
@@ -160,21 +164,25 @@
             font-family: inherit;
             resize: vertical;
             min-height: 80px;
-            margin-bottom: 10px;
         }
         textarea::placeholder {
             color: #666;
         }
         .voice-preview {
             display: none;
-            background: #1a3a2e;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(26, 58, 46, 0.97);
             border: 2px solid #2ed573;
             border-radius: 4px;
             padding: 12px;
-            margin-bottom: 10px;
-            min-height: 50px;
             font-size: 16px;
             color: #fff;
+            overflow-y: auto;
+            z-index: 10;
         }
         .voice-preview.active {
             display: block;
@@ -253,13 +261,14 @@
     <!-- Query Input Panel (unified voice + text input) -->
     <div class="panel">
         <h2>Query Input</h2>
-        <textarea id="queryInput" rows="3"
-                  placeholder="Type here or use voice input... (Ctrl+Enter to send)"></textarea>
-
-        <!-- Voice Preview (PTT中のみ表示) -->
-        <div id="voicePreview" class="voice-preview">
-            <div class="label">🎤 Voice Input</div>
-            <div id="voicePreviewContent" class="content">Listening...</div>
+        <div class="textarea-container">
+            <textarea id="queryInput" rows="3"
+                      placeholder="Type here or use voice input... (Ctrl+Enter to send)"></textarea>
+            <!-- Voice Preview (PTT中のみ表示、textareaに重ねて表示) -->
+            <div id="voicePreview" class="voice-preview">
+                <div class="label">🎤 Voice Input</div>
+                <div id="voicePreviewContent" class="content">Listening...</div>
+            </div>
         </div>
 
         <!-- Button row: mic controls -->
