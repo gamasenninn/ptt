@@ -306,7 +306,7 @@
         <!-- Button row: Voice Input + Send Query -->
         <div class="button-row" style="gap: 10px;">
             <button class="btn-voice" id="voiceInputBtn" style="flex: 1;">
-                🎤 Enable Mic
+                🎤 Voice Input
             </button>
             <button class="btn-primary" id="sendBtn" onclick="sendQuery()" style="flex: 1;">
                 Send Query
@@ -317,7 +317,7 @@
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px;">
             <span id="micStatus" style="color: #888; font-size: 12px;"></span>
             <label style="font-size: 12px; color: #888;">
-                <input type="checkbox" id="checkWakeWord" checked style="width: 14px; height: 14px; margin-right: 4px;">
+                <input type="checkbox" id="checkWakeWord" style="width: 14px; height: 14px; margin-right: 4px;">
                 Wake word
             </label>
         </div>
@@ -365,7 +365,6 @@
         // Request microphone permission once
         async function enableMicrophone() {
             const statusEl = document.getElementById('micStatus');
-            const voiceBtn = document.getElementById('voiceInputBtn');
 
             try {
                 micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -373,7 +372,6 @@
 
                 statusEl.textContent = 'Hold to speak';
                 statusEl.style.color = '#2ed573';
-                voiceBtn.textContent = '🎤 Voice Input';
 
                 initSpeechRecognition();
                 addLog('info', 'Microphone enabled');
@@ -733,24 +731,25 @@
                 if (isListening) stopSpeechRecognition();
             };
 
-            voiceBtn.addEventListener('mousedown', (e) => {
+            voiceBtn.addEventListener('mousedown', async (e) => {
                 e.preventDefault();
                 if (!micEnabled) {
-                    // マイク未有効 → 有効化
-                    enableMicrophone();
-                } else {
-                    // マイク有効 → 音声入力開始
+                    // マイク未有効 → 有効化して即開始
+                    await enableMicrophone();
+                }
+                if (micEnabled) {
                     startSpeechRecognition();
                     document.addEventListener('mouseup', handleMouseUp);
                 }
             });
 
             // タッチイベント（モバイル対応）
-            voiceBtn.addEventListener('touchstart', (e) => {
+            voiceBtn.addEventListener('touchstart', async (e) => {
                 e.preventDefault();
                 if (!micEnabled) {
-                    enableMicrophone();
-                } else {
+                    await enableMicrophone();
+                }
+                if (micEnabled) {
                     startSpeechRecognition();
                 }
             });
