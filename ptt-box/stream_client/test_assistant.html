@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Assistant E2E Test</title>
+    <title>AI アシスタント</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -230,23 +231,114 @@
             color: #888;
             margin-top: 10px;
         }
-        .ai-response {
+        /* Chat UI styles */
+        .chat-container {
             background: #0f0f23;
             border-radius: 4px;
-            padding: 15px;
-            min-height: 80px;
-            font-size: 16px;
-            line-height: 1.6;
-            white-space: pre-wrap;
-            color: #eee;
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
         }
-        .ai-response.loading {
+
+        .chat-message {
+            padding: 16px 20px;
+            border-bottom: 1px solid #2a2a3a;
+        }
+
+        .chat-message:last-child {
+            border-bottom: none;
+        }
+
+        .chat-message.user {
+            background: #1e3a5f;
+        }
+
+        .chat-message.ai {
+            background: #16213e;
+        }
+
+        .chat-message .role {
+            font-size: 13px;
+            font-weight: bold;
+            color: #00d9ff;
+            margin-bottom: 8px;
+        }
+
+        .chat-message .content {
+            color: #eee;
+            line-height: 1.6;
+        }
+
+        /* Markdown styles */
+        .chat-message .content code {
+            background: #0f0f23;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9em;
+        }
+
+        .chat-message .content pre {
+            background: #0f0f23;
+            padding: 12px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+
+        .chat-message .content pre code {
+            background: transparent;
+            padding: 0;
+        }
+
+        .chat-message .content ul, .chat-message .content ol {
+            margin: 10px 0;
+            padding-left: 24px;
+        }
+
+        .chat-message .content p {
+            margin: 0 0 10px 0;
+        }
+
+        .chat-message .content p:last-child {
+            margin-bottom: 0;
+        }
+
+        .chat-message .content a {
+            color: #00d9ff;
+        }
+
+        .chat-message.loading .content {
             color: #888;
             font-style: italic;
         }
-        .ai-response.error {
-            color: #ff4757;
+
+        .chat-message.error .content {
+            color: #ff6b6b;
         }
+
+        .chat-message.skipped .content {
+            color: #888;
+        }
+
+        .chat-empty {
+            color: #666;
+            text-align: center;
+            padding: 40px 20px;
+            font-style: italic;
+        }
+
+        /* Thinking animation */
+        @keyframes thinking {
+            0%, 80%, 100% { opacity: 0.3; }
+            40% { opacity: 1; }
+        }
+
+        .thinking-dots span {
+            animation: thinking 1.4s infinite;
+        }
+        .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
         .btn-stop {
             background: #ff6b6b;
             color: #fff;
@@ -283,33 +375,32 @@
 </head>
 <body>
     <div class="header">
-        <h1>AI Assistant</h1>
+        <h1>AI アシスタント</h1>
         <div class="connection-toggle" onclick="toggleConnection()">
             <div class="status-dot" id="statusDot"></div>
-            <span id="statusText">Disconnected</span>
+            <span id="statusText">未接続</span>
         </div>
     </div>
 
-    <!-- Query Input Panel (unified voice + text input) -->
+    <!-- 入力パネル -->
     <div class="panel">
-        <h2>Query Input</h2>
         <div class="textarea-container">
             <textarea id="queryInput" rows="3"
-                      placeholder="Type here or use voice input... (Ctrl+Enter to send)"></textarea>
+                      placeholder="ここに入力、または音声入力... (Ctrl+Enter で送信)"></textarea>
             <!-- Voice Preview (PTT中のみ表示、textareaに重ねて表示) -->
             <div id="voicePreview" class="voice-preview">
-                <div class="label">🎤 Voice Input</div>
-                <div id="voicePreviewContent" class="content">Listening...</div>
+                <div class="label">🎤 音声入力中</div>
+                <div id="voicePreviewContent" class="content">聞き取り中...</div>
             </div>
         </div>
 
         <!-- Button row: Voice Input + Send Query -->
         <div class="button-row" style="gap: 10px;">
             <button class="btn-voice" id="voiceInputBtn" style="flex: 1;">
-                🎤 Voice Input
+                🎤 音声入力
             </button>
-            <button class="btn-primary" id="sendBtn" onclick="sendQuery()" style="flex: 1;">
-                Send Query
+            <button class="btn-primary" id="sendBtn" onclick="sendQuery()" style="flex: 1;" disabled>
+                送信
             </button>
         </div>
 
@@ -318,25 +409,29 @@
             <span id="micStatus" style="color: #888; font-size: 12px;"></span>
             <label style="font-size: 12px; color: #888;">
                 <input type="checkbox" id="checkWakeWord" style="width: 14px; height: 14px; margin-right: 4px;">
-                Wake word
+                ウェイクワード
             </label>
         </div>
     </div>
 
-    <!-- AI Response Panel -->
+    <!-- 会話パネル -->
     <div class="panel">
-        <h2>AI Response</h2>
-        <div id="aiResponse" class="ai-response">Waiting for query...</div>
-        <button class="btn-stop" id="stopTtsBtn" onclick="stopTTS()">Stop Audio</button>
+        <div id="chatContainer" class="chat-container">
+            <div class="chat-empty">会話を始めましょう...</div>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+            <button class="btn-secondary" onclick="clearChat()">履歴クリア</button>
+            <button class="btn-stop" id="stopTtsBtn" onclick="stopTTS()" style="flex: 1; margin-top: 0;">音声停止</button>
+        </div>
     </div>
 
-    <!-- Log Panel (collapsible, default hidden) -->
+    <!-- ログパネル (折りたたみ、デフォルト非表示) -->
     <div class="panel" id="logPanel">
         <div class="panel-header" onclick="toggleLogPanel()">
             <h2 style="margin: 0; cursor: pointer;">
-                <span id="logToggleIcon">▶</span> Communication Log
+                <span id="logToggleIcon">▶</span> 通信ログ
             </h2>
-            <button class="btn-secondary" onclick="event.stopPropagation(); clearLog();" style="padding: 6px 12px; font-size: 12px;">Clear</button>
+            <button class="btn-secondary" onclick="event.stopPropagation(); clearLog();" style="padding: 6px 12px; font-size: 12px;">クリア</button>
         </div>
         <div class="log-container collapsed" id="logContainer"></div>
     </div>
@@ -351,6 +446,42 @@
         let voiceFinalText = '';     // 確定テキスト（セッション全体で蓄積）
         let voiceInterimText = '';   // 中間結果（未確定）
         let savedCursorPos = 0;      // PTT開始時のカーソル位置
+
+        // marked.js初期化
+        marked.setOptions({
+            breaks: true,  // 改行をbrに変換
+            gfm: true      // GitHub Flavored Markdown
+        });
+
+        // チャットメッセージ追加
+        function addChatMessage(type, content, isMarkdown = false) {
+            const container = document.getElementById('chatContainer');
+
+            // 空の状態を削除
+            const empty = container.querySelector('.chat-empty');
+            if (empty) empty.remove();
+
+            const message = document.createElement('div');
+            message.className = `chat-message ${type}`;
+
+            const roleText = type === 'user' ? '👤 あなた' : '🤖 アシスタント';
+            const contentHtml = isMarkdown ? marked.parse(content) : escapeHtml(content);
+
+            message.innerHTML = `
+                <div class="role">${roleText}</div>
+                <div class="content">${contentHtml}</div>
+            `;
+
+            container.appendChild(message);
+            container.scrollTop = container.scrollHeight;
+            return message;
+        }
+
+        // 履歴クリア
+        function clearChat() {
+            const container = document.getElementById('chatContainer');
+            container.innerHTML = '<div class="chat-empty">会話を始めましょう...</div>';
+        }
 
         // Get WebSocket URL (same origin as page)
         function getWsUrl() {
@@ -370,16 +501,16 @@
                 micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 micEnabled = true;
 
-                statusEl.textContent = 'Hold to speak';
+                statusEl.textContent = '長押しで音声入力';
                 statusEl.style.color = '#2ed573';
 
                 initSpeechRecognition();
-                addLog('info', 'Microphone enabled');
+                addLog('info', 'マイク有効化');
 
             } catch (err) {
-                statusEl.textContent = 'Mic permission denied';
+                statusEl.textContent = 'マイク許可なし';
                 statusEl.style.color = '#ff4757';
-                addLog('error', `Microphone permission denied: ${err.message}`);
+                addLog('error', `マイク許可エラー: ${err.message}`);
             }
         }
 
@@ -387,7 +518,7 @@
         function initSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
-                addLog('info', 'Web Speech API not supported in this browser');
+                addLog('info', 'このブラウザは音声認識に対応していません');
                 document.getElementById('voiceInputBtn').disabled = true;
                 return;
             }
@@ -419,7 +550,7 @@
                     previewContent.textContent = displayText;
                     previewContent.classList.toggle('interim', sessionInterim.length > 0);
                 } else {
-                    previewContent.textContent = 'Listening...';
+                    previewContent.textContent = '聞き取り中...';
                     previewContent.classList.add('interim');
                 }
 
@@ -430,7 +561,7 @@
 
             recognition.onerror = (event) => {
                 if (event.error !== 'aborted') {
-                    addLog('error', `Speech recognition error: ${event.error}`);
+                    addLog('error', `音声認識エラー: ${event.error}`);
                 }
                 stopSpeechRecognition();
             };
@@ -455,11 +586,11 @@
 
         function startSpeechRecognition() {
             if (!recognition) {
-                addLog('error', 'Speech recognition not initialized');
+                addLog('error', '音声認識が初期化されていません');
                 return;
             }
             if (!micEnabled) {
-                addLog('error', 'Please enable microphone first');
+                addLog('error', 'マイクを有効にしてください');
                 return;
             }
 
@@ -477,7 +608,7 @@
             isListening = true;
 
             // プレビュー表示
-            previewContent.textContent = 'Listening...';
+            previewContent.textContent = '聞き取り中...';
             previewContent.classList.add('interim');
             preview.classList.add('active');
 
@@ -487,9 +618,9 @@
                 // Already started, ignore
             }
 
-            voiceBtn.textContent = '🎤 Listening...';
+            voiceBtn.textContent = '🎤 聞き取り中...';
             voiceBtn.classList.add('listening');
-            addLog('info', 'Voice input started');
+            addLog('info', '音声入力開始');
         }
 
         function stopSpeechRecognition() {
@@ -508,7 +639,7 @@
             const previewContent = document.getElementById('voicePreviewContent');
 
             // ボタン状態を戻す
-            voiceBtn.textContent = '🎤 Voice Input';
+            voiceBtn.textContent = '🎤 音声入力';
             voiceBtn.classList.remove('listening');
 
             // プレビューから最終テキストを取得
@@ -518,7 +649,7 @@
             preview.classList.remove('active');
 
             // 有効なテキストがあればカーソル位置に挿入
-            if (finalText && finalText !== 'Listening...') {
+            if (finalText && finalText !== '聞き取り中...') {
                 const text = textarea.value;
                 const pos = savedCursorPos;
 
@@ -540,9 +671,9 @@
                 textarea.focus();
                 textarea.selectionStart = textarea.selectionEnd = newCursorPos;
 
-                addLog('info', `Voice input: "${finalText}"`);
+                addLog('info', `音声入力: "${finalText}"`);
             } else {
-                addLog('info', 'Voice input: no speech detected');
+                addLog('info', '音声入力: 音声なし');
             }
 
             // 状態リセット
@@ -561,25 +692,25 @@
 
         function connect() {
             const url = getWsUrl();
-            addLog('info', `Connecting to ${url}...`);
+            addLog('info', `${url} に接続中...`);
 
             try {
                 ws = new WebSocket(url);
 
                 ws.onopen = () => {
                     updateConnectionStatus(true);
-                    addLog('info', 'Connected to stream_server');
+                    addLog('info', 'サーバーに接続しました');
                     // AI専用モードを宣言（WebRTC不要）
                     ws.send(JSON.stringify({ type: 'ai_only' }));
                 };
 
                 ws.onclose = () => {
                     updateConnectionStatus(false);
-                    addLog('info', 'Disconnected');
+                    addLog('info', '切断されました');
                 };
 
                 ws.onerror = (error) => {
-                    addLog('error', 'WebSocket error');
+                    addLog('error', 'WebSocket エラー');
                 };
 
                 ws.onmessage = (event) => {
@@ -587,30 +718,33 @@
                         const data = JSON.parse(event.data);
                         handleResponse(data);
                     } catch (e) {
-                        addLog('error', `Parse error: ${e.message}`);
+                        addLog('error', `解析エラー: ${e.message}`);
                     }
                 };
             } catch (e) {
-                addLog('error', `Connection failed: ${e.message}`);
+                addLog('error', `接続失敗: ${e.message}`);
             }
         }
 
         function updateConnectionStatus(connected) {
             const dot = document.getElementById('statusDot');
             const text = document.getElementById('statusText');
+            const sendBtn = document.getElementById('sendBtn');
 
             if (connected) {
                 dot.classList.add('connected');
-                text.textContent = 'Connected';
+                text.textContent = '接続中';
+                sendBtn.disabled = false;
             } else {
                 dot.classList.remove('connected');
-                text.textContent = 'Disconnected';
+                text.textContent = '未接続';
+                sendBtn.disabled = true;
             }
         }
 
         function sendMessage(message) {
             if (!ws || ws.readyState !== WebSocket.OPEN) {
-                addLog('error', 'Not connected');
+                addLog('error', '未接続です');
                 return;
             }
             const json = JSON.stringify(message);
@@ -625,11 +759,13 @@
 
             const checkWakeWord = document.getElementById('checkWakeWord').checked;
 
-            // Show loading state
-            const responseEl = document.getElementById('aiResponse');
-            responseEl.textContent = 'Thinking...';
-            responseEl.classList.add('loading');
-            responseEl.classList.remove('error');
+            // ユーザーメッセージを追加（Markdownなし）
+            addChatMessage('user', query, false);
+
+            // ローディング表示
+            const loadingMessage = addChatMessage('ai loading', '');
+            loadingMessage.id = 'loadingMessage';
+            loadingMessage.querySelector('.content').innerHTML = '考え中<span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span>';
 
             // Always use stream_server proxy (ai_query message type)
             sendMessage({
@@ -644,25 +780,26 @@
 
         function stopTTS() {
             sendMessage({ type: 'ai_stop_tts' });
-            addLog('info', 'Stop TTS requested');
+            addLog('info', '音声停止リクエスト');
         }
 
         function handleResponse(data) {
-            const responseEl = document.getElementById('aiResponse');
-
             // Handle proxied AI response
             if (data.type === 'ai_response') {
-                responseEl.classList.remove('loading', 'error');
+                // ローディングメッセージを削除
+                const loading = document.getElementById('loadingMessage');
+                if (loading) loading.remove();
 
                 if (data.error) {
-                    responseEl.textContent = `Error: ${data.error}`;
-                    responseEl.classList.add('error');
-                    addLog('error', `AI Error: ${data.error}`);
+                    const msg = addChatMessage('ai error', `エラー: ${data.error}`, false);
+                    addLog('error', `AI エラー: ${data.error}`);
                 } else if (data.skipped) {
-                    responseEl.textContent = `Skipped: ${data.reason || 'No wake word'}`;
-                    addLog('received', `Skipped: ${data.reason || 'No wake word'}`);
+                    const reason = data.reason || 'ウェイクワードなし';
+                    addChatMessage('ai skipped', `スキップ: ${reason}`, false);
+                    addLog('received', `スキップ: ${reason}`);
                 } else if (data.response) {
-                    responseEl.textContent = data.response;
+                    // AI回答はMarkdownレンダリング
+                    addChatMessage('ai', data.response, true);
                     addLog('received', `AI Response: ${data.response}`);
                 }
                 return;
@@ -671,9 +808,9 @@
             // Handle TTS stopped response
             if (data.type === 'ai_tts_stopped') {
                 if (data.stopped) {
-                    addLog('info', 'TTS stopped');
+                    addLog('info', '音声停止しました');
                 } else {
-                    addLog('info', 'TTS was not playing');
+                    addLog('info', '音声は再生中ではありませんでした');
                 }
                 return;
             }
@@ -716,8 +853,8 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
                 document.getElementById('voiceInputBtn').disabled = true;
-                document.getElementById('voiceInputBtn').textContent = 'Not Supported';
-                document.getElementById('micStatus').textContent = 'Speech API not supported';
+                document.getElementById('voiceInputBtn').textContent = '非対応';
+                document.getElementById('micStatus').textContent = '音声認識非対応';
                 document.getElementById('micStatus').style.color = '#ff4757';
                 return;
             }
@@ -769,6 +906,9 @@
                     sendQuery();
                 }
             });
+
+            // 起動時に自動接続
+            connect();
         })();
     </script>
 </body>
