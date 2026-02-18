@@ -56,10 +56,20 @@ function sendAIQuery() {
 }
 
 function stopAITTS() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        return;
+    // クライアント側TTS（speechSynthesis）を停止
+    if ('speechSynthesis' in window) {
+        speechSynthesis.cancel();
     }
-    ws.send(JSON.stringify({ type: 'ai_stop_tts' }));
+
+    // サーバーからのWebRTC音声を停止
+    if (typeof stopServerAudio === 'function') {
+        stopServerAudio();
+    }
+
+    // サーバー側TTS停止リクエスト
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ai_stop_tts' }));
+    }
     debugLog('AI stop TTS requested');
 }
 

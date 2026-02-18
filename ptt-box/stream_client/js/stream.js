@@ -1666,6 +1666,13 @@ function resumeWebRTCMicrophone() {
     return false;
 }
 
+// サーバーからのWebRTC音声を停止（AI TTS停止用）
+// TODO: WebRTC経由の音声停止は未実装（Android Chromeで効かない問題あり）
+function stopServerAudio() {
+    debugLog('stopServerAudio called (not implemented for WebRTC)');
+    return false;
+}
+
 // マイクアクセス要求（GainNodeで増幅）
 async function requestMicrophoneAccess() {
     if (localStream) return true;  // 既に取得済み
