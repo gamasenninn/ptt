@@ -77,7 +77,7 @@
         .connected .connection-indicator { background: #95d5b2; }
         .preparing .connection-indicator { background: #f4f1de; animation: pulse 1s infinite; }
         .blocked .connection-indicator { background: #e8b4d8; }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close) {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]) {
             background: #e94560;
             color: white;
             border: none;
@@ -88,10 +88,10 @@
             margin: 5px;
             transition: background 0.2s;
         }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):hover:not(:disabled) {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):hover:not(:disabled) {
             background: #ff6b6b;
         }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):disabled {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):disabled {
             background: #555;
             cursor: not-allowed;
         }
