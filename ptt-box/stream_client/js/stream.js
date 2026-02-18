@@ -59,6 +59,11 @@ let micAudioContext = null;
 let micGainNode = null;
 const MIC_GAIN = 1.0;  // 増幅なし（将来の調整用に残す）
 
+// オンデマンドマイク用（PTT押下時のみマイク取得）
+let silentTrack = null;           // サイレントダミートラック
+let silentAudioContext = null;    // サイレントトラック用AudioContext
+let serverAudioSender = null;     // サーバー向けRTCRtpSender（replaceTrack用）
+
 // P2P接続管理
 const p2pConnections = new Map();  // clientId -> { pc, audioSender, audioElement }
 let pendingP2PConnections = 0;  // P2P接続待ちカウンター
@@ -516,22 +521,21 @@ async function connect() {
 }
 
 async function setupWebRTC() {
-    // マイクアクセス要求
-    await requestMicrophoneAccess();
+    // オンデマンドマイク: マイクは取得せず、サイレントトラックを使用
+    // PTT押下時にマイクを取得し、replaceTrack()で差し替える
+    silentTrack = createSilentTrack();
+    silentTrack.enabled = false;  // ミュート状態で開始
+    micAccessGranted = true;  // PTTボタンを有効化するため
 
     // RTCPeerConnection作成（サーバーから受信したICE設定を使用）
     pc = new RTCPeerConnection({
         iceServers: iceServers || [{ urls: 'stun:stun.l.google.com:19302' }]
     });
 
-    // マイクトラックを追加（ミュート状態で開始）
-    if (localStream) {
-        localStream.getAudioTracks().forEach(track => {
-            track.enabled = false;  // ミュート状態で開始
-            pc.addTrack(track, localStream);
-            debugLog('Local audio track added (muted)');
-        });
-    }
+    // サイレントトラックを追加（SDP生成のため、後でreplaceTrack）
+    const silentStream = new MediaStream([silentTrack]);
+    serverAudioSender = pc.addTrack(silentTrack, silentStream);
+    debugLog('Silent track added for SDP (on-demand mic mode)');
 
     // イベントハンドラで使うためのローカル参照（レースコンディション防止）
     const thisPC = pc;
@@ -655,12 +659,6 @@ async function setupWebRTC() {
             debugLog('ERROR: ICE failed - TURN unreachable or all candidates failed');
         }
     };
-
-    // 双方向音声用のトランシーバーを追加
-    if (!localStream) {
-        // マイクがない場合は受信のみ
-        pc.addTransceiver('audio', { direction: 'recvonly' });
-    }
 
     // Offer作成（Opusをモノラルに設定してリサンプル回避）
     const offer = await pc.createOffer();
@@ -970,6 +968,17 @@ function cleanupConnection() {
     }
     localStream = null;
     micAccessGranted = false;
+
+    // サイレントトラック用AudioContextをクリーンアップ
+    if (silentTrack) {
+        silentTrack.stop();
+        silentTrack = null;
+    }
+    if (silentAudioContext) {
+        silentAudioContext.close();
+        silentAudioContext = null;
+    }
+    serverAudioSender = null;
 
     ws = null;
     iceServers = null;
@@ -1598,6 +1607,41 @@ function setupKeyboardShortcuts() {
 
 // ========== PTT機能 ==========
 
+// サイレンス音声を生成するダミートラック（SDP生成用）
+function createSilentTrack() {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = 0;  // 音量ゼロ
+    const dst = ctx.createMediaStreamDestination();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(dst);
+    oscillator.start();
+
+    const track = dst.stream.getAudioTracks()[0];
+    // AudioContextは保持（後でclose）
+    silentAudioContext = ctx;
+    debugLog('Silent track created');
+    return track;
+}
+
+// マイクを解放（PTT終了時）
+function releaseMicrophone() {
+    if (rawMicStream) {
+        rawMicStream.getTracks().forEach(track => track.stop());
+        rawMicStream = null;
+    }
+    if (micAudioContext) {
+        micAudioContext.close();
+        micAudioContext = null;
+        micGainNode = null;
+    }
+    localStream = null;
+    micAccessGranted = false;
+    debugLog('Mic released');
+}
+
 // AI音声入力用: WebRTCマイクを一時停止（現状Androidでは効果なし）
 function pauseWebRTCMicrophone() {
     if (localStream) {
@@ -1679,7 +1723,7 @@ let pttButtonPressed = false;  // ボタンが物理的に押されているか
 let pttDebounceTimer = null;   // デバウンス用タイマー
 const PTT_DEBOUNCE_MS = 100;   // デバウンス時間
 
-function pttStart(event) {
+async function pttStart(event) {
     event.preventDefault();
     event.stopPropagation();
 
@@ -1707,12 +1751,41 @@ function pttStart(event) {
         if (pttBtn) pttBtn.classList.remove('pressing');
         return;
     }
-    if (!micAccessGranted) {
-        debugLog('Microphone not available');
-        pttButtonPressed = false;
-        if (pttRing) pttRing.classList.remove('active');
-        if (pttBtn) pttBtn.classList.remove('pressing');
-        return;
+
+    // オンデマンドマイク: PTT押下時にマイクを取得
+    if (!localStream) {
+        debugLog('Acquiring microphone...');
+        const success = await requestMicrophoneAccess();
+        if (!success) {
+            debugLog('Mic access denied');
+            pttButtonPressed = false;
+            if (pttRing) pttRing.classList.remove('active');
+            if (pttBtn) pttBtn.classList.remove('pressing');
+            return;
+        }
+
+        // ボタンが既に離されていたらマイクを解放して終了
+        if (!pttButtonPressed) {
+            debugLog('Button released during mic acquisition');
+            releaseMicrophone();
+            return;
+        }
+
+        // サーバー向けPCのトラックを差し替え
+        const micTrack = localStream.getAudioTracks()[0];
+        if (serverAudioSender && micTrack) {
+            await serverAudioSender.replaceTrack(micTrack);
+            debugLog('Server track replaced with mic');
+        }
+
+        // P2P接続のトラックも差し替え
+        for (const [peerId, connInfo] of p2pConnections) {
+            if (connInfo.audioSender) {
+                const clonedTrack = micTrack.clone();
+                await connInfo.audioSender.replaceTrack(clonedTrack);
+                debugLog('P2P track replaced for ' + peerId);
+            }
+        }
     }
 
     debugLog('PTT request...');
@@ -1758,19 +1831,25 @@ function pttEnd(event) {
     debugLog('PTT release');
     isPttActive = false;
 
-    // サーバー向けマイクをミュート
-    if (localStream) {
-        localStream.getAudioTracks().forEach(track => {
-            track.enabled = false;
+    // オンデマンドマイク: サーバー向けPCをサイレントトラックに戻す
+    if (serverAudioSender && silentTrack) {
+        serverAudioSender.replaceTrack(silentTrack).catch(e => {
+            debugLog('Failed to replace server track: ' + e.message);
         });
     }
 
-    // 全P2P接続のマイクトラックを無効化
+    // P2P接続もサイレントトラックに戻す
     p2pConnections.forEach((connInfo, clientId) => {
-        if (connInfo.audioSender && connInfo.audioSender.track) {
-            connInfo.audioSender.track.enabled = false;
+        if (connInfo.audioSender && silentTrack) {
+            const clonedSilent = silentTrack.clone();
+            connInfo.audioSender.replaceTrack(clonedSilent).catch(e => {
+                debugLog('Failed to replace P2P track: ' + e.message);
+            });
         }
     });
+
+    // マイクを解放
+    releaseMicrophone();
 
     ws.send(JSON.stringify({ type: 'ptt_release' }));
 }
@@ -1782,13 +1861,15 @@ function handlePttGranted() {
     // ボタンが既に離されていたら即座にリリース
     if (!pttButtonPressed) {
         debugLog('Button already released - immediate release');
+        // オンデマンドマイク: マイクも解放
+        releaseMicrophone();
         ws.send(JSON.stringify({ type: 'ptt_release' }));
         return;
     }
 
     isPttActive = true;
 
-    // サーバー向けマイクをアンミュート
+    // マイクトラックを有効化（既にreplaceTrack済み）
     if (localStream) {
         localStream.getAudioTracks().forEach(track => {
             track.enabled = true;
@@ -1810,6 +1891,26 @@ function handlePttGranted() {
 function handlePttDenied(speakerName) {
     debugLog('PTT denied - ' + speakerName + ' is speaking');
     isPttActive = false;
+
+    // オンデマンドマイク: サーバー向けPCをサイレントトラックに戻す
+    if (serverAudioSender && silentTrack) {
+        serverAudioSender.replaceTrack(silentTrack).catch(e => {
+            debugLog('Failed to replace server track: ' + e.message);
+        });
+    }
+
+    // P2P接続もサイレントトラックに戻す
+    p2pConnections.forEach((connInfo, clientId) => {
+        if (connInfo.audioSender && silentTrack) {
+            const clonedSilent = silentTrack.clone();
+            connInfo.audioSender.replaceTrack(clonedSilent).catch(e => {
+                debugLog('Failed to replace P2P track: ' + e.message);
+            });
+        }
+    });
+
+    // マイクを解放
+    releaseMicrophone();
 }
 
 // PTT状態更新（サーバーからのブロードキャスト）
@@ -1968,15 +2069,24 @@ async function createP2PConnection(remoteClientId, isOfferer) {
     };
     p2pConnections.set(remoteClientId, connInfo);
 
-    // ローカルマイクトラックを追加（ミュート状態）
-    if (localStream) {
+    // オンデマンドマイク: PTT中はマイクトラック、それ以外はサイレントトラック
+    if (localStream && isPttActive) {
+        // PTT中: マイクトラックを追加
         const track = localStream.getAudioTracks()[0];
         if (track) {
             const clonedTrack = track.clone();
-            clonedTrack.enabled = isPttActive;  // PTT状態に応じて
-            connInfo.audioSender = p2pPc.addTrack(clonedTrack, localStream);
-            debugLog('P2P track added (enabled: ' + clonedTrack.enabled + ')');
+            clonedTrack.enabled = true;
+            const stream = new MediaStream([clonedTrack]);
+            connInfo.audioSender = p2pPc.addTrack(clonedTrack, stream);
+            debugLog('P2P mic track added (PTT active)');
         }
+    } else if (silentTrack) {
+        // PTT外: サイレントトラックを追加
+        const clonedSilent = silentTrack.clone();
+        clonedSilent.enabled = false;
+        const stream = new MediaStream([clonedSilent]);
+        connInfo.audioSender = p2pPc.addTrack(clonedSilent, stream);
+        debugLog('P2P silent track added');
     }
 
     // リモート音声受信
