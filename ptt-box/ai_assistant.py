@@ -85,6 +85,9 @@ SANDBOX_PATH = Path(os.environ.get("SANDBOX_PATH", Path(__file__).parent / "sand
 WAKE_WORDS_STR = os.environ.get("WAKE_WORDS", "OKガーコ,okガーコ,オーケーガーコ,ガーコちゃん")
 WAKE_WORDS = [w.strip() for w in WAKE_WORDS_STR.split(",")]
 
+# stream_server設定（TTS音声のWebRTC配信用）
+STREAM_SERVER_URL = os.environ.get("STREAM_SERVER_URL", "http://localhost:9320")
+
 # システムプロンプト（外部ファイルから読み込み）
 SYSTEM_PROMPT_PATH = Path(os.environ.get("SYSTEM_PROMPT_PATH", Path(__file__).parent / "ASSISTANT.md"))
 
@@ -414,6 +417,130 @@ async def play_audio_async(audio_path: Path) -> bool:
         return False
 
 
+async def send_tts_to_client(audio_path: Path, client_id: str) -> bool:
+    """TTS音声をOpusに変換してstream_serverに送信し、WebRTC経由でクライアントに配信"""
+    import aiohttp
+
+    if not client_id:
+        log("client_id未指定、WebRTC配信をスキップ")
+        return False
+
+    try:
+        # FFmpegでMP3をOpusに変換（20msフレーム）
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-i", str(audio_path),
+            "-ac", "1",           # モノラル
+            "-ar", "48000",       # 48kHz
+            "-c:a", "libopus",
+            "-b:a", "24k",        # 24kbps
+            "-frame_duration", "20",  # 20msフレーム
+            "-application", "voip",
+            "-f", "ogg",
+            "pipe:1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            log(f"Opus変換エラー: {stderr.decode()}", level="error")
+            return False
+
+        # OGGストリームからOpusフレームを抽出して送信
+        ogg_data = stdout
+        log(f"Opus変換完了: {len(ogg_data)} bytes")
+        pos = 0
+        frame_count = 0
+        headers_skipped = 0
+
+        # 全Opusフレームを先に抽出（OGGページのセグメントテーブルを正しく解析）
+        opus_frames = []
+        while pos < len(ogg_data):
+            # OGGページヘッダーを解析
+            if pos + 27 > len(ogg_data):
+                break
+            if ogg_data[pos:pos+4] != b'OggS':
+                pos += 1
+                continue
+
+            num_segments = ogg_data[pos + 26]
+            if pos + 27 + num_segments > len(ogg_data):
+                break
+
+            # セグメントテーブルを読み取り
+            segment_table = ogg_data[pos + 27:pos + 27 + num_segments]
+            payload_size = sum(segment_table)
+            page_size = 27 + num_segments + payload_size
+
+            if pos + page_size > len(ogg_data):
+                break
+
+            # ペイロード開始位置
+            payload_start = pos + 27 + num_segments
+
+            # セグメントテーブルに従って個々のパケットを抽出
+            # 255バイトセグメントは継続を意味し、<255で終端
+            packet_data = bytearray()
+            segment_offset = 0
+            for seg_size in segment_table:
+                packet_data.extend(ogg_data[payload_start + segment_offset:payload_start + segment_offset + seg_size])
+                segment_offset += seg_size
+
+                if seg_size < 255:
+                    # パケット終端
+                    if len(packet_data) > 0:
+                        # OpusHead/OpusTags ヘッダーをスキップ
+                        if packet_data[:8] == b'OpusHead' or packet_data[:8] == b'OpusTags':
+                            headers_skipped += 1
+                        else:
+                            opus_frames.append(bytes(packet_data))
+                    packet_data = bytearray()
+
+            pos += page_size
+
+        log(f"OGG解析: {len(opus_frames)}フレーム抽出, {headers_skipped}ヘッダースキップ")
+
+        if len(opus_frames) == 0:
+            log(f"TTS: Opusフレームが見つかりません (data={len(ogg_data)}B, headers={headers_skipped})", level="warning")
+            return False
+
+        # 全フレームを一括送信（長さプレフィックス形式）
+        # フォーマット: [2バイト長さ][フレームデータ][2バイト長さ][フレームデータ]...
+        batch_data = bytearray()
+        for opus_frame in opus_frames:
+            frame_len = len(opus_frame)
+            batch_data.extend(frame_len.to_bytes(2, 'big'))
+            batch_data.extend(opus_frame)
+
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(
+                    f"{STREAM_SERVER_URL}/api/tts_audio",
+                    data=bytes(batch_data),
+                    headers={
+                        "Content-Type": "application/octet-stream",
+                        "X-Target-Client": client_id,
+                        "X-Frame-Count": str(len(opus_frames))
+                    },
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    if resp.status == 200:
+                        log(f"TTS WebRTC配信開始: {len(opus_frames)}フレーム -> {client_id}")
+                        return True
+                    else:
+                        log(f"TTS送信エラー: HTTP {resp.status}", level="error")
+                        return False
+            except Exception as e:
+                log(f"TTS送信エラー: {e}", level="error")
+                return False
+
+    except Exception as e:
+        log(f"TTS WebRTC配信エラー: {e}", level="error")
+        return False
+
+
 def stop_audio() -> bool:
     """再生中の音声を停止"""
     global _tts_process, _tts_audio_path
@@ -468,29 +595,45 @@ class AssistantService:
         if not query:
             return web.json_response({"error": "Empty query"}, status=400)
 
+        # クライアントID（TTS音声のWebRTC配信先）
+        client_id = data.get("client_id")
+
+        # TTSモード: server（サーバーTTS）, client（端末TTS）, none（音声なし）
+        tts_mode = data.get("tts_mode", "server")
+
         # ウェイクワードチェック
         if data.get("check_wake_word", False):
             query = check_wake_word(query)
             if not query:
                 return web.json_response({"skipped": True, "reason": "No wake word"})
 
-        log(f"クエリ受信: {query[:50]}...")
+        log(f"クエリ受信: {query[:50]}..." + (f" (client={client_id}, tts={tts_mode})" if client_id else ""))
 
         # クエリ処理
         response_text = await self.assistant.process_query(query)
 
         # TTS生成・再生（バックグラウンドで実行、レスポンスを先に返す）
-        if TTS_ENABLED:
-            asyncio.create_task(self._play_tts(response_text))
+        # tts_mode が 'server' の場合のみサーバー側でTTS生成
+        if TTS_ENABLED and tts_mode == "server":
+            asyncio.create_task(self._play_tts(response_text, client_id))
 
         return web.json_response({"response": response_text})
 
-    async def _play_tts(self, text: str):
+    async def _play_tts(self, text: str, client_id: str | None = None):
         """TTSをバックグラウンドで再生"""
         try:
             audio_path = await text_to_speech(text)
             if audio_path:
-                await play_audio_async(audio_path)
+                # サーバーのスピーカーで再生（従来通り）
+                play_task = asyncio.create_task(play_audio_async(audio_path))
+
+                # WebRTC経由でクライアントにも配信
+                if client_id:
+                    await send_tts_to_client(audio_path, client_id)
+
+                # ローカル再生完了を待機
+                await play_task
+
                 # 正常終了時のみファイル削除（stop_audioで停止した場合はそちらで削除）
                 if audio_path.exists():
                     audio_path.unlink(missing_ok=True)

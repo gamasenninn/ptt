@@ -235,6 +235,12 @@ class StreamServer {
         this.rtpTimestamp = 0;
         this.rtpSsrc = Math.floor(Math.random() * 0xFFFFFFFF);
 
+        // TTS専用RTPステート（マイク音声と分離）
+        this.ttsRtpSequence = 0;
+        this.ttsRtpTimestamp = 0;
+        this.ttsRtpSsrc = Math.floor(Math.random() * 0xFFFFFFFF);
+        this.ttsPlaying = false;  // TTS再生中フラグ（マイク音声を一時停止）
+
         // FFmpegドリフト計測
         this.ffmpegStartTime = 0;
         this.ffmpegRestartCount = 0;
@@ -713,6 +719,81 @@ class StreamServer {
             }
         });
 
+        // TTS音声をWebRTC経由で特定クライアントに送信
+        // ai_assistant.py から呼び出される（一括送信形式）
+        this.app.post('/api/tts_audio', express.raw({ type: 'application/octet-stream', limit: '5mb' }), (req, res) => {
+            const targetClientId = req.headers['x-target-client'];
+            const frameCount = parseInt(req.headers['x-frame-count'] || '0', 10);
+
+            if (!targetClientId) {
+                return res.status(400).json({ success: false, error: 'X-Target-Client header required' });
+            }
+
+            const batchData = req.body;
+            if (!batchData || batchData.length === 0) {
+                return res.status(400).json({ success: false, error: 'No audio data' });
+            }
+
+            // バッチデータからOpusフレームを解析
+            // フォーマット: [2バイト長さ][フレームデータ][2バイト長さ][フレームデータ]...
+            const frames = [];
+            let pos = 0;
+            while (pos + 2 <= batchData.length) {
+                const frameLen = batchData.readUInt16BE(pos);
+                pos += 2;
+                if (pos + frameLen > batchData.length) break;
+                frames.push(batchData.slice(pos, pos + frameLen));
+                pos += frameLen;
+            }
+
+            if (frames.length === 0) {
+                return res.status(400).json({ success: false, error: 'No frames parsed' });
+            }
+
+            log(`TTS配信開始: ${frames.length}フレーム -> ${targetClientId}`);
+
+            // TTS再生中はマイク音声を一時停止
+            this.ttsPlaying = true;
+
+            // 20ms間隔でフレームを送信（非同期）
+            // マイクと同じRTPステートを使用するためリセット不要
+            const server = this;
+            let frameIndex = 0;
+            const sendNextFrame = () => {
+                if (frameIndex >= frames.length) {
+                    server.ttsPlaying = false;  // TTS終了、マイク再開
+                    log(`TTS配信完了: ${frames.length}フレーム -> ${targetClientId}`);
+                    return;
+                }
+
+                const sent = server.sendOpusToClient(frames[frameIndex], targetClientId);
+                if (!sent) {
+                    server.ttsPlaying = false;  // TTS中断、マイク再開
+                    log(`TTS配信中断: クライアント切断 (${frameIndex}/${frames.length})`, 'warning');
+                    return;
+                }
+
+                frameIndex++;
+                setTimeout(sendNextFrame, 20);  // 20msごとに次のフレーム
+            };
+
+            // 最初のフレームを即座に送信開始
+            sendNextFrame();
+
+            res.json({ success: true, frames: frames.length });
+        });
+
+        // TTS音声を全クライアントに送信（ウェイクワード配信用）
+        this.app.post('/api/tts_audio_broadcast', express.raw({ type: 'application/octet-stream', limit: '1mb' }), (req, res) => {
+            const opusData = req.body;
+            if (!opusData || opusData.length === 0) {
+                return res.status(400).json({ success: false, error: 'No audio data' });
+            }
+
+            const sentCount = this.sendOpusToAllClients(opusData);
+            res.json({ success: true, sentCount });
+        });
+
         // ダッシュボード静的ファイル
         const dashPath = path.join(__dirname, '..', 'stream_client', 'dash');
         this.app.use('/dash', express.static(dashPath));
@@ -1125,14 +1206,14 @@ class StreamServer {
 
     // AI Assistant クエリをプロキシ (HTTP)
     async handleAIQuery(client, msg) {
-        const { query, check_wake_word } = msg;
+        const { query, check_wake_word, tts_mode } = msg;
 
         if (!query) {
             client.send({ type: 'ai_response', error: 'Empty query' });
             return;
         }
 
-        log(`${client.displayName}: AI query: ${query.substring(0, 50)}...`);
+        log(`${client.displayName}: AI query: ${query.substring(0, 50)}... (tts=${tts_mode || 'server'})`);
 
         try {
             const controller = new AbortController();
@@ -1143,7 +1224,9 @@ class StreamServer {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     query: query,
-                    check_wake_word: check_wake_word || false
+                    check_wake_word: check_wake_word || false,
+                    client_id: client.clientId,  // TTS音声の送信先
+                    tts_mode: tts_mode || 'server'  // server/client/none
                 }),
                 signal: controller.signal
             });
@@ -2084,6 +2167,11 @@ class StreamServer {
     sendOpusToClients(opusData) {
         if (opusData.length === 0) return;
 
+        // TTS再生中はマイク音声を送信しない（RTPカウンター競合防止）
+        if (this.ttsPlaying) {
+            return;
+        }
+
         const currentSpeaker = this.pttManager.currentSpeaker;
 
         // WebクライアントがPTT中は、サーバーマイク音声を一切送信しない
@@ -2122,6 +2210,76 @@ class StreamServer {
         if (this.audioSentCount % 15000 === 0) {
             log(`[Audio] packets=${this.audioSentCount}, sent to ${sentCount}/${this.p2pConnections.size} clients`);
         }
+    }
+
+    // TTS専用のRTPバッファ作成（SSRCはマイクと同じ、seq/tsは独立）
+    createTtsRtpBuffer(payload) {
+        const seq = this.ttsRtpSequence++ & 0xFFFF;
+        const ts = this.ttsRtpTimestamp >>> 0;
+
+        const header = Buffer.alloc(12);
+        header.writeUInt8(0x80, 0);
+        header.writeUInt8(OPUS_PAYLOAD_TYPE, 1);
+        header.writeUInt16BE(seq, 2);
+        header.writeUInt32BE(ts, 4);
+        // 重要: マイクと同じSSRCを使用（クライアントのジッタバッファが認識できるように）
+        header.writeUInt32BE(this.rtpSsrc, 8);
+
+        this.ttsRtpTimestamp += 960;  // 48kHz, 20ms = 960 samples
+
+        return Buffer.concat([header, payload]);
+    }
+
+    // TTS RTPステートをリセット（新しいTTSセッション開始時）
+    resetTtsRtpState() {
+        this.ttsRtpSequence = 0;
+        this.ttsRtpTimestamp = 0;
+    }
+
+    // 特定クライアントにのみOpus音声を送信（TTS用）
+    sendOpusToClient(opusData, targetClientId) {
+        if (opusData.length === 0) return false;
+
+        const connInfo = this.p2pConnections.get(targetClientId);
+        if (!connInfo) {
+            log(`[TTS] Target client not found: ${targetClientId}`);
+            return false;
+        }
+
+        if (!connInfo.audioTrack || connInfo.pc.connectionState !== 'connected') {
+            log(`[TTS] Target client not connected: ${targetClientId}`);
+            return false;
+        }
+
+        // マイクと同じRTPステートを使用（連続したseq/tsでジッタバッファが認識できる）
+        const rtpBuffer = this.createRtpBuffer(opusData);
+
+        try {
+            connInfo.audioTrack.writeRtp(rtpBuffer);
+            return true;
+        } catch (e) {
+            log(`[TTS] Failed to send to ${targetClientId}: ${e.message}`);
+            return false;
+        }
+    }
+
+    // 全クライアントにOpus音声を送信（将来のウェイクワード配信用）
+    sendOpusToAllClients(opusData) {
+        if (opusData.length === 0) return 0;
+
+        const rtpBuffer = this.createRtpBuffer(opusData);
+        let sentCount = 0;
+
+        for (const [clientId, connInfo] of this.p2pConnections) {
+            if (connInfo.audioTrack && connInfo.pc.connectionState === 'connected') {
+                try {
+                    connInfo.audioTrack.writeRtp(rtpBuffer);
+                    sentCount++;
+                } catch (e) {}
+            }
+        }
+
+        return sentCount;
     }
 
     // ========== スピーカー出力（受信）==========

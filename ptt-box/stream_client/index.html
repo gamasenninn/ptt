@@ -572,6 +572,229 @@
         .clients-overlay.active {
             display: block;
         }
+
+        /* AI Tab Styles */
+        .ai-input-container {
+            position: relative;
+            margin-bottom: 10px;
+        }
+        #aiQueryInput {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #0a0a15;
+            color: #fff;
+            font-size: 16px;
+            font-family: inherit;
+            resize: none;
+            min-height: 60px;
+        }
+        #aiQueryInput::placeholder {
+            color: #666;
+        }
+        .ai-voice-preview {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(26, 58, 46, 0.97);
+            border: 2px solid #2ed573;
+            border-radius: 6px;
+            padding: 12px;
+            font-size: 16px;
+            color: #fff;
+            overflow-y: auto;
+            z-index: 10;
+        }
+        .ai-voice-preview.active {
+            display: block;
+            animation: ai-pulse-border 1.5s infinite;
+        }
+        @keyframes ai-pulse-border {
+            0%, 100% { border-color: #2ed573; }
+            50% { border-color: #1a8a4e; }
+        }
+        .ai-voice-label {
+            font-size: 12px;
+            color: #2ed573;
+            margin-bottom: 6px;
+        }
+        .ai-voice-content {
+            color: #fff;
+            min-height: 24px;
+        }
+        .ai-voice-content.interim {
+            color: #aaa;
+            font-style: italic;
+        }
+        .ai-button-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        .ai-btn-voice {
+            flex: 1;
+            padding: 12px 16px;
+            background: #4a4a6a;
+            border: none;
+            border-radius: 6px;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .ai-btn-voice:hover:not(:disabled) {
+            background: #5a5a7a;
+        }
+        .ai-btn-voice.listening {
+            background: #2ed573;
+            animation: pulse 1.5s infinite;
+        }
+        .ai-btn-send {
+            flex: 1;
+            padding: 12px 16px;
+            background: #00d9ff;
+            border: none;
+            border-radius: 6px;
+            color: #000;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .ai-btn-send:hover:not(:disabled) {
+            background: #00b8d9;
+        }
+        .ai-btn-send:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .ai-options-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .ai-mic-status {
+            font-size: 12px;
+            color: #888;
+        }
+        .ai-btn-stop {
+            padding: 8px 16px;
+            background: #ff6b6b;
+            border: none;
+            border-radius: 6px;
+            color: #fff;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .ai-btn-stop:hover {
+            background: #ee5a5a;
+        }
+        .ai-chat-container {
+            background: #0f0f23;
+            border-radius: 6px;
+            min-height: 200px;
+            max-height: calc(100vh - 380px);
+            overflow-y: auto;
+            margin-bottom: 10px;
+        }
+        .ai-chat-message {
+            padding: 12px 16px;
+            border-bottom: 1px solid #2a2a3a;
+        }
+        .ai-chat-message:last-child {
+            border-bottom: none;
+        }
+        .ai-chat-message.user {
+            background: #1e3a5f;
+        }
+        .ai-chat-message.ai {
+            background: #16213e;
+        }
+        .ai-chat-message .role {
+            font-size: 12px;
+            font-weight: bold;
+            color: #00d9ff;
+            margin-bottom: 6px;
+        }
+        .ai-chat-message .content {
+            color: #eee;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+        .ai-chat-message .content code {
+            background: #0f0f23;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9em;
+        }
+        .ai-chat-message .content pre {
+            background: #0f0f23;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+        .ai-chat-message .content pre code {
+            background: transparent;
+            padding: 0;
+        }
+        .ai-chat-message .content ul, .ai-chat-message .content ol {
+            margin: 8px 0;
+            padding-left: 20px;
+        }
+        .ai-chat-message .content p {
+            margin: 0 0 8px 0;
+        }
+        .ai-chat-message .content p:last-child {
+            margin-bottom: 0;
+        }
+        .ai-chat-message.loading .content {
+            color: #888;
+            font-style: italic;
+        }
+        .ai-chat-message.error .content {
+            color: #ff6b6b;
+        }
+        .ai-chat-empty {
+            color: #666;
+            text-align: center;
+            padding: 40px 20px;
+            font-style: italic;
+        }
+        @keyframes ai-thinking {
+            0%, 80%, 100% { opacity: 0.3; }
+            40% { opacity: 1; }
+        }
+        .ai-thinking-dots span {
+            animation: ai-thinking 1.4s infinite;
+        }
+        .ai-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .ai-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+        .ai-btn-clear {
+            width: 100%;
+            padding: 10px;
+            background: #3d405b;
+            border: none;
+            border-radius: 6px;
+            color: #aaa;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .ai-btn-clear:hover {
+            background: #5c5f7e;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -580,6 +803,7 @@
         <div class="tab-nav">
             <button class="tab-btn active" onclick="switchTab('transceiver')">トーク</button>
             <button class="tab-btn" onclick="switchTab('history')">履歴</button>
+            <button class="tab-btn" onclick="switchTab('ai')">AI</button>
             <button class="tab-btn" onclick="switchTab('admin')">管理</button>
         </div>
 
@@ -649,6 +873,37 @@
             <div id="debug" style="margin-top: 10px; font-size: 12px; color: #aaa; text-align: left; max-height: 200px; overflow-y: auto; background: #0a0a15; padding: 12px; border-radius: 6px; word-break: break-all; display: none;">
             </div>
             <button id="sendLogsBtn" onclick="sendLogsToServer()" style="margin-top: 8px; background: #0f3460; padding: 8px 16px; font-size: 14px; width: 100%; display: none;">📤 ログをサーバーに送信</button>
+        </div>
+
+        <!-- AI Tab -->
+        <div id="tab-ai" class="tab-content">
+            <!-- AI Input -->
+            <div class="ai-input-container">
+                <textarea id="aiQueryInput" rows="2"
+                          placeholder="AIに質問... (Ctrl+Enter で送信)"></textarea>
+                <!-- Voice Preview (PTT中のみ表示、textareaに重ねて表示) -->
+                <div id="aiVoicePreview" class="ai-voice-preview">
+                    <div class="ai-voice-label">🎤 音声入力中</div>
+                    <div id="aiVoicePreviewContent" class="ai-voice-content">聞き取り中...</div>
+                </div>
+            </div>
+            <div class="ai-button-row">
+                <button class="ai-btn-voice" id="aiVoiceInputBtn">
+                    🎤 音声入力
+                </button>
+                <button class="ai-btn-send" id="aiSendBtn" onclick="sendAIQuery()">
+                    送信
+                </button>
+            </div>
+            <div class="ai-options-row">
+                <span id="aiMicStatus" class="ai-mic-status"></span>
+                <button class="ai-btn-stop" id="aiStopTtsBtn" onclick="stopAITTS()">音声停止</button>
+            </div>
+            <!-- Chat container -->
+            <div id="aiChatContainer" class="ai-chat-container">
+                <div class="ai-chat-empty">AIに質問してみましょう...</div>
+            </div>
+            <button class="ai-btn-clear" onclick="clearAIChat()">履歴クリア</button>
         </div>
 
         <!-- History Tab -->
@@ -746,6 +1001,15 @@
                     </div>
                     <div style="margin-top: 8px; font-size: 12px; color: #888;">送信音量を調整（0.5x〜3.0x）</div>
                 </div>
+                <div style="margin-bottom: 20px;">
+                    <div style="margin-bottom: 10px; font-weight: 500;">AI音声</div>
+                    <select id="ttsModeSelect" onchange="saveTtsMode(this.value)" style="width: 100%; padding: 12px; background: #0a0a15; border: 1px solid #333; border-radius: 6px; color: #eee; font-size: 14px; cursor: pointer;">
+                        <option value="server">サーバーTTS（高品質）</option>
+                        <option value="client">端末TTS（軽量）</option>
+                        <option value="none">音声なし</option>
+                    </select>
+                    <div style="margin-top: 8px; font-size: 12px; color: #888;">一対一モードでの音声出力方法</div>
+                </div>
                 <div style="margin-bottom: 10px;">
                     <button onclick="location.reload()" style="width: 100%; padding: 12px; background: #641220; border: none; color: #f8d7da; border-radius: 6px; cursor: pointer;">ページを再読み込み</button>
                 </div>
@@ -768,8 +1032,10 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="js/stream.js"></script>
     <script src="js/history.js"></script>
+    <script src="js/assistant.js"></script>
     <script>
         // Service Worker登録
         if ('serviceWorker' in navigator) {

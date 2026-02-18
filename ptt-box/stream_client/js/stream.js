@@ -491,6 +491,10 @@ async function connect() {
             } else if (data.type === 'logs_saved') {
                 debugLog('Logs saved: ' + data.filename + ' (' + data.lineCount + ' lines)');
             }
+            // AI Assistant messages (handled by assistant.js)
+            else if (typeof processAIMessage === 'function') {
+                processAIMessage(data);
+            }
         };
 
         ws.onerror = (error) => {
@@ -1392,6 +1396,7 @@ function openSettings() {
         modal.classList.add('active');
         updatePttKeyDisplay();
         loadDisplayNameToInput();
+        loadTtsModeToSelect();
     }
 }
 
@@ -1402,6 +1407,27 @@ function closeSettings() {
         modal.classList.remove('active');
     }
     cancelKeyRegistration();
+}
+
+// ========== AI音声設定 ==========
+
+// TTSモードを取得
+function getTtsMode() {
+    return localStorage.getItem('ptt_tts_mode') || 'server';
+}
+
+// TTSモードを保存
+function saveTtsMode(mode) {
+    localStorage.setItem('ptt_tts_mode', mode);
+    debugLog('TTS mode saved: ' + mode);
+}
+
+// 設定画面を開いた時にTTSモードを読み込み
+function loadTtsModeToSelect() {
+    const select = document.getElementById('ttsModeSelect');
+    if (select) {
+        select.value = getTtsMode();
+    }
 }
 
 // ========== 表示名設定 ==========
@@ -1571,6 +1597,30 @@ function setupKeyboardShortcuts() {
 }
 
 // ========== PTT機能 ==========
+
+// AI音声入力用: WebRTCマイクを一時停止（現状Androidでは効果なし）
+function pauseWebRTCMicrophone() {
+    if (localStream) {
+        localStream.getAudioTracks().forEach(track => {
+            track.enabled = false;
+        });
+        debugLog('WebRTC mic paused for AI voice input');
+        return true;
+    }
+    return false;
+}
+
+// AI音声入力用: WebRTCマイクを再開
+function resumeWebRTCMicrophone() {
+    if (localStream) {
+        localStream.getAudioTracks().forEach(track => {
+            track.enabled = true;
+        });
+        debugLog('WebRTC mic resumed after AI voice input');
+        return true;
+    }
+    return false;
+}
 
 // マイクアクセス要求（GainNodeで増幅）
 async function requestMicrophoneAccess() {
