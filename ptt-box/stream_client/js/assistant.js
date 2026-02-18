@@ -8,6 +8,7 @@ let aiRecognitionReady = false;
 let aiVoiceFinalText = '';
 let aiVoiceInterimText = '';
 let aiSavedCursorPos = 0;
+let aiLastAddedTranscript = '';  // Android重複防止用
 
 // marked.js initialization
 if (typeof marked !== 'undefined') {
@@ -181,20 +182,25 @@ function setupAISpeechRecognition() {
         aiRecognition.interimResults = true;
 
         aiRecognition.onresult = (event) => {
-            let sessionFinal = '';
             let sessionInterim = '';
 
-            for (let i = 0; i < event.results.length; i++) {
+            // event.resultIndex から始めて新しい結果のみ処理
+            for (let i = event.resultIndex; i < event.results.length; i++) {
                 const transcript = event.results[i][0].transcript;
-                if (event.results[i].isFinal) {
-                    sessionFinal += transcript;
+                const isFinal = event.results[i].isFinal;
+                if (isFinal) {
+                    // Android対策: 同じtranscriptの重複追加を防止
+                    if (transcript && transcript !== aiLastAddedTranscript) {
+                        aiVoiceFinalText += transcript;
+                        aiLastAddedTranscript = transcript;
+                    }
                 } else {
                     sessionInterim += transcript;
                 }
             }
 
             const previewContent = document.getElementById('aiVoicePreviewContent');
-            const displayText = aiVoiceFinalText + sessionFinal + sessionInterim;
+            const displayText = aiVoiceFinalText + sessionInterim;
 
             if (displayText) {
                 previewContent.textContent = displayText;
@@ -223,11 +229,6 @@ function setupAISpeechRecognition() {
 
         aiRecognition.onend = () => {
             if (aiIsListening) {
-                const previewContent = document.getElementById('aiVoicePreviewContent');
-                const currentText = previewContent.textContent;
-                if (currentText && currentText !== '聞き取り中...') {
-                    aiVoiceFinalText = currentText.replace(aiVoiceInterimText, '');
-                }
                 // 継続モードでない場合は再起動を試みる
                 try {
                     aiRecognition.start();
@@ -253,6 +254,12 @@ function setupAISpeechRecognition() {
 
 
 function startAISpeechRecognition() {
+    // 既に聞き取り中なら何もしない（二重起動防止）
+    if (aiIsListening) {
+        debugLog('AI speech recognition already listening');
+        return;
+    }
+
     // 初回は SpeechRecognition をセットアップ
     if (!aiRecognitionReady) {
         if (!setupAISpeechRecognition()) {
@@ -278,6 +285,7 @@ function startAISpeechRecognition() {
     // Reset state
     aiVoiceFinalText = '';
     aiVoiceInterimText = '';
+    aiLastAddedTranscript = '';
     aiIsListening = true;
 
     // Show preview
@@ -390,17 +398,8 @@ function initAIAssistant() {
         return;
     }
 
-    // スマホ・タブレットでは音声入力ボタンを非表示
-    // (WebRTCとSpeechRecognitionのマイク競合問題のため)
-    const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isMobile) {
-        voiceBtn.style.display = 'none';
-        if (status) {
-            status.style.display = 'none';
-        }
-        debugLog('AI voice input hidden on mobile device');
-        return;
-    }
+    // オンデマンドマイク実装により、PTT未使用時はマイクが解放されているため
+    // モバイルでもSpeechRecognitionが使用可能になった（はず）
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
