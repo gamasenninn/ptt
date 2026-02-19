@@ -93,8 +93,8 @@ STREAM_SERVER_URL = os.environ.get("STREAM_SERVER_URL", "http://localhost:9320")
 SYSTEM_PROMPT_PATH = Path(os.environ.get("SYSTEM_PROMPT_PATH", Path(__file__).parent / "ASSISTANT.md"))
 
 
-def load_system_prompt() -> str:
-    """システムプロンプトを外部ファイルから読み込む"""
+def load_system_prompt(context=None, agent=None) -> str:
+    """システムプロンプトを外部ファイルから読み込む（毎回最新を読む）"""
     if SYSTEM_PROMPT_PATH.exists():
         return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     else:
@@ -369,18 +369,20 @@ class AgentAssistant:
                 log(f"  - {name}")
 
             # Agent作成（hooksでツール呼び出しをログ）
+            # instructions に関数を渡すことで、毎回ファイルから読み込む
             self.agent = Agent(
                 name="Garko",
-                instructions=load_system_prompt(),
+                instructions=load_system_prompt,
                 mcp_servers=self.manager.active_servers,
                 model=AI_MODEL,
                 hooks=create_logging_hooks(),
             )
         else:
             # MCPサーバーなしでAgent作成
+            # instructions に関数を渡すことで、毎回ファイルから読み込む
             self.agent = Agent(
                 name="Garko",
-                instructions=load_system_prompt(),
+                instructions=load_system_prompt,
                 model=AI_MODEL,
                 hooks=create_logging_hooks(),
             )
