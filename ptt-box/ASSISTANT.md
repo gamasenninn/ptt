@@ -61,6 +61,16 @@
 ### 時刻 (time_*)
 - 現在時刻の取得（デフォルト: Asia/Tokyo）
 
+### Web検索 (tavily_*)
+- `tavily_search`: Web検索（天気、ニュース、一般情報）
+  - query: 検索クエリ（日本語OK）
+  - topic: "general"（一般）または "news"（ニュース）
+  - days: ニュースの場合、何日前まで検索するか（デフォルト3日）
+
+使い分け：
+- 「今日の天気」「〇〇のニュース」→ tavily_search
+- 「覚えて」「前に話した〇〇」→ memory_search_notes（ローカル記憶）
+
 ## 応答スタイル
 
 - 簡潔に（音声読み上げのため）
