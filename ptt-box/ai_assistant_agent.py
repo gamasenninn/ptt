@@ -379,6 +379,93 @@ class AgentAssistant:
                 return "処理が複雑すぎます。もう少し簡単な質問をしてください。"
             return f"エラーが発生しました: {e}"
 
+    async def process_query_streamed(self, query: str, session_id: str = "default"):
+        """クエリを処理してストリーミングイベントを生成 (async generator)"""
+        from agents import Runner, SQLiteSession
+        from openai.types.responses import ResponseTextDeltaEvent
+
+        if not self.agent:
+            yield {"type": "error", "message": "エージェントが初期化されていません"}
+            return
+
+        # 履歴クリアコマンド
+        if query.strip() in ["リセット", "クリア", "会話をクリア", "履歴クリア", "reset", "clear"]:
+            session = SQLiteSession(session_id, str(SESSION_DB_PATH))
+            await session.clear_session()
+            log("会話履歴をクリアしました")
+            yield {"type": "done", "response": "会話履歴をクリアしました。"}
+            return
+
+        log(f"クエリ処理(stream): {query} (session={session_id})")
+
+        # 処理開始を通知
+        yield {"type": "thinking"}
+
+        try:
+            # セッション作成（SQLite永続化）
+            session = SQLiteSession(session_id, str(SESSION_DB_PATH))
+
+            # Agentをストリーミングモードで実行
+            result = Runner.run_streamed(
+                self.agent,
+                query,
+                session=session,
+                max_turns=MAX_TURNS,
+            )
+
+            final_text = ""
+
+            async for event in result.stream_events():
+                if event.type == "run_item_stream_event":
+                    # ツール呼び出しイベント
+                    if event.name == "tool_called":
+                        tool_name = ""
+                        if hasattr(event.item, 'raw_item') and hasattr(event.item.raw_item, 'name'):
+                            tool_name = event.item.raw_item.name
+                        elif hasattr(event.item, 'name'):
+                            tool_name = event.item.name
+                        log(f"ストリーム: ツール開始 - {tool_name}")
+                        yield {"type": "tool_start", "name": tool_name}
+
+                    elif event.name == "tool_output":
+                        tool_name = ""
+                        if hasattr(event.item, 'raw_item') and hasattr(event.item.raw_item, 'call_id'):
+                            # ツール名は call_id から推測できないので空
+                            pass
+                        log(f"ストリーム: ツール完了 - {tool_name}")
+                        yield {"type": "tool_end", "name": tool_name}
+
+                    elif event.name == "message_output_created":
+                        # メッセージ出力完了（最終応答はここで取得）
+                        if hasattr(event.item, 'raw_item'):
+                            raw_item = event.item.raw_item
+                            if hasattr(raw_item, 'content') and raw_item.content:
+                                for content_item in raw_item.content:
+                                    if hasattr(content_item, 'text'):
+                                        final_text = content_item.text
+                                        break
+
+                elif event.type == "raw_response_event":
+                    # テキストデルタイベント（トークン単位）
+                    if isinstance(event.data, ResponseTextDeltaEvent):
+                        delta = event.data.delta
+                        if delta:
+                            yield {"type": "text", "delta": delta}
+
+            # 最終応答を取得（stream_events()完了後にfinal_outputが利用可能）
+            response_text = result.final_output or final_text or ""
+
+            log(f"ストリーム完了: {response_text[:50]}...")
+            yield {"type": "done", "response": response_text}
+
+        except Exception as e:
+            log(f"ストリームエラー: {e}", level="error")
+            # MaxTurnsExceeded の場合
+            if "MaxTurns" in str(type(e).__name__):
+                yield {"type": "done", "response": "処理が複雑すぎます。もう少し簡単な質問をしてください。"}
+            else:
+                yield {"type": "error", "message": str(e)}
+
 
 # ========== TTS ==========
 
@@ -656,6 +743,73 @@ class AssistantService:
         stopped = stop_audio()
         return web.json_response({"stopped": stopped})
 
+    async def handle_query_stream(self, request):
+        """POST /query_stream - SSEストリーミングクエリ処理"""
+        from aiohttp import web
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        query = data.get("query", "")
+        if not query:
+            return web.json_response({"error": "Empty query"}, status=400)
+
+        # クライアントID（TTS音声のWebRTC配信先）
+        client_id = data.get("client_id")
+
+        # セッションID（会話の識別子、デフォルトはclient_idまたは"default"）
+        session_id = data.get("session_id", client_id or "default")
+
+        # TTSモード: server（サーバーTTS）, client（端末TTS）, none（音声なし）
+        tts_mode = data.get("tts_mode", "server")
+
+        # ウェイクワードチェック
+        if data.get("check_wake_word", False):
+            query = check_wake_word(query)
+            if not query:
+                return web.json_response({"skipped": True, "reason": "No wake word"})
+
+        log(f"ストリームクエリ受信: {query[:50]}..." + (f" (client={client_id}, session={session_id}, tts={tts_mode})" if client_id else ""))
+
+        # SSEレスポンスを準備
+        response = web.StreamResponse(
+            status=200,
+            reason='OK',
+            headers={
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'X-Accel-Buffering': 'no',  # nginx向け
+            }
+        )
+        await response.prepare(request)
+
+        final_response = ""
+
+        try:
+            # ストリーミング処理
+            async for event in self.assistant.process_query_streamed(query, session_id):
+                event_data = json.dumps(event, ensure_ascii=False)
+                await response.write(f"data: {event_data}\n\n".encode('utf-8'))
+
+                # 最終応答を保存
+                if event.get("type") == "done":
+                    final_response = event.get("response", "")
+
+            # TTS生成・再生（バックグラウンドで実行）
+            if TTS_ENABLED and tts_mode == "server" and final_response:
+                asyncio.create_task(self._play_tts(final_response, client_id))
+
+        except Exception as e:
+            log(f"ストリームエラー: {e}", level="error")
+            error_event = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
+            await response.write(f"data: {error_event}\n\n".encode('utf-8'))
+
+        await response.write_eof()
+        return response
+
     async def start(self):
         """サービスを起動"""
         from aiohttp import web
@@ -678,6 +832,7 @@ class AssistantService:
         # HTTPサーバー起動
         app = web.Application()
         app.router.add_post('/query', self.handle_query)
+        app.router.add_post('/query_stream', self.handle_query_stream)  # SSEストリーミング
         app.router.add_post('/stop_tts', self.handle_stop_tts)
         app.router.add_get('/status', self.handle_status)
 

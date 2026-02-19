@@ -10,6 +10,10 @@ let aiVoiceInterimText = '';
 let aiSavedCursorPos = 0;
 let aiLastAddedTranscript = '';  // Android重複防止用
 
+// AI Streaming state
+let aiStreamingMessage = null;
+let aiStreamingText = '';
+
 // marked.js initialization
 if (typeof marked !== 'undefined') {
     marked.setOptions({
@@ -33,26 +37,98 @@ function sendAIQuery() {
     // Add user message to chat
     addAIChatMessage('user', query, false);
 
-    // Show loading indicator
-    const loadingMessage = addAIChatMessage('ai loading', '');
-    loadingMessage.id = 'aiLoadingMessage';
-    loadingMessage.querySelector('.content').innerHTML = '考え中<span class="ai-thinking-dots"><span>.</span><span>.</span><span>.</span></span>';
+    // Initialize streaming state
+    aiStreamingText = '';
+    aiStreamingMessage = addAIChatMessage('ai streaming', '');
+    aiStreamingMessage.id = 'aiStreamingMessage';
+    updateStreamingStatus('thinking');
 
     // Get TTS mode from settings
     const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
 
-    // Send query through WebSocket (same as test_assistant.html)
+    // Send query through WebSocket using streaming endpoint
     ws.send(JSON.stringify({
-        type: 'ai_query',
+        type: 'ai_query_stream',
         query: query,
         check_wake_word: false,
         tts_mode: ttsMode
     }));
 
-    debugLog('AI query sent: ' + query.substring(0, 50) + '... (tts_mode=' + ttsMode + ')');
+    debugLog('AI query sent (stream): ' + query.substring(0, 50) + '... (tts_mode=' + ttsMode + ')');
 
     // Clear input
     textarea.value = '';
+}
+
+// Update streaming message status
+function updateStreamingStatus(status, toolName) {
+    if (!aiStreamingMessage) return;
+
+    const content = aiStreamingMessage.querySelector('.content');
+    if (!content) return;
+
+    if (status === 'thinking') {
+        content.innerHTML = '<span class="ai-status">考え中<span class="ai-thinking-dots"><span>.</span><span>.</span><span>.</span></span></span>';
+    } else if (status === 'tool_start') {
+        const displayName = toolName || 'ツール';
+        content.innerHTML = '<span class="ai-status">' + escapeHtmlAI(displayName) + ' を実行中<span class="ai-thinking-dots"><span>.</span><span>.</span><span>.</span></span></span>';
+    } else if (status === 'streaming') {
+        // テキストストリーミング中は何もしない（appendStreamingText で処理）
+    }
+}
+
+// Append text to streaming message
+function appendStreamingText(delta) {
+    if (!aiStreamingMessage) return;
+
+    aiStreamingText += delta;
+
+    const content = aiStreamingMessage.querySelector('.content');
+    if (!content) return;
+
+    // マークダウンをレンダリング
+    if (typeof marked !== 'undefined') {
+        content.innerHTML = marked.parse(aiStreamingText);
+    } else {
+        content.innerHTML = escapeHtmlAI(aiStreamingText);
+    }
+
+    // スクロール
+    const container = document.getElementById('aiChatContainer');
+    if (container) {
+        container.scrollTop = container.scrollHeight;
+    }
+}
+
+// Finalize streaming message
+function finalizeStreamingMessage(response) {
+    if (!aiStreamingMessage) return;
+
+    const content = aiStreamingMessage.querySelector('.content');
+    if (!content) return;
+
+    // 最終応答をマークダウンでレンダリング
+    if (typeof marked !== 'undefined') {
+        content.innerHTML = marked.parse(response);
+    } else {
+        content.innerHTML = escapeHtmlAI(response);
+    }
+
+    // ストリーミングクラスを削除
+    aiStreamingMessage.classList.remove('streaming');
+    aiStreamingMessage.removeAttribute('id');
+
+    // スクロール
+    const container = document.getElementById('aiChatContainer');
+    if (container) {
+        container.scrollTop = container.scrollHeight;
+    }
+
+    // 状態をリセット
+    aiStreamingMessage = null;
+    aiStreamingText = '';
+
+    debugLog('AI streaming completed');
 }
 
 function stopAITTS() {
@@ -484,9 +560,60 @@ function processAIMessage(data) {
     if (data.type === 'ai_response') {
         handleAIResponse(data);
         return true;
+    } else if (data.type === 'ai_stream_event') {
+        handleAIStreamEvent(data);
+        return true;
     } else if (data.type === 'ai_tts_stopped') {
         handleAITTSStopped(data);
         return true;
     }
     return false;
+}
+
+// Handle streaming events from AI Assistant
+function handleAIStreamEvent(data) {
+    // eventType にはPythonから送られたイベントタイプが入る
+    const eventType = data.eventType;
+
+    if (eventType === 'error') {
+        // エラーイベント
+        const errorMsg = data.message || 'Unknown error';
+        debugLog('AI stream error: ' + errorMsg);
+        if (aiStreamingMessage) {
+            aiStreamingMessage.classList.remove('streaming');
+            aiStreamingMessage.classList.add('error');
+            const content = aiStreamingMessage.querySelector('.content');
+            if (content) {
+                content.textContent = 'エラー: ' + errorMsg;
+            }
+        }
+        aiStreamingMessage = null;
+        aiStreamingText = '';
+        return;
+    }
+
+    if (eventType === 'thinking') {
+        updateStreamingStatus('thinking');
+        debugLog('AI thinking...');
+    } else if (eventType === 'tool_start') {
+        updateStreamingStatus('tool_start', data.name);
+        debugLog('AI tool start: ' + (data.name || 'unknown'));
+    } else if (eventType === 'tool_end') {
+        // ツール完了後は次のアクションを待機
+        debugLog('AI tool end: ' + (data.name || 'unknown'));
+    } else if (eventType === 'text') {
+        // テキストデルタを追加
+        if (data.delta) {
+            appendStreamingText(data.delta);
+        }
+    } else if (eventType === 'done') {
+        // 完了イベント
+        finalizeStreamingMessage(data.response || aiStreamingText);
+
+        // Client-side TTS if mode is 'client'
+        const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
+        if (ttsMode === 'client' && data.response) {
+            speakWithClientTTS(data.response);
+        }
+    }
 }

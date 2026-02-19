@@ -1129,6 +1129,10 @@ class StreamServer {
                 this.handleAIQuery(client, msg);
                 break;
 
+            case 'ai_query_stream':
+                this.handleAIQueryStream(client, msg);
+                break;
+
             case 'ai_stop_tts':
                 this.handleAIStopTTS(client);
                 break;
@@ -1250,6 +1254,80 @@ class StreamServer {
             } else {
                 logError(`AI query error: ${e.message}`);
                 client.send({ type: 'ai_response', error: e.message });
+            }
+        }
+    }
+
+    // AI Assistant ストリーミングクエリをプロキシ (SSE -> WebSocket)
+    async handleAIQueryStream(client, msg) {
+        const { query, check_wake_word, tts_mode } = msg;
+
+        if (!query) {
+            client.send({ type: 'ai_stream_event', eventType: 'error', message: 'Empty query' });
+            return;
+        }
+
+        log(`${client.displayName}: AI query (stream): ${query.substring(0, 50)}... (tts=${tts_mode || 'server'})`);
+
+        try {
+            const response = await fetch(`${AI_ASSISTANT_URL}/query_stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    query: query,
+                    check_wake_word: check_wake_word || false,
+                    client_id: client.clientId,
+                    tts_mode: tts_mode || 'server'
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            // SSEレスポンスをWebSocketに転送
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // SSEイベントを解析
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || ''; // 最後の不完全な行を保持
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const eventData = JSON.parse(line.slice(6));
+                            // WebSocketクライアントにイベントを転送
+                            // eventData.type を eventType にリネームして衝突を防ぐ
+                            const { type: eventType, ...rest } = eventData;
+                            client.send({
+                                type: 'ai_stream_event',
+                                eventType: eventType,
+                                ...rest
+                            });
+                        } catch (parseError) {
+                            // JSONパースエラーは無視
+                        }
+                    }
+                }
+            }
+
+            log(`${client.displayName}: AI stream completed`);
+
+        } catch (e) {
+            if (e.code === 'ECONNREFUSED' || e.cause?.code === 'ECONNREFUSED') {
+                log(`AI Assistant connection error: ${e.message}`);
+                client.send({ type: 'ai_stream_event', eventType: 'error', message: 'AI Assistant not available' });
+            } else {
+                logError(`AI stream error: ${e.message}`);
+                client.send({ type: 'ai_stream_event', eventType: 'error', message: e.message });
             }
         }
     }
