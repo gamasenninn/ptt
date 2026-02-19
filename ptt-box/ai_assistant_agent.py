@@ -115,6 +115,64 @@ def log(msg: str, level: str = "info"):
 
 # ========== ウェイクワード検出 ==========
 
+# ========== ストリーミングTTS用 文検出 ==========
+
+class SentenceAccumulator:
+    """テキストデルタを蓄積し、文境界を検出（ストリーミングTTS用）"""
+
+    SENTENCE_ENDINGS = ('。', '！', '？', '.', '!', '?')
+    QUOTE_CHARS = '」』"\'）)'
+    MIN_SENTENCE_LENGTH = 5
+    MAX_BUFFER_LENGTH = 500
+
+    def __init__(self):
+        self.buffer = ""
+
+    def add(self, delta: str) -> list[str]:
+        """デルタを追加し、完成した文のリストを返す"""
+        self.buffer += delta
+        completed = []
+
+        # バッファが長すぎる場合は強制分割
+        if len(self.buffer) > self.MAX_BUFFER_LENGTH:
+            break_chars = '、,，　 '
+            for i in range(len(self.buffer) - 1, self.MIN_SENTENCE_LENGTH, -1):
+                if self.buffer[i] in break_chars:
+                    completed.append(self.buffer[:i+1].strip())
+                    self.buffer = self.buffer[i+1:].lstrip()
+                    break
+
+        # 文境界を検索
+        i = 0
+        while i < len(self.buffer):
+            char = self.buffer[i]
+            if char in self.SENTENCE_ENDINGS:
+                # 引用符を含める
+                next_pos = i + 1
+                while next_pos < len(self.buffer) and self.buffer[next_pos] in self.QUOTE_CHARS:
+                    next_pos += 1
+
+                sentence = self.buffer[:next_pos].strip()
+                if len(sentence) >= self.MIN_SENTENCE_LENGTH:
+                    completed.append(sentence)
+                    self.buffer = self.buffer[next_pos:].lstrip()
+                    i = 0
+                    continue
+            i += 1
+
+        return completed
+
+    def flush(self) -> str | None:
+        """残りのバッファを最終文として返す"""
+        if self.buffer.strip():
+            sentence = self.buffer.strip()
+            self.buffer = ""
+            return sentence
+        return None
+
+
+# ========== ウェイクワード検出 ==========
+
 def check_wake_word(text: str) -> str | None:
     """テキストからウェイクワードを検出し、その後のクエリを返す。"""
     text_lower = text.lower()
@@ -711,17 +769,161 @@ class AssistantService:
         try:
             audio_path = await text_to_speech(text)
             if audio_path:
-                play_task = asyncio.create_task(play_audio_async(audio_path))
-
                 if client_id:
+                    # WebRTC配信がある場合はローカル再生しない（音声混在防止）
                     await send_tts_to_client(audio_path, client_id)
-
-                await play_task
+                else:
+                    # クライアントIDなしの場合のみローカル再生
+                    await play_audio_async(audio_path)
 
                 if audio_path.exists():
                     audio_path.unlink(missing_ok=True)
         except Exception as e:
             log(f"TTS再生エラー: {e}", level="error")
+
+    async def _generate_sentence_tts(self, sentence: str, client_id: str | None, sentence_index: int):
+        """単一文のTTSを生成しNode.jsに送信（ストリーミングTTS用）"""
+        if not client_id:
+            return
+
+        try:
+            log(f"TTS生成開始: sentence[{sentence_index}] = {sentence[:30]}...")
+            audio_path = await text_to_speech(sentence)
+            if audio_path:
+                await self._send_tts_indexed(audio_path, client_id, sentence_index)
+                if audio_path.exists():
+                    audio_path.unlink(missing_ok=True)
+            else:
+                # TTS生成失敗 → スキップ通知
+                await self._notify_tts_skip(client_id, sentence_index)
+        except Exception as e:
+            log(f"文TTS エラー (index={sentence_index}): {e}", level="error")
+            await self._notify_tts_skip(client_id, sentence_index)
+
+    async def _send_tts_indexed(self, audio_path: Path, client_id: str, sentence_index: int):
+        """インデックス付きでTTSオーディオを送信（ストリーミングTTS用）"""
+        import aiohttp
+
+        try:
+            # FFmpegでMP3をOpusに変換（20msフレーム）
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-i", str(audio_path),
+                "-ac", "1",
+                "-ar", "48000",
+                "-c:a", "libopus",
+                "-b:a", "24k",
+                "-frame_duration", "20",
+                "-application", "voip",
+                "-f", "ogg",
+                "pipe:1",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                log(f"Opus変換エラー: {stderr.decode()}", level="error")
+                await self._notify_tts_skip(client_id, sentence_index)
+                return
+
+            # OGGストリームからOpusフレームを抽出
+            ogg_data = stdout
+            pos = 0
+            opus_frames = []
+
+            while pos < len(ogg_data):
+                if pos + 27 > len(ogg_data):
+                    break
+                if ogg_data[pos:pos+4] != b'OggS':
+                    pos += 1
+                    continue
+
+                num_segments = ogg_data[pos + 26]
+                if pos + 27 + num_segments > len(ogg_data):
+                    break
+
+                segment_table = ogg_data[pos + 27:pos + 27 + num_segments]
+                payload_size = sum(segment_table)
+                page_size = 27 + num_segments + payload_size
+
+                if pos + page_size > len(ogg_data):
+                    break
+
+                payload_start = pos + 27 + num_segments
+
+                packet_data = bytearray()
+                segment_offset = 0
+                for seg_size in segment_table:
+                    packet_data.extend(ogg_data[payload_start + segment_offset:payload_start + segment_offset + seg_size])
+                    segment_offset += seg_size
+
+                    if seg_size < 255:
+                        if len(packet_data) > 0:
+                            if packet_data[:8] != b'OpusHead' and packet_data[:8] != b'OpusTags':
+                                opus_frames.append(bytes(packet_data))
+                        packet_data = bytearray()
+
+                pos += page_size
+
+            if len(opus_frames) == 0:
+                log(f"TTS: Opusフレームが見つかりません (index={sentence_index})", level="warning")
+                await self._notify_tts_skip(client_id, sentence_index)
+                return
+
+            # 全フレームを一括送信
+            batch_data = bytearray()
+            for opus_frame in opus_frames:
+                frame_len = len(opus_frame)
+                batch_data.extend(frame_len.to_bytes(2, 'big'))
+                batch_data.extend(opus_frame)
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{STREAM_SERVER_URL}/api/tts_audio_queued",
+                    data=bytes(batch_data),
+                    headers={
+                        "Content-Type": "application/octet-stream",
+                        "X-Target-Client": client_id,
+                        "X-Sentence-Index": str(sentence_index),
+                        "X-Frame-Count": str(len(opus_frames))
+                    },
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    if resp.status == 200:
+                        log(f"TTS キュー追加: sentence[{sentence_index}] {len(opus_frames)}フレーム -> {client_id}")
+                    else:
+                        log(f"TTS送信エラー: HTTP {resp.status}", level="error")
+
+        except Exception as e:
+            log(f"TTS送信エラー (index={sentence_index}): {e}", level="error")
+            await self._notify_tts_skip(client_id, sentence_index)
+
+    async def _notify_tts_skip(self, client_id: str, sentence_index: int):
+        """TTS失敗時のスキップ通知"""
+        import aiohttp
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{STREAM_SERVER_URL}/api/tts_skip",
+                    json={"clientId": client_id, "index": sentence_index},
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status == 200:
+                        log(f"TTS スキップ通知: sentence[{sentence_index}]")
+        except Exception as e:
+            log(f"TTS スキップ通知エラー: {e}", level="error")
+
+    async def _wait_tts_tasks(self, tasks: list):
+        """TTSタスクの完了を待機（ログ記録用）"""
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        errors = [r for r in results if isinstance(r, Exception)]
+        if errors:
+            log(f"TTS完了: {len(tasks)}件中{len(errors)}件エラー", level="warning")
+        else:
+            log(f"TTS完了: {len(tasks)}件")
 
     async def handle_status(self, request):
         """GET /status - ステータス取得"""
@@ -762,7 +964,7 @@ class AssistantService:
         # セッションID（会話の識別子、デフォルトはclient_idまたは"default"）
         session_id = data.get("session_id", client_id or "default")
 
-        # TTSモード: server（サーバーTTS）, client（端末TTS）, none（音声なし）
+        # TTSモード: server（サーバーTTS）, server_stream（ストリーミング）, client（端末TTS）, none（音声なし）
         tts_mode = data.get("tts_mode", "server")
 
         # ウェイクワードチェック
@@ -786,6 +988,11 @@ class AssistantService:
         )
         await response.prepare(request)
 
+        # ストリーミングTTSの場合のみ文検出を有効化
+        use_streaming_tts = TTS_ENABLED and tts_mode == "server_stream"
+        sentence_accumulator = SentenceAccumulator() if use_streaming_tts else None
+        sentence_index = 0
+        tts_tasks = []
         final_response = ""
 
         try:
@@ -794,12 +1001,37 @@ class AssistantService:
                 event_data = json.dumps(event, ensure_ascii=False)
                 await response.write(f"data: {event_data}\n\n".encode('utf-8'))
 
+                # ストリーミングTTS: テキストデルタから文を検出
+                if use_streaming_tts and event.get("type") == "text" and event.get("delta"):
+                    completed_sentences = sentence_accumulator.add(event["delta"])
+
+                    for sentence in completed_sentences:
+                        if sentence:
+                            task = asyncio.create_task(
+                                self._generate_sentence_tts(sentence, client_id, sentence_index)
+                            )
+                            tts_tasks.append(task)
+                            sentence_index += 1
+
                 # 最終応答を保存
                 if event.get("type") == "done":
                     final_response = event.get("response", "")
 
-            # TTS生成・再生（バックグラウンドで実行）
-            if TTS_ENABLED and tts_mode == "server" and final_response:
+                    # ストリーミングTTS: 残りのテキストを最終文として処理
+                    if use_streaming_tts:
+                        remaining = sentence_accumulator.flush()
+                        if remaining:
+                            task = asyncio.create_task(
+                                self._generate_sentence_tts(remaining, client_id, sentence_index)
+                            )
+                            tts_tasks.append(task)
+
+            # ストリーミングTTS: 全TTSタスクの完了をバックグラウンドで待機
+            if tts_tasks:
+                asyncio.create_task(self._wait_tts_tasks(tts_tasks))
+
+            # 一括TTS: 従来通り全文でTTS生成（既存動作を維持）
+            elif TTS_ENABLED and tts_mode == "server" and final_response:
                 asyncio.create_task(self._play_tts(final_response, client_id))
 
         except Exception as e:

@@ -241,6 +241,10 @@ class StreamServer {
         this.ttsRtpSsrc = Math.floor(Math.random() * 0xFFFFFFFF);
         this.ttsPlaying = false;  // TTS再生中フラグ（マイク音声を一時停止）
 
+        // ストリーミングTTS用キュー（クライアント別）
+        // clientId -> { queue: [{index, frames}], expectedIndex: 0, playing: false }
+        this.ttsQueues = new Map();
+
         // FFmpegドリフト計測
         this.ffmpegStartTime = 0;
         this.ffmpegRestartCount = 0;
@@ -794,6 +798,74 @@ class StreamServer {
             res.json({ success: true, sentCount });
         });
 
+        // ストリーミングTTS: キュー付きTTS音声（文単位）
+        this.app.post('/api/tts_audio_queued', express.raw({ type: 'application/octet-stream', limit: '5mb' }), (req, res) => {
+            const targetClientId = req.headers['x-target-client'];
+            const sentenceIndex = parseInt(req.headers['x-sentence-index'] || '0', 10);
+            const frameCount = parseInt(req.headers['x-frame-count'] || '0', 10);
+
+            if (!targetClientId) {
+                return res.status(400).json({ success: false, error: 'X-Target-Client header required' });
+            }
+
+            const batchData = req.body;
+            if (!batchData || batchData.length === 0) {
+                return res.status(400).json({ success: false, error: 'No audio data' });
+            }
+
+            // バッチデータからOpusフレームを解析
+            const frames = [];
+            let pos = 0;
+            while (pos + 2 <= batchData.length) {
+                const frameLen = batchData.readUInt16BE(pos);
+                pos += 2;
+                if (pos + frameLen > batchData.length) break;
+                frames.push(batchData.slice(pos, pos + frameLen));
+                pos += frameLen;
+            }
+
+            if (frames.length === 0) {
+                return res.status(400).json({ success: false, error: 'No frames parsed' });
+            }
+
+            // クライアントキューを取得または作成
+            if (!this.ttsQueues.has(targetClientId)) {
+                this.ttsQueues.set(targetClientId, {
+                    queue: [],
+                    expectedIndex: 0,
+                    playing: false
+                });
+            }
+
+            const clientQueue = this.ttsQueues.get(targetClientId);
+            clientQueue.queue.push({ index: sentenceIndex, frames });
+
+            log(`TTS キュー追加: sentence[${sentenceIndex}] ${frames.length}フレーム -> ${targetClientId} (queue=${clientQueue.queue.length})`);
+
+            // 次の文を再生開始
+            this.processTtsQueue(targetClientId);
+
+            res.json({ success: true, frames: frames.length, sentenceIndex });
+        });
+
+        // ストリーミングTTS: スキップ通知（TTS生成失敗時）
+        this.app.post('/api/tts_skip', (req, res) => {
+            const { clientId, index } = req.body;
+
+            if (!clientId || index === undefined) {
+                return res.status(400).json({ success: false, error: 'clientId and index required' });
+            }
+
+            const clientQueue = this.ttsQueues.get(clientId);
+            if (clientQueue && clientQueue.expectedIndex === index) {
+                log(`TTS スキップ: sentence[${index}] -> ${clientId}`);
+                clientQueue.expectedIndex++;
+                this.processTtsQueue(clientId);
+            }
+
+            res.json({ success: true });
+        });
+
         // ダッシュボード静的ファイル
         const dashPath = path.join(__dirname, '..', 'stream_client', 'dash');
         this.app.use('/dash', express.static(dashPath));
@@ -1267,6 +1339,11 @@ class StreamServer {
             return;
         }
 
+        // ストリーミングTTS: 新しいクエリ開始時にキューをリセット
+        if (tts_mode === 'server_stream') {
+            this.resetTtsQueue(client.clientId);
+        }
+
         log(`${client.displayName}: AI query (stream): ${query.substring(0, 50)}... (tts=${tts_mode || 'server'})`);
 
         try {
@@ -1335,6 +1412,10 @@ class StreamServer {
     // AI Assistant TTS停止をプロキシ (HTTP)
     async handleAIStopTTS(client) {
         log(`${client.displayName}: AI stop TTS requested`);
+
+        // ストリーミングTTSキューをクリア
+        this.clearTtsQueue(client.clientId);
+        this.ttsPlaying = false;
 
         try {
             const response = await fetch(`${AI_ASSISTANT_URL}/stop_tts`, {
@@ -2358,6 +2439,80 @@ class StreamServer {
         }
 
         return sentCount;
+    }
+
+    // ========== ストリーミングTTS キュー処理 ==========
+
+    processTtsQueue(clientId) {
+        const clientQueue = this.ttsQueues.get(clientId);
+        if (!clientQueue || clientQueue.playing) return;
+
+        // インデックス順にソート
+        clientQueue.queue.sort((a, b) => a.index - b.index);
+
+        // 次の期待インデックスがあるか確認
+        const nextItem = clientQueue.queue.find(item => item.index === clientQueue.expectedIndex);
+        if (!nextItem) return;  // まだ到着していない
+
+        // キューから削除
+        clientQueue.queue = clientQueue.queue.filter(item => item.index !== clientQueue.expectedIndex);
+
+        // 再生開始
+        clientQueue.playing = true;
+        this.ttsPlaying = true;
+
+        log(`TTS 再生開始: sentence[${nextItem.index}] ${nextItem.frames.length}フレーム -> ${clientId}`);
+
+        const server = this;
+        let frameIndex = 0;
+        const sendNextFrame = () => {
+            if (frameIndex >= nextItem.frames.length) {
+                // この文の再生完了
+                clientQueue.expectedIndex++;
+                clientQueue.playing = false;
+
+                if (clientQueue.queue.length > 0) {
+                    // 文間の小休止（50ms）後に次の文を再生
+                    setTimeout(() => server.processTtsQueue(clientId), 50);
+                } else {
+                    server.ttsPlaying = false;
+                    log(`TTS キュー完了: ${clientId}`);
+                }
+                return;
+            }
+
+            const sent = server.sendOpusToClient(nextItem.frames[frameIndex], clientId);
+            if (!sent) {
+                // クライアント切断
+                clientQueue.playing = false;
+                server.ttsPlaying = false;
+                log(`TTS 再生中断: クライアント切断 -> ${clientId}`, 'warning');
+                return;
+            }
+
+            frameIndex++;
+            setTimeout(sendNextFrame, 20);  // 20msごとに次のフレーム
+        };
+
+        // 最初のフレームを即座に送信開始
+        sendNextFrame();
+    }
+
+    resetTtsQueue(clientId) {
+        this.ttsQueues.set(clientId, {
+            queue: [],
+            expectedIndex: 0,
+            playing: false
+        });
+    }
+
+    clearTtsQueue(clientId) {
+        if (this.ttsQueues.has(clientId)) {
+            const clientQueue = this.ttsQueues.get(clientId);
+            clientQueue.queue = [];
+            clientQueue.expectedIndex = 0;
+            clientQueue.playing = false;
+        }
     }
 
     // ========== スピーカー出力（受信）==========
