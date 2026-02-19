@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     # AI Assistant dependencies
     "openai>=1.0.0",
+    "openai-agents>=0.0.5",
     "edge-tts>=6.1.0",
     "fastmcp>=2.0.0",
     "aiohttp>=3.9.0",
