@@ -2448,13 +2448,10 @@ class StreamServer {
 
         const currentSpeaker = this.pttManager.currentSpeaker;
 
-        // WebクライアントがPTT中は、サーバーマイク音声を一切送信しない
-        // (スピーカー出力 → マイク入力 のエコーループ防止)
-        if (currentSpeaker &&
-            currentSpeaker !== this.serverClientId &&
-            currentSpeaker !== 'external') {
-            // 診断ログ: エコー防止でブロック開始時のみログ
-            if (this.lastBlockedSpeaker !== currentSpeaker) {
+        // サーバーマイク音声はサーバーPTTまたは外部デバイス送信中のみ送信
+        // アイドル時（currentSpeaker=null）は環境ノイズ防止のため送信しない
+        if (currentSpeaker !== this.serverClientId && currentSpeaker !== 'external') {
+            if (currentSpeaker && this.lastBlockedSpeaker !== currentSpeaker) {
                 log(`[Audio] blocked (echo prevention): speaker=${currentSpeaker}`);
                 this.lastBlockedSpeaker = currentSpeaker;
             }
