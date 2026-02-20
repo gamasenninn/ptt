@@ -349,6 +349,9 @@ class StreamServer {
                     continue;
                 }
 
+                // 一度もハートビートを受信していないサービスはunknownのまま
+                if (health.lastSeen === 0) continue;
+
                 const elapsed = now - health.lastSeen;
                 const newStatus = elapsed > HEALTH_TIMEOUT_MS ? 'down' : 'up';
 

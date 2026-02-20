@@ -15,7 +15,7 @@ function switchTab(tabName) {
     document.querySelectorAll('.tab-btn').forEach((btn, index) => {
         btn.classList.remove('active');
         // タブ名に対応するボタンをアクティブに
-        const tabNames = ['transceiver', 'history', 'admin'];
+        const tabNames = ['transceiver', 'history', 'ai', 'admin'];
         if (tabNames[index] === tabName) {
             btn.classList.add('active');
         }
@@ -45,7 +45,7 @@ function initTabFromUrl() {
     const tab = params.get('tab');
     const standalone = params.get('standalone') === '1';
 
-    if (tab && ['transceiver', 'history', 'admin'].includes(tab)) {
+    if (tab && ['transceiver', 'history', 'ai', 'admin'].includes(tab)) {
         switchTab(tab);
 
         if (standalone) {
