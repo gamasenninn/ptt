@@ -14,6 +14,9 @@ let aiLastAddedTranscript = '';  // Android重複防止用
 let aiStreamingMessage = null;
 let aiStreamingText = '';
 
+// TTS playback state
+let aiTTSPlaying = false;
+
 // marked.js initialization
 if (typeof marked !== 'undefined') {
     marked.setOptions({
@@ -137,16 +140,30 @@ function stopAITTS() {
         speechSynthesis.cancel();
     }
 
-    // サーバーからのWebRTC音声を停止
-    if (typeof stopServerAudio === 'function') {
-        stopServerAudio();
+    // クライアント側audio要素を停止
+    const audio = document.getElementById('p2p-audio-server');
+    if (audio) {
+        audio.pause();
     }
 
     // サーバー側TTS停止リクエスト
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'ai_stop_tts' }));
     }
-    debugLog('AI stop TTS requested');
+
+    aiTTSPlaying = false;
+    debugLog('AI TTS stopped');
+}
+
+function setAITTSPlaying(playing) {
+    aiTTSPlaying = playing;
+    // 新規TTS開始時にpause()済みのaudio要素を再開
+    if (playing) {
+        const audio = document.getElementById('p2p-audio-server');
+        if (audio && audio.paused) {
+            audio.play().catch(e => debugLog('TTS audio resume error: ' + e.message));
+        }
+    }
 }
 
 function clearAIChat() {
@@ -605,10 +622,29 @@ function handleAIStreamEvent(data) {
         // テキストデルタを追加
         if (data.delta) {
             appendStreamingText(data.delta);
+            // テキスト生成開始 = TTS再生中 → 停止ボタン表示
+            if (!aiTTSPlaying) {
+                setAITTSPlaying(true);
+                // P2Pオーディオ診断
+                const audio = document.getElementById('p2p-audio-server');
+                if (audio) {
+                    const track = audio.srcObject?.getAudioTracks()[0];
+                    debugLog('[TTS診断] audio: paused=' + audio.paused + ' muted=' + audio.muted +
+                        ' volume=' + audio.volume + ' srcObject=' + !!audio.srcObject +
+                        ' streamActive=' + audio.srcObject?.active +
+                        ' trackState=' + (track?.readyState || 'none') +
+                        ' trackEnabled=' + (track?.enabled ?? 'none'));
+                } else {
+                    debugLog('[TTS診断] p2p-audio-server NOT FOUND');
+                }
+            }
         }
     } else if (eventType === 'done') {
         // 完了イベント
         finalizeStreamingMessage(data.response || aiStreamingText);
+
+        // TTS再生状態をリセット
+        setAITTSPlaying(false);
 
         // Client-side TTS if mode is 'client'
         const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
