@@ -516,10 +516,13 @@ class StreamServer {
             status[service] = health.status;
         }
 
-        this.broadcast({
+        const msg = {
             type: 'health_status',
             services: status
-        });
+        };
+        for (const client of this.clients.values()) {
+            client.send(msg);
+        }
     }
 
     // History API設定
