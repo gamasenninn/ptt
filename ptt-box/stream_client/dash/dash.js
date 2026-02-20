@@ -119,11 +119,11 @@ class Dashboard {
         if (res.success) {
             const s = res.status;
             document.getElementById('uptime').textContent = s.uptimeFormatted;
-            document.getElementById('memory').textContent = `${s.memory.heapUsed}MB / ${s.memory.heapTotal}MB`;
+            document.getElementById('memory').textContent = `${s.memory.heapUsed}/${s.memory.heapTotal}MB`;
             document.getElementById('client-count').textContent = s.clientCount;
 
             const speakerEl = document.getElementById('speaker-process');
-            speakerEl.textContent = s.speakerProcess === 'running' ? '稼働中' : '停止';
+            speakerEl.textContent = s.speakerProcess === 'running' ? 'ON' : 'OFF';
             speakerEl.className = `value state-${s.speakerProcess}`;
 
             // サービスヘルス表示
@@ -143,8 +143,8 @@ class Dashboard {
         const html = Object.entries(services).map(([name, status]) => {
             const icon = icons[status] || '⚪';
             const label = labels[name] || name;
-            return `<span class="service-item">${icon} ${label}</span>`;
-        }).join(' ');
+            return `<span class="service-item">${icon}${label}</span>`;
+        }).join('');
 
         container.innerHTML = html;
     }
@@ -186,10 +186,11 @@ class Dashboard {
         if (res.success) {
             const p = res.ptt;
             const stateEl = document.getElementById('ptt-state');
-            stateEl.textContent = p.state === 'transmitting' ? '送信中' : '待機中';
+            stateEl.textContent = p.state === 'transmitting' ? '送信中' : '待機';
             stateEl.className = `value state-${p.state}`;
 
-            document.getElementById('ptt-speaker').textContent = p.speakerName || '-';
+            const speakerEl = document.getElementById('ptt-speaker');
+            speakerEl.textContent = p.speakerName ? `- ${p.speakerName}` : '';
         }
     }
 

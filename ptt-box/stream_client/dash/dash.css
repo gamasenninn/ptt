@@ -94,10 +94,11 @@ main {
     flex: 1;
     padding: 1.5rem;
     display: grid;
-    gap: 1.5rem;
+    gap: 1rem;
     max-width: 1200px;
     margin: 0 auto;
     width: 100%;
+    align-content: start;
 }
 
 .card {
@@ -147,6 +148,58 @@ main {
     gap: 4px;
     margin-right: 12px;
     font-size: 0.9rem;
+}
+
+/* コンパクトカード */
+.card-compact {
+    padding: 0.75rem 1rem 0.5rem;
+}
+
+.card-compact h2 {
+    margin-bottom: 0.5rem;
+}
+
+.card-compact .actions {
+    margin-top: 0.4rem;
+    margin-bottom: 0;
+}
+
+/* インラインステータス行 */
+.status-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1.5rem;
+    margin-bottom: 0.35rem;
+}
+
+.status-inline {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    font-size: 0.875rem;
+}
+
+.status-inline .label {
+    color: #888;
+    font-size: 0.75rem;
+}
+
+.status-inline .value {
+    font-weight: 600;
+    color: #eee;
+}
+
+.status-inline .value-sub {
+    color: #888;
+    font-size: 0.8rem;
+}
+
+.status-inline .service-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-right: 8px;
+    font-size: 0.8rem;
 }
 
 .actions {
@@ -278,6 +331,18 @@ footer {
     .status-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 0.75rem;
+    }
+
+    .status-row {
+        gap: 0.4rem 1rem;
+    }
+
+    .status-inline {
+        font-size: 0.8rem;
+    }
+
+    .card-compact {
+        padding: 0.75rem;
     }
 
     .status-item .label {

@@ -27,51 +27,24 @@
         </header>
 
         <main>
-            <!-- サーバー状態 -->
-            <section class="card">
-                <h2>サーバー状態</h2>
-                <div class="status-grid">
-                    <div class="status-item">
-                        <span class="label">稼働時間</span>
-                        <span id="uptime" class="value">-</span>
-                    </div>
-                    <div class="status-item">
-                        <span class="label">メモリ</span>
-                        <span id="memory" class="value">-</span>
-                    </div>
-                    <div class="status-item">
-                        <span class="label">接続数</span>
-                        <span id="client-count" class="value">-</span>
-                    </div>
-                    <div class="status-item">
-                        <span class="label">音声プロセス</span>
-                        <span id="speaker-process" class="value">-</span>
-                    </div>
-                    <div class="status-item status-item-wide">
-                        <span class="label">サービス</span>
-                        <span id="service-health" class="value">-</span>
-                    </div>
+            <!-- システム状態（統合） -->
+            <section class="card card-compact">
+                <h2>システム状態</h2>
+                <div class="status-row">
+                    <span class="status-inline"><span class="label">稼働</span><span id="uptime" class="value">-</span></span>
+                    <span class="status-inline"><span class="label">メモリ</span><span id="memory" class="value">-</span></span>
+                    <span class="status-inline"><span class="label">接続</span><span id="client-count" class="value">-</span></span>
+                    <span class="status-inline"><span class="label">音声</span><span id="speaker-process" class="value">-</span></span>
+                </div>
+                <div class="status-row">
+                    <span class="status-inline"><span class="label">PTT</span><span id="ptt-state" class="value">-</span> <span id="ptt-speaker" class="value-sub"></span></span>
+                </div>
+                <div class="status-row">
+                    <span class="status-inline"><span class="label">サービス</span><span id="service-health" class="value">-</span></span>
                 </div>
                 <div class="actions">
-                    <button id="restart-btn" class="btn-danger">サーバー再起動</button>
-                </div>
-            </section>
-
-            <!-- PTT状態 -->
-            <section class="card">
-                <h2>PTT状態</h2>
-                <div class="status-grid">
-                    <div class="status-item">
-                        <span class="label">状態</span>
-                        <span id="ptt-state" class="value">-</span>
-                    </div>
-                    <div class="status-item">
-                        <span class="label">送信者</span>
-                        <span id="ptt-speaker" class="value">-</span>
-                    </div>
-                </div>
-                <div class="actions">
-                    <button id="ptt-release-btn" class="btn-warning">PTT強制解放</button>
+                    <button id="restart-btn" class="btn-danger">再起動</button>
+                    <button id="ptt-release-btn" class="btn-warning">PTT解放</button>
                 </div>
             </section>
 
