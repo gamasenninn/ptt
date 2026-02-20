@@ -126,6 +126,10 @@ main {
     flex-direction: column;
 }
 
+.status-item.status-item-wide {
+    grid-column: span 2;
+}
+
 .status-item .label {
     font-size: 0.75rem;
     color: #888;
@@ -135,6 +139,14 @@ main {
 .status-item .value {
     font-size: 1.25rem;
     font-weight: 600;
+}
+
+.status-item .value .service-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 12px;
+    font-size: 0.9rem;
 }
 
 .actions {

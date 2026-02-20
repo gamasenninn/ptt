@@ -89,6 +89,9 @@ WAKE_WORDS = [w.strip() for w in WAKE_WORDS_STR.split(",")]
 # stream_server設定（TTS音声のWebRTC配信用）
 STREAM_SERVER_URL = os.environ.get("STREAM_SERVER_URL", "http://localhost:9320")
 
+# ハートビート設定
+HEARTBEAT_INTERVAL = 30  # 秒
+
 # システムプロンプト（外部ファイルから読み込み）
 SYSTEM_PROMPT_PATH = Path(os.environ.get("SYSTEM_PROMPT_PATH", Path(__file__).parent / "ASSISTANT.md"))
 
@@ -1044,6 +1047,24 @@ class AssistantService:
         await response.write_eof()
         return response
 
+    async def heartbeat_loop(self):
+        """定期的にハートビートを送信"""
+        import aiohttp
+
+        while True:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{STREAM_SERVER_URL}/api/health/beat",
+                        json={"service": "assistant"},
+                        timeout=aiohttp.ClientTimeout(total=5)
+                    ) as resp:
+                        pass  # 結果は無視
+            except Exception as e:
+                log(f"[Heartbeat] 送信失敗: {e}", level="warning")
+
+            await asyncio.sleep(HEARTBEAT_INTERVAL)
+
     async def start(self):
         """サービスを起動"""
         from aiohttp import web
@@ -1062,6 +1083,10 @@ class AssistantService:
         # AgentAssistant起動
         await self.assistant.start()
         print()
+
+        # ハートビート開始
+        self.heartbeat_task = asyncio.create_task(self.heartbeat_loop())
+        log("[Heartbeat] 開始")
 
         # HTTPサーバー起動
         app = web.Application()
@@ -1088,6 +1113,14 @@ class AssistantService:
 
     async def stop(self):
         """サービスを停止"""
+        # ハートビート停止
+        if hasattr(self, 'heartbeat_task') and self.heartbeat_task:
+            self.heartbeat_task.cancel()
+            try:
+                await self.heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
         await self.assistant.stop()
         if self.runner:
             await self.runner.cleanup()

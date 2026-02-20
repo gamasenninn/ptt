@@ -4,6 +4,7 @@ import json
 import asyncio
 import logging
 import threading
+import requests
 from pathlib import Path
 from datetime import datetime
 from faster_whisper import WhisperModel
@@ -24,6 +25,12 @@ COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
 ENABLE_AI_ASSISTANT = os.environ.get("ENABLE_AI_ASSISTANT", "true").lower() == "true"
 ASSISTANT_HOST = os.environ.get("ASSISTANT_HOST", os.environ.get("ASSISTANT_WS_HOST", "localhost"))
 ASSISTANT_PORT = int(os.environ.get("ASSISTANT_PORT", os.environ.get("ASSISTANT_WS_PORT", "9321")))
+
+# ハートビート設定
+STREAM_SERVER_URL = os.environ.get("STREAM_SERVER_URL", "http://localhost:9320")
+HEARTBEAT_INTERVAL = 30  # 秒
+heartbeat_thread = None
+heartbeat_stop_event = threading.Event()
 
 # ========== ログ設定 ==========
 LOG_DIR = Path(os.environ.get("TRANSCRIBER_LOG_DIR", Path(__file__).parent / "logs"))
@@ -66,6 +73,38 @@ def log(msg: str, level: str = "info"):
         logger.error(msg)
     else:
         logger.info(msg)
+
+
+def heartbeat_loop():
+    """定期的にハートビートを送信"""
+    while not heartbeat_stop_event.is_set():
+        try:
+            requests.post(
+                f"{STREAM_SERVER_URL}/api/health/beat",
+                json={"service": "transcriber"},
+                timeout=5
+            )
+        except Exception as e:
+            log(f"[Heartbeat] 送信失敗: {e}", level="warning")
+
+        # 30秒待機（stop_eventで中断可能）
+        heartbeat_stop_event.wait(HEARTBEAT_INTERVAL)
+
+
+def start_heartbeat():
+    """ハートビートスレッドを開始"""
+    global heartbeat_thread
+    heartbeat_stop_event.clear()
+    heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
+    heartbeat_thread.start()
+    log("[Heartbeat] 開始")
+
+
+def stop_heartbeat():
+    """ハートビートスレッドを停止"""
+    heartbeat_stop_event.set()
+    if heartbeat_thread:
+        heartbeat_thread.join(timeout=2)
 
 
 # ========== Whisperモデル（グローバル） ==========
@@ -241,6 +280,9 @@ def main():
 
     log("サービス起動")
 
+    # ハートビート開始
+    start_heartbeat()
+
     # 初期スキャン
     log("[1] 初期スキャン")
     scan_missing_srt()
@@ -262,6 +304,7 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
+        stop_heartbeat()
         log("サービス終了")
         print("\n終了")
 

@@ -236,6 +236,34 @@
             50% { opacity: 0.5; }
         }
 
+        /* Service Status */
+        .service-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            padding: 4px 8px;
+            background: rgba(244, 67, 54, 0.2);
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+        .service-status.hidden { display: none; }
+        .service-status-label { color: #f44336; }
+        .service-item {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+        }
+        .service-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        .service-dot.up { background: #4caf50; }
+        .service-dot.down { background: #f44336; }
+        .service-dot.unknown { background: #9e9e9e; }
+        .service-name { color: #ccc; }
+
         /* Tab Navigation */
         .tab-nav {
             display: flex;
@@ -821,6 +849,14 @@
                 <span class="connection-indicator"></span>
                 <span class="connection-text">未接続 - タップで接続</span>
             </button>
+
+            <!-- Service Status (問題がある場合のみ表示) -->
+            <div id="serviceStatus" class="service-status hidden">
+                <span class="service-status-label">サービス:</span>
+                <span class="service-item"><span id="voxStatus" class="service-dot unknown"></span><span class="service-name">VOX</span></span>
+                <span class="service-item"><span id="transcriberStatus" class="service-dot unknown"></span><span class="service-name">文字起こし</span></span>
+                <span class="service-item"><span id="assistantStatus" class="service-dot unknown"></span><span class="service-name">AI</span></span>
+            </div>
 
             <!-- Speaker Status -->
             <div id="speakerStatus" class="speaker-status">

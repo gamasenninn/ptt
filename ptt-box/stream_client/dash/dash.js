@@ -125,7 +125,28 @@ class Dashboard {
             const speakerEl = document.getElementById('speaker-process');
             speakerEl.textContent = s.speakerProcess === 'running' ? '稼働中' : '停止';
             speakerEl.className = `value state-${s.speakerProcess}`;
+
+            // サービスヘルス表示
+            if (s.services) {
+                this.renderServiceHealth(s.services);
+            }
         }
+    }
+
+    renderServiceHealth(services) {
+        const container = document.getElementById('service-health');
+        if (!container) return;
+
+        const labels = { vox: 'VOX', transcriber: '文字起こし', assistant: 'AI' };
+        const icons = { up: '🟢', down: '🔴', unknown: '⚪' };
+
+        const html = Object.entries(services).map(([name, status]) => {
+            const icon = icons[status] || '⚪';
+            const label = labels[name] || name;
+            return `<span class="service-item">${icon} ${label}</span>`;
+        }).join(' ');
+
+        container.innerHTML = html;
     }
 
     async refreshClients() {

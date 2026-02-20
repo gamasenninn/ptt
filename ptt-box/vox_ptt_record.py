@@ -9,6 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
+# ハートビート設定
+HEARTBEAT_INTERVAL = 30  # 秒
+heartbeat_thread = None
+heartbeat_stop_event = threading.Event()
+
 # ========== 環境変数読み込み ==========
 load_dotenv()
 
@@ -36,6 +41,38 @@ save_timer = None
 
 def get_volume(audio_data):
     return np.sqrt(np.mean(audio_data ** 2))
+
+def heartbeat_loop():
+    """定期的にハートビートを送信"""
+    while not heartbeat_stop_event.is_set():
+        try:
+            requests.post(
+                f"{STREAM_SERVER_URL}/api/health/beat",
+                json={"service": "vox"},
+                timeout=5
+            )
+        except Exception as e:
+            print(f"    ⚠️ [Heartbeat] 送信失敗: {e}")
+
+        # 30秒待機（stop_eventで中断可能）
+        heartbeat_stop_event.wait(HEARTBEAT_INTERVAL)
+
+
+def start_heartbeat():
+    """ハートビートスレッドを開始"""
+    global heartbeat_thread
+    heartbeat_stop_event.clear()
+    heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
+    heartbeat_thread.start()
+    print("  [Heartbeat] 開始")
+
+
+def stop_heartbeat():
+    """ハートビートスレッドを停止"""
+    heartbeat_stop_event.set()
+    if heartbeat_thread:
+        heartbeat_thread.join(timeout=2)
+
 
 def notify_vox_on():
     """サーバーにVOX ON通知"""
@@ -165,7 +202,10 @@ def main():
     print("  Ctrl+C で終了")
     print("=" * 50)
     print()
-    
+
+    # ハートビート開始
+    start_heartbeat()
+
     try:
         with sd.InputStream(callback=audio_callback,
                             device=DEVICE_INDEX,
@@ -182,8 +222,10 @@ def main():
             if save_timer is not None:
                 save_timer.cancel()
             save_recording()
+        stop_heartbeat()
         print("\n終了しました")
     except Exception as e:
+        stop_heartbeat()
         print(f"エラー: {e}")
         input("Enterで終了...")
 

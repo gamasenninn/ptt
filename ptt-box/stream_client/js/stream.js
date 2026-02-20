@@ -495,6 +495,9 @@ async function connect() {
                 }
             } else if (data.type === 'logs_saved') {
                 debugLog('Logs saved: ' + data.filename + ' (' + data.lineCount + ' lines)');
+            } else if (data.type === 'health_status') {
+                // サービスヘルス状態更新
+                updateServiceStatus(data.services);
             }
             // AI Assistant messages (handled by assistant.js)
             else if (typeof processAIMessage === 'function') {
@@ -1002,6 +1005,26 @@ function cleanupConnection() {
 function cleanup() {
     cleanupConnection();
     updateConnectionToggle('disconnected');
+}
+
+// サービスヘルス状態を更新
+function updateServiceStatus(services) {
+    const container = document.getElementById('serviceStatus');
+    if (!container) return;
+
+    let hasIssue = false;
+
+    for (const [name, status] of Object.entries(services)) {
+        const el = document.getElementById(`${name}Status`);
+        if (el) {
+            // 既存のクラスをクリアして新しいステータスを設定
+            el.className = `service-dot ${status}`;
+            if (status === 'down') hasIssue = true;
+        }
+    }
+
+    // 問題がある場合のみ表示
+    container.classList.toggle('hidden', !hasIssue);
 }
 
 // 自動再接続スケジュール（指数バックオフ）
