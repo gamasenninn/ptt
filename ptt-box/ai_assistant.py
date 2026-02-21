@@ -18,6 +18,7 @@ Usage:
 import os
 import sys
 import json
+import re
 import asyncio
 import tempfile
 import subprocess
@@ -374,9 +375,34 @@ class MCPAssistant:
 
 # ========== TTS ==========
 
+def clean_text_for_tts(text: str) -> str:
+    """TTS用にテキストからマークダウン記号・URLを除去"""
+    # マークダウンリンク [text](url) → text
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    # 裸のURL
+    text = re.sub(r'https?://\S+', '', text)
+    # 見出し記号 (### text → text)
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # 太字・斜体 (**text** or *text* → text)
+    text = re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', text)
+    # リスト記号 (- text → text)
+    text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
+    # 番号リスト (1. text → text)
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    # インラインコード (`code` → code)
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    # 連続空白を整理
+    text = re.sub(r'  +', ' ', text)
+    return text.strip()
+
+
 async def text_to_speech(text: str) -> Path | None:
     """edge-ttsで音声合成"""
     if not TTS_ENABLED:
+        return None
+
+    text = clean_text_for_tts(text)
+    if not text:
         return None
 
     try:

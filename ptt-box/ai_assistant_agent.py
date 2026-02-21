@@ -21,6 +21,7 @@ Usage:
 import os
 import sys
 import json
+import re
 import asyncio
 import tempfile
 import logging
@@ -131,9 +132,25 @@ class SentenceAccumulator:
     def __init__(self):
         self.buffer = ""
 
+    # URLセーフ文字（RFC 3986準拠、日本語を含まない）
+    _URL_CHAR_PAT = r'[A-Za-z0-9/._%~:?#@!$&()*+,;=\-]'
+
     def add(self, delta: str) -> list[str]:
         """デルタを追加し、完成した文のリストを返す"""
         self.buffer += delta
+
+        # マークダウンリンクやURLが構築中なら、完成するまで文分割を保留
+        # （URLの '.' が文境界と誤判定されるのを防ぐ）
+        if re.search(
+            r'\[[^\]]*$|\]\([^\)]*$|https?://' + self._URL_CHAR_PAT + r'*$',
+            self.buffer
+        ):
+            return []
+
+        # 完成したマークダウンリンク・URLをクリーニング
+        self.buffer = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', self.buffer)
+        self.buffer = re.sub(r'https?://' + self._URL_CHAR_PAT + r'+', '', self.buffer)
+
         completed = []
 
         # バッファが長すぎる場合は強制分割
@@ -532,9 +549,34 @@ class AgentAssistant:
 
 # ========== TTS ==========
 
+def clean_text_for_tts(text: str) -> str:
+    """TTS用にテキストからマークダウン記号・URLを除去"""
+    # マークダウンリンク [text](url) → text
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    # 裸のURL
+    text = re.sub(r'https?://\S+', '', text)
+    # 見出し記号 (### text → text)
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # 太字・斜体 (**text** or *text* → text)
+    text = re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', text)
+    # リスト記号 (- text → text)
+    text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
+    # 番号リスト (1. text → text)
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    # インラインコード (`code` → code)
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    # 連続空白を整理
+    text = re.sub(r'  +', ' ', text)
+    return text.strip()
+
+
 async def text_to_speech(text: str) -> Path | None:
     """edge-ttsで音声合成"""
     if not TTS_ENABLED:
+        return None
+
+    text = clean_text_for_tts(text)
+    if not text:
         return None
 
     try:
@@ -772,6 +814,10 @@ class AssistantService:
     async def _play_tts(self, text: str, client_id: str | None = None):
         """TTSをバックグラウンドで再生"""
         try:
+            if DEBUG_VERBOSE:
+                cleaned = clean_text_for_tts(text)
+                log(f"TTS一括生成: 原文={text}")
+                log(f"TTS一括生成: 変換後={cleaned}")
             audio_path = await text_to_speech(text)
             if audio_path:
                 if client_id:
@@ -792,7 +838,12 @@ class AssistantService:
             return
 
         try:
-            log(f"TTS生成開始: sentence[{sentence_index}] = {sentence[:30]}...")
+            if DEBUG_VERBOSE:
+                cleaned = clean_text_for_tts(sentence)
+                log(f"TTS生成開始: sentence[{sentence_index}] 原文={sentence}")
+                log(f"TTS生成開始: sentence[{sentence_index}] 変換後={cleaned}")
+            else:
+                log(f"TTS生成開始: sentence[{sentence_index}] = {sentence[:30]}...")
             audio_path = await text_to_speech(sentence)
             if audio_path:
                 await self._send_tts_indexed(audio_path, client_id, sentence_index)
