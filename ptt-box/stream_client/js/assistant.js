@@ -14,6 +14,11 @@ let aiLastAddedTranscript = '';  // Android重複防止用
 let aiStreamingMessage = null;
 let aiStreamingText = '';
 
+// Chat history persistence
+const AI_CHAT_STORAGE_KEY = 'aiChatHistory';
+const AI_CHAT_MAX_MESSAGES = 50;
+let aiChatHistory = [];
+
 // TTS playback state
 let aiTTSPlaying = false;
 
@@ -127,6 +132,9 @@ function finalizeStreamingMessage(response) {
         container.scrollTop = container.scrollHeight;
     }
 
+    // ストリーミング完了した応答を保存
+    saveAIChatMessage('ai', response, true);
+
     // 状態をリセット
     aiStreamingMessage = null;
     aiStreamingText = '';
@@ -169,6 +177,8 @@ function setAITTSPlaying(playing) {
 function clearAIChat() {
     const container = document.getElementById('aiChatContainer');
     container.innerHTML = '<div class="ai-chat-empty">AIに質問してみましょう...</div>';
+    aiChatHistory = [];
+    localStorage.removeItem(AI_CHAT_STORAGE_KEY);
 }
 
 // ========== AI Response Handling ==========
@@ -256,6 +266,12 @@ function addAIChatMessage(type, content, isMarkdown = false) {
 
     container.appendChild(message);
     container.scrollTop = container.scrollHeight;
+
+    // ストリーミング中・一時的なメッセージは保存しない
+    if (type === 'user' || type === 'ai') {
+        saveAIChatMessage(type, content, isMarkdown);
+    }
+
     return message;
 }
 
@@ -263,6 +279,58 @@ function escapeHtmlAI(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// ========== Chat History Persistence ==========
+
+function saveAIChatMessage(type, content, isMarkdown) {
+    aiChatHistory.push({ type, content, isMarkdown });
+    if (aiChatHistory.length > AI_CHAT_MAX_MESSAGES) {
+        aiChatHistory = aiChatHistory.slice(-AI_CHAT_MAX_MESSAGES);
+    }
+    try {
+        localStorage.setItem(AI_CHAT_STORAGE_KEY, JSON.stringify(aiChatHistory));
+    } catch (e) {
+        debugLog('Chat history save error: ' + e.message);
+    }
+}
+
+function loadAIChatHistory() {
+    try {
+        const saved = localStorage.getItem(AI_CHAT_STORAGE_KEY);
+        if (!saved) return;
+        aiChatHistory = JSON.parse(saved);
+        if (!Array.isArray(aiChatHistory) || aiChatHistory.length === 0) {
+            aiChatHistory = [];
+            return;
+        }
+
+        const container = document.getElementById('aiChatContainer');
+        const empty = container.querySelector('.ai-chat-empty');
+        if (empty) empty.remove();
+
+        for (const msg of aiChatHistory) {
+            const message = document.createElement('div');
+            message.className = 'ai-chat-message ' + msg.type;
+
+            const roleText = msg.type === 'user' ? 'あなた' : 'AI';
+            let contentHtml;
+            if (msg.isMarkdown && typeof marked !== 'undefined') {
+                contentHtml = marked.parse(msg.content);
+            } else {
+                contentHtml = escapeHtmlAI(msg.content);
+            }
+
+            message.innerHTML = '<div class="role">' + roleText + '</div><div class="content">' + contentHtml + '</div>';
+            container.appendChild(message);
+        }
+
+        container.scrollTop = container.scrollHeight;
+        debugLog('Chat history restored: ' + aiChatHistory.length + ' messages');
+    } catch (e) {
+        debugLog('Chat history load error: ' + e.message);
+        aiChatHistory = [];
+    }
 }
 
 // ========== Voice Input Functions ==========
@@ -568,6 +636,7 @@ function initAIAssistant() {
 
 // Initialize when DOM is ready
 window.addEventListener('DOMContentLoaded', () => {
+    loadAIChatHistory();
     initAIAssistant();
 });
 
