@@ -71,6 +71,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
 TTS_VOICE = os.environ.get("TTS_VOICE", "ja-JP-NanamiNeural")
 TTS_ENABLED = os.environ.get("TTS_ENABLED", "true").lower() == "true"
+TTS_VOLUME_GAIN = float(os.environ.get("TTS_VOLUME_GAIN", "1.5"))  # TTS音量ゲイン（1.0=等倍, 1.5=1.5倍）
 
 # HTTPサーバー設定 (後方互換: 旧WS_*変数もサポート)
 HTTP_HOST = os.environ.get("ASSISTANT_HOST", os.environ.get("ASSISTANT_WS_HOST", "localhost"))
@@ -627,18 +628,25 @@ async def send_tts_to_client(audio_path: Path, client_id: str) -> bool:
         return False
 
     try:
-        # FFmpegでMP3をOpusに変換（20msフレーム）
-        process = await asyncio.create_subprocess_exec(
+        # FFmpegでMP3をOpusに変換（20msフレーム、音量ゲイン適用）
+        ffmpeg_args = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
             "-i", str(audio_path),
             "-ac", "1",
             "-ar", "48000",
+        ]
+        if TTS_VOLUME_GAIN != 1.0:
+            ffmpeg_args += ["-af", f"volume={TTS_VOLUME_GAIN}"]
+        ffmpeg_args += [
             "-c:a", "libopus",
             "-b:a", "24k",
             "-frame_duration", "20",
             "-application", "voip",
             "-f", "ogg",
             "pipe:1",
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *ffmpeg_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
@@ -861,18 +869,25 @@ class AssistantService:
         import aiohttp
 
         try:
-            # FFmpegでMP3をOpusに変換（20msフレーム）
-            process = await asyncio.create_subprocess_exec(
+            # FFmpegでMP3をOpusに変換（20msフレーム、音量ゲイン適用）
+            ffmpeg_args = [
                 "ffmpeg", "-hide_banner", "-loglevel", "error",
                 "-i", str(audio_path),
                 "-ac", "1",
                 "-ar", "48000",
+            ]
+            if TTS_VOLUME_GAIN != 1.0:
+                ffmpeg_args += ["-af", f"volume={TTS_VOLUME_GAIN}"]
+            ffmpeg_args += [
                 "-c:a", "libopus",
                 "-b:a", "24k",
                 "-frame_duration", "20",
                 "-application", "voip",
                 "-f", "ogg",
                 "pipe:1",
+            ]
+            process = await asyncio.create_subprocess_exec(
+                *ffmpeg_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
