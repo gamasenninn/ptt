@@ -11,6 +11,12 @@ let aiSavedCursorPos = 0;
 let aiLastAddedTranscript = '';  // Android重複防止用
 let aiVoiceTimeout = null;
 
+// Vosk speech recognition state
+let voskWs = null;
+let voskAudioContext = null;
+let voskMediaStream = null;
+let voskProcessor = null;
+
 // AI Streaming state
 let aiStreamingMessage = null;
 let aiStreamingText = '';
@@ -877,6 +883,265 @@ function stopAISpeechRecognition() {
     }
 }
 
+// ========== Vosk Speech Recognition ==========
+
+function getVoskUrl() {
+    // Node.jsサーバー経由のプロキシ（HTTPS環境でもwss://で接続可能）
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return protocol + '//' + location.host + '/vosk/ws';
+}
+
+function getSpeechEngine() {
+    return localStorage.getItem('ptt_speech_engine') || 'webspeech';
+}
+
+function saveSpeechEngine(engine) {
+    localStorage.setItem('ptt_speech_engine', engine);
+    debugLog('Speech engine saved: ' + engine);
+}
+
+function startVoskRecognition() {
+    if (aiIsListening) return;
+
+    const voiceBtn = document.getElementById('aiVoiceInputBtn');
+    const preview = document.getElementById('aiVoicePreview');
+    const previewContent = document.getElementById('aiVoicePreviewContent');
+    const textarea = document.getElementById('aiQueryInput');
+    const statusEl = document.getElementById('aiMicStatus');
+
+    aiSavedCursorPos = textarea.selectionStart;
+    aiVoiceFinalText = '';
+    aiVoiceInterimText = '';
+    aiIsListening = true;
+
+    previewContent.textContent = '接続中...';
+    previewContent.classList.add('interim');
+    preview.classList.add('active');
+
+    // WebRTCマイクを一時停止
+    if (typeof pauseWebRTCMicrophone === 'function') {
+        pauseWebRTCMicrophone();
+    }
+
+    voiceBtn.textContent = '🎤 接続中...';
+    voiceBtn.classList.add('listening');
+    var sendBtn = document.getElementById('aiSendBtn');
+    if (sendBtn) sendBtn.disabled = true;
+    var refineBtn = document.getElementById('aiRefineBtn');
+    if (refineBtn) refineBtn.disabled = true;
+
+    // Connect to Vosk WebSocket
+    var url = getVoskUrl();
+    debugLog('Vosk connecting: ' + url);
+
+    try {
+        voskWs = new WebSocket(url);
+    } catch (e) {
+        debugLog('Vosk WebSocket error: ' + e.message);
+        stopVoskRecognition();
+        return;
+    }
+
+    voskWs.onopen = function() {
+        debugLog('Vosk connected');
+        voiceBtn.textContent = '🎤 聞き取り中...';
+        previewContent.textContent = '聞き取り中...';
+        if (statusEl) {
+            statusEl.textContent = 'Vosk認識中...';
+            statusEl.style.color = '#2ed573';
+        }
+
+        // Start capturing audio
+        startVoskAudioCapture();
+    };
+
+    voskWs.onmessage = function(event) {
+        try {
+            var data = JSON.parse(event.data);
+        } catch (e) {
+            return;
+        }
+
+        if (data.text !== undefined && data.text !== '') {
+            // Final result
+            aiVoiceFinalText += data.text;
+            aiVoiceInterimText = '';
+            debugLog('Vosk final: ' + data.text);
+        } else if (data.partial !== undefined && data.partial !== '') {
+            // Partial result
+            aiVoiceInterimText = data.partial;
+        }
+
+        var displayText = aiVoiceFinalText + aiVoiceInterimText;
+        if (displayText) {
+            previewContent.textContent = displayText;
+            previewContent.classList.toggle('interim', aiVoiceInterimText.length > 0);
+        } else {
+            previewContent.textContent = '聞き取り中...';
+            previewContent.classList.add('interim');
+        }
+    };
+
+    voskWs.onerror = function(e) {
+        debugLog('Vosk WebSocket error');
+        if (statusEl) {
+            statusEl.textContent = 'Vosk接続エラー';
+            statusEl.style.color = '#ff4757';
+        }
+    };
+
+    voskWs.onclose = function() {
+        debugLog('Vosk disconnected');
+        if (aiIsListening) {
+            // Unexpected close while listening
+            stopVoskRecognition();
+        }
+    };
+
+    // 30秒タイムアウト
+    aiVoiceTimeout = setTimeout(function() {
+        if (aiIsListening) {
+            debugLog('Vosk voice input timeout');
+            stopVoskRecognition();
+        }
+    }, 30000);
+}
+
+function startVoskAudioCapture() {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+        voskMediaStream = stream;
+
+        // Create AudioContext at 16kHz for Vosk
+        var contextOptions = { sampleRate: 16000 };
+        voskAudioContext = new (window.AudioContext || window.webkitAudioContext)(contextOptions);
+        var source = voskAudioContext.createMediaStreamSource(stream);
+
+        // Use ScriptProcessorNode (widely supported)
+        // bufferSize=4096 at 16kHz = ~256ms chunks
+        voskProcessor = voskAudioContext.createScriptProcessor(4096, 1, 1);
+        voskProcessor.onaudioprocess = function(e) {
+            if (!voskWs || voskWs.readyState !== WebSocket.OPEN) return;
+
+            var inputData = e.inputBuffer.getChannelData(0);
+            // Convert Float32 to Int16
+            var pcm16 = new Int16Array(inputData.length);
+            for (var i = 0; i < inputData.length; i++) {
+                var s = Math.max(-1, Math.min(1, inputData[i]));
+                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            voskWs.send(pcm16.buffer);
+        };
+
+        source.connect(voskProcessor);
+        voskProcessor.connect(voskAudioContext.destination);
+
+        debugLog('Vosk audio capture started (rate=' + voskAudioContext.sampleRate + ')');
+    }).catch(function(err) {
+        debugLog('Vosk getUserMedia error: ' + err.message);
+        var statusEl = document.getElementById('aiMicStatus');
+        if (statusEl) {
+            statusEl.textContent = 'マイク許可なし';
+            statusEl.style.color = '#ff4757';
+        }
+        stopVoskRecognition();
+    });
+}
+
+function stopVoskRecognition() {
+    if (aiVoiceTimeout) {
+        clearTimeout(aiVoiceTimeout);
+        aiVoiceTimeout = null;
+    }
+    aiIsListening = false;
+
+    // Send EOF to get final result, then close
+    if (voskWs && voskWs.readyState === WebSocket.OPEN) {
+        try {
+            voskWs.send(JSON.stringify({ eof: 1 }));
+        } catch (e) {}
+        // Close after a brief delay to receive final result
+        setTimeout(function() {
+            if (voskWs) {
+                voskWs.close();
+                voskWs = null;
+            }
+        }, 300);
+    } else {
+        if (voskWs) {
+            voskWs.close();
+            voskWs = null;
+        }
+    }
+
+    // Stop audio capture
+    if (voskProcessor) {
+        voskProcessor.disconnect();
+        voskProcessor = null;
+    }
+    if (voskAudioContext) {
+        voskAudioContext.close().catch(function() {});
+        voskAudioContext = null;
+    }
+    if (voskMediaStream) {
+        voskMediaStream.getTracks().forEach(function(t) { t.stop(); });
+        voskMediaStream = null;
+    }
+
+    var textarea = document.getElementById('aiQueryInput');
+    var voiceBtn = document.getElementById('aiVoiceInputBtn');
+    var preview = document.getElementById('aiVoicePreview');
+    var previewContent = document.getElementById('aiVoicePreviewContent');
+    var statusEl = document.getElementById('aiMicStatus');
+
+    voiceBtn.textContent = '🎤 音声入力';
+    voiceBtn.classList.remove('listening');
+    var sendBtn = document.getElementById('aiSendBtn');
+    if (sendBtn) sendBtn.disabled = false;
+    var refineBtn = document.getElementById('aiRefineBtn');
+    if (refineBtn) refineBtn.disabled = false;
+
+    var finalText = previewContent.textContent.trim();
+    preview.classList.remove('active');
+
+    // Insert text at cursor position
+    if (finalText && finalText !== '聞き取り中...' && finalText !== '接続中...') {
+        var text = textarea.value;
+        var pos = aiSavedCursorPos;
+        var before = text.substring(0, pos);
+        var after = text.substring(pos);
+        var needSpaceBefore = before.length > 0 && !before.endsWith(' ') && !before.endsWith('\n');
+        var needSpaceAfter = after.length > 0 && !after.startsWith(' ') && !after.startsWith('\n');
+        var insertText = (needSpaceBefore ? ' ' : '') + finalText + (needSpaceAfter ? ' ' : '');
+
+        textarea.value = before + insertText + after;
+        autoResizeTextarea(textarea);
+
+        var newCursorPos = pos + insertText.length;
+        textarea.focus();
+        textarea.selectionStart = textarea.selectionEnd = newCursorPos;
+
+        debugLog('Vosk voice input: ' + finalText);
+        if (statusEl) {
+            statusEl.textContent = 'タップで音声入力';
+            statusEl.style.color = '#888';
+        }
+    } else {
+        debugLog('Vosk voice input: no text');
+        if (statusEl) {
+            statusEl.textContent = 'タップで音声入力';
+            statusEl.style.color = '#888';
+        }
+    }
+
+    aiVoiceFinalText = '';
+    aiVoiceInterimText = '';
+
+    // WebRTCマイクを再開
+    if (typeof resumeWebRTCMicrophone === 'function') {
+        resumeWebRTCMicrophone();
+    }
+}
+
 // ========== Initialization ==========
 
 function initAIAssistant() {
@@ -888,11 +1153,11 @@ function initAIAssistant() {
         return;
     }
 
-    // オンデマンドマイク実装により、PTT未使用時はマイクが解放されているため
-    // モバイルでもSpeechRecognitionが使用可能になった（はず）
-
+    const engine = getSpeechEngine();
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
+
+    // Voskモードならブラウザ対応チェック不要（WebSocket + getUserMediaのみ）
+    if (engine !== 'vosk' && !SpeechRecognition) {
         voiceBtn.disabled = true;
         voiceBtn.textContent = '非対応';
         if (status) {
@@ -903,15 +1168,25 @@ function initAIAssistant() {
         return;
     }
 
-    debugLog('AI assistant initializing...');
+    debugLog('AI assistant initializing (engine=' + engine + ')...');
 
     // トグル方式: 1回押して開始、もう1回押して確定
     voiceBtn.addEventListener('click', (e) => {
         e.preventDefault();
         if (aiIsListening) {
-            stopAISpeechRecognition();
+            // 現在のエンジンに応じて停止
+            if (getSpeechEngine() === 'vosk') {
+                stopVoskRecognition();
+            } else {
+                stopAISpeechRecognition();
+            }
         } else {
-            startAISpeechRecognition();
+            // 現在のエンジンに応じて開始
+            if (getSpeechEngine() === 'vosk') {
+                startVoskRecognition();
+            } else {
+                startAISpeechRecognition();
+            }
         }
     });
 

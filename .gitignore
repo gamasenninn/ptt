@@ -48,5 +48,8 @@ ptt-box/mcp-shell.log
 ptt-box/sessions.db
 ptt-box/sandbox/
 
+# Vosk models (large binary files)
+ptt-box/vosk-model*/
+
 # Claude Code
 .claude/

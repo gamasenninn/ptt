@@ -1430,6 +1430,7 @@ function openSettings() {
         loadDisplayNameToInput();
         loadTtsModeToSelect();
         loadEdgeTtsVoice();
+        loadSpeechEngineToSelect();
     }
 }
 
@@ -1489,6 +1490,16 @@ function loadEdgeTtsVoice() {
     const select = document.getElementById('edgeTtsVoiceSelect');
     if (select) {
         select.value = localStorage.getItem('edge_tts_voice') || 'ja-JP-NanamiNeural';
+    }
+}
+
+// ========== 音声認識エンジン設定 ==========
+
+// 設定画面を開いた時に音声認識エンジンを読み込み
+function loadSpeechEngineToSelect() {
+    const select = document.getElementById('speechEngineSelect');
+    if (select) {
+        select.value = getSpeechEngine();
     }
 }
 
