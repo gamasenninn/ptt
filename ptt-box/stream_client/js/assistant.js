@@ -41,6 +41,13 @@ if (typeof marked !== 'undefined') {
     });
 }
 
+// ========== Textarea Auto-Resize ==========
+
+function autoResizeTextarea(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+}
+
 // ========== AI Query Functions ==========
 
 async function sendAIQuery() {
@@ -51,8 +58,9 @@ async function sendAIQuery() {
     // Add user message to chat
     addAIChatMessage('user', query, false);
 
-    // Clear input
+    // Clear input and reset height
     textarea.value = '';
+    textarea.style.height = 'auto';
 
     // クライアントTTSリセット（前回の読み上げを停止）
     aiClientTTSBuffer = '';
@@ -841,6 +849,7 @@ function stopAISpeechRecognition() {
         const insertText = (needSpaceBefore ? ' ' : '') + finalText + (needSpaceAfter ? ' ' : '');
 
         textarea.value = before + insertText + after;
+        autoResizeTextarea(textarea);
 
         const newCursorPos = pos + insertText.length;
         textarea.focus();
@@ -906,7 +915,7 @@ function initAIAssistant() {
         }
     });
 
-    // Textarea: Ctrl+Enter to send
+    // Textarea: Ctrl+Enter to send（auto-resizeはDOMContentLoadedで設定）
     const textarea = document.getElementById('aiQueryInput');
     textarea.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && e.ctrlKey) {
@@ -928,6 +937,12 @@ function initAIAssistant() {
 window.addEventListener('DOMContentLoaded', () => {
     loadAIChatHistory();
     initAIAssistant();
+
+    // Textarea auto-resize（音声機能の有無に関係なく動作）
+    const textarea = document.getElementById('aiQueryInput');
+    if (textarea) {
+        textarea.addEventListener('input', () => autoResizeTextarea(textarea));
+    }
 });
 
 // Hook into stream.js message handler
