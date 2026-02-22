@@ -663,11 +663,15 @@ function setupAISpeechRecognition() {
 
         aiRecognition.onerror = (event) => {
             debugLog('AI voice error: ' + event.error);
+            // no-speech / aborted はモバイルで頻発するため無視（onendで再起動）
+            if (event.error === 'no-speech' || event.error === 'aborted') {
+                return;
+            }
             if (statusEl) {
                 if (event.error === 'not-allowed') {
                     statusEl.textContent = 'マイク許可なし';
                     statusEl.style.color = '#ff4757';
-                } else if (event.error !== 'aborted') {
+                } else {
                     statusEl.textContent = 'エラー: ' + event.error;
                     statusEl.style.color = '#ff4757';
                 }
@@ -677,12 +681,16 @@ function setupAISpeechRecognition() {
 
         aiRecognition.onend = () => {
             if (aiIsListening) {
-                // 継続モードでない場合は再起動を試みる
-                try {
-                    aiRecognition.start();
-                } catch (e) {
-                    debugLog('AI voice restart failed: ' + e.message);
-                }
+                // モバイルでは無音検出でonendが頻発する
+                // 少し待ってから再起動し、マイクUIのちらつきを軽減
+                setTimeout(() => {
+                    if (!aiIsListening) return;
+                    try {
+                        aiRecognition.start();
+                    } catch (e) {
+                        debugLog('AI voice restart failed: ' + e.message);
+                    }
+                }, 200);
             }
         };
 
