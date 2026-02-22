@@ -984,6 +984,23 @@ class StreamServer {
             res.json({ success: true });
         });
 
+        // 音声入力テキスト整形 (AI Assistantプロキシ)
+        this.app.post('/api/refine', async (req, res) => {
+            try {
+                const response = await fetch(`${AI_ASSISTANT_URL}/refine`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(req.body),
+                    signal: AbortSignal.timeout(AI_ASSISTANT_TIMEOUT)
+                });
+                const data = await response.json();
+                res.json(data);
+            } catch (e) {
+                log('Refine proxy error: ' + e.message);
+                res.status(502).json({ error: 'AI service unavailable' });
+            }
+        });
+
         // Edge TTS API (サーバーサイドプロキシ)
         this.app.post('/api/tts/edge', async (req, res) => {
             const { text, voice } = req.body;

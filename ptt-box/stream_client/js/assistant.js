@@ -210,6 +210,35 @@ function clearAIChat() {
     localStorage.removeItem(AI_CHAT_STORAGE_KEY);
 }
 
+// ========== Voice Input Refinement ==========
+
+async function refineVoiceInput() {
+    const textarea = document.getElementById('aiQueryInput');
+    const text = textarea.value.trim();
+    if (!text) return;
+
+    const btn = document.getElementById('aiRefineBtn');
+    btn.textContent = '整形中...';
+    btn.disabled = true;
+
+    try {
+        const res = await fetch('/api/refine', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+        const data = await res.json();
+        if (data.refined) {
+            textarea.value = data.refined;
+        }
+    } catch (e) {
+        debugLog('Refine error: ' + e.message);
+    } finally {
+        btn.textContent = '✨ 整形';
+        btn.disabled = false;
+    }
+}
+
 // ========== AI Response Handling ==========
 
 function handleAIResponse(data) {

@@ -97,6 +97,14 @@ HEARTBEAT_INTERVAL = 30  # 秒
 # システムプロンプト（外部ファイルから読み込み）
 SYSTEM_PROMPT_PATH = Path(os.environ.get("SYSTEM_PROMPT_PATH", Path(__file__).parent / "ASSISTANT.md"))
 
+# 音声入力テキスト整形用システムプロンプト
+REFINE_SYSTEM_PROMPT = """音声入力されたテキストを自然な日本語に整形してください。
+- 誤変換を修正
+- フィラー（えーと、あのー等）を除去
+- 適切な句読点を追加
+- 意味や内容は変更しない
+- 整形後のテキストのみを返す（説明不要）"""
+
 
 def load_system_prompt(context=None, agent=None) -> str:
     """システムプロンプトを外部ファイルから読み込む（毎回最新を読む）"""
@@ -1016,6 +1024,39 @@ class AssistantService:
         stopped = stop_audio()
         return web.json_response({"stopped": stopped})
 
+    async def handle_refine(self, request):
+        """POST /refine - 音声入力テキスト整形"""
+        from aiohttp import web
+        from openai import AsyncOpenAI
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        text = data.get("text", "").strip()
+        if not text:
+            return web.json_response({"error": "Empty text"}, status=400)
+
+        log(f"テキスト整形リクエスト: {text[:50]}...")
+
+        try:
+            client = AsyncOpenAI()
+            response = await client.chat.completions.create(
+                model=AI_MODEL,
+                messages=[
+                    {"role": "system", "content": REFINE_SYSTEM_PROMPT},
+                    {"role": "user", "content": text}
+                ],
+                temperature=0.3,
+            )
+            refined = response.choices[0].message.content.strip()
+            log(f"テキスト整形完了: {refined[:50]}...")
+            return web.json_response({"refined": refined})
+        except Exception as e:
+            log(f"テキスト整形エラー: {e}", level="error")
+            return web.json_response({"error": str(e)}, status=500)
+
     async def handle_query_stream(self, request):
         """POST /query_stream - SSEストリーミングクエリ処理"""
         from aiohttp import web
@@ -1158,6 +1199,7 @@ class AssistantService:
         app = web.Application()
         app.router.add_post('/query', self.handle_query)
         app.router.add_post('/query_stream', self.handle_query_stream)  # SSEストリーミング
+        app.router.add_post('/refine', self.handle_refine)  # 音声入力テキスト整形
         app.router.add_post('/stop_tts', self.handle_stop_tts)
         app.router.add_get('/status', self.handle_status)
 
