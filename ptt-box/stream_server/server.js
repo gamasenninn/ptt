@@ -1017,6 +1017,9 @@ class StreamServer {
             res.setHeader('X-Accel-Buffering', 'no');
 
             try {
+                // SSEストリーミングは長時間かかるため、初回応答のみタイムアウト制御
+                // ストリーム開始後は5分まで許容
+                const SSE_STREAM_TIMEOUT = 5 * 60 * 1000;
                 const response = await fetch(`${AI_ASSISTANT_URL}/query_stream`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1025,7 +1028,7 @@ class StreamServer {
                         tts_mode: tts_mode || 'none',
                         session_id: session_id || 'default'
                     }),
-                    signal: AbortSignal.timeout(AI_ASSISTANT_TIMEOUT)
+                    signal: AbortSignal.timeout(SSE_STREAM_TIMEOUT)
                 });
 
                 if (!response.ok) {
@@ -1037,6 +1040,16 @@ class StreamServer {
                 // Web ReadableStream → Node Readable に変換してパイプ
                 const { Readable } = require('stream');
                 const nodeStream = Readable.fromWeb(response.body);
+
+                // ストリームエラー時にクライアントにエラーを通知して終了
+                nodeStream.on('error', (err) => {
+                    log(`[HTTP] AI stream pipe error: ${err.message}`);
+                    if (!res.writableEnded) {
+                        res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`);
+                        res.end();
+                    }
+                });
+
                 nodeStream.pipe(res);
 
                 // クライアント切断時にアップストリーム接続もクリーンアップ
@@ -1048,7 +1061,9 @@ class StreamServer {
                     ? 'AI Assistant not available'
                     : e.message;
                 log(`[HTTP] AI stream error: ${msg}`);
-                res.write(`data: ${JSON.stringify({ type: 'error', message: msg })}\n\n`);
+                if (!res.headersSent) {
+                    res.write(`data: ${JSON.stringify({ type: 'error', message: msg })}\n\n`);
+                }
                 res.end();
             }
         });
