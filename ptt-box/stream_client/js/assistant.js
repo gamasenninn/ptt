@@ -752,6 +752,8 @@ function startAISpeechRecognition() {
         voiceBtn.classList.add('listening');
         const sendBtn = document.getElementById('aiSendBtn');
         if (sendBtn) sendBtn.disabled = true;
+        const refineBtn = document.getElementById('aiRefineBtn');
+        if (refineBtn) refineBtn.disabled = true;
         if (statusEl) {
             statusEl.textContent = '音声認識中...';
             statusEl.style.color = '#2ed573';
@@ -769,6 +771,11 @@ function startAISpeechRecognition() {
         debugLog('AI voice start error: ' + e.message);
         aiIsListening = false;
         preview.classList.remove('active');
+        // エラー時はボタンを復帰
+        const sendBtnErr = document.getElementById('aiSendBtn');
+        if (sendBtnErr) sendBtnErr.disabled = false;
+        const refineBtnErr = document.getElementById('aiRefineBtn');
+        if (refineBtnErr) refineBtnErr.disabled = false;
         // エラー時はマイクを再取得
         if (typeof resumeWebRTCMicrophone === 'function') {
             resumeWebRTCMicrophone();
@@ -803,6 +810,8 @@ function stopAISpeechRecognition() {
     voiceBtn.classList.remove('listening');
     const sendBtn = document.getElementById('aiSendBtn');
     if (sendBtn) sendBtn.disabled = false;
+    const refineBtn = document.getElementById('aiRefineBtn');
+    if (refineBtn) refineBtn.disabled = false;
 
     // Get final text from preview
     const finalText = previewContent.textContent.trim();
