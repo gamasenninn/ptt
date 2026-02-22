@@ -30,6 +30,7 @@ let edgeTTSAudio = null;     // 現在再生中のAudio要素（停止用）
 let aiClientTTSBuffer = '';        // テキストデルタの蓄積バッファ
 let aiClientTTSQueue = [];         // 読み上げ待ちの文キュー
 let aiClientTTSSpeaking = false;   // 現在読み上げ中かどうか
+let aiClientTTSInCodeBlock = false; // コードブロック内フラグ（```で切替）
 
 // marked.js initialization
 if (typeof marked !== 'undefined') {
@@ -58,6 +59,7 @@ function sendAIQuery() {
     aiClientTTSBuffer = '';
     aiClientTTSQueue = [];
     aiClientTTSSpeaking = false;
+    aiClientTTSInCodeBlock = false;
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     if (edgeTTSAudio) { edgeTTSAudio.pause(); edgeTTSAudio = null; }
 
@@ -332,11 +334,21 @@ function flushClientTTSSentences() {
     for (let i = 0; i < aiClientTTSBuffer.length; i++) {
         if (sentenceEnd.test(aiClientTTSBuffer[i])) {
             const raw = aiClientTTSBuffer.substring(lastIndex, i + 1).trim();
+            lastIndex = i + 1;
+
+            // コードブロック開閉の検出（```を含む行でトグル）
+            if (raw.includes('```')) {
+                aiClientTTSInCodeBlock = !aiClientTTSInCodeBlock;
+                continue;  // ```行自体はスキップ
+            }
+
+            // コードブロック内はスキップ
+            if (aiClientTTSInCodeBlock) continue;
+
             const sentence = cleanTextForTTS(raw);
             if (sentence) {
                 aiClientTTSQueue.push(sentence);
             }
-            lastIndex = i + 1;
         }
     }
     aiClientTTSBuffer = aiClientTTSBuffer.substring(lastIndex);
