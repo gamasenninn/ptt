@@ -9,6 +9,7 @@ let aiVoiceFinalText = '';
 let aiVoiceInterimText = '';
 let aiSavedCursorPos = 0;
 let aiLastAddedTranscript = '';  // Android重複防止用
+let aiVoiceTimeout = null;
 
 // AI Streaming state
 let aiStreamingMessage = null;
@@ -335,6 +336,19 @@ function loadAIChatHistory() {
 
 // ========== Voice Input Functions ==========
 
+// 蓄積テキスト(a)の末尾と新テキスト(b)の先頭の重複を検出
+// 例: a="何時か", b="何時かそして" → overlap=3
+function findAIVoiceOverlap(a, b) {
+    if (!a || !b) return 0;
+    const maxLen = Math.min(a.length, b.length);
+    for (let len = maxLen; len >= 3; len--) {
+        if (a.endsWith(b.substring(0, len))) {
+            return len;
+        }
+    }
+    return 0;
+}
+
 // SpeechRecognition の初期化（getUserMediaは不要）
 function setupAISpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -360,9 +374,18 @@ function setupAISpeechRecognition() {
                 const transcript = event.results[i][0].transcript;
                 const isFinal = event.results[i].isFinal;
                 if (isFinal) {
-                    // Android対策: 同じtranscriptの重複追加を防止
                     if (transcript && transcript !== aiLastAddedTranscript) {
-                        aiVoiceFinalText += transcript;
+                        // モバイル再起動時の重複防止: 蓄積テキスト末尾との重複を検出
+                        const overlap = findAIVoiceOverlap(aiVoiceFinalText, transcript);
+                        if (overlap > 0) {
+                            const remainder = transcript.substring(overlap);
+                            if (remainder) {
+                                aiVoiceFinalText += remainder;
+                                debugLog('AI voice overlap (' + overlap + ' chars), added remainder');
+                            }
+                        } else {
+                            aiVoiceFinalText += transcript;
+                        }
                         aiLastAddedTranscript = transcript;
                     }
                 } else {
@@ -478,6 +501,14 @@ function startAISpeechRecognition() {
             statusEl.style.color = '#2ed573';
         }
         debugLog('AI voice input started');
+
+        // 30秒タイムアウト
+        aiVoiceTimeout = setTimeout(() => {
+            if (aiIsListening) {
+                debugLog('AI voice input timeout');
+                stopAISpeechRecognition();
+            }
+        }, 30000);
     } catch (e) {
         debugLog('AI voice start error: ' + e.message);
         aiIsListening = false;
@@ -494,6 +525,10 @@ function startAISpeechRecognition() {
 }
 
 function stopAISpeechRecognition() {
+    if (aiVoiceTimeout) {
+        clearTimeout(aiVoiceTimeout);
+        aiVoiceTimeout = null;
+    }
     aiIsListening = false;
     if (aiRecognition) {
         try {
@@ -586,34 +621,14 @@ function initAIAssistant() {
 
     debugLog('AI assistant initializing...');
 
-    // Mouse events (with document-level mouseup listener)
-    const handleMouseUp = () => {
-        document.removeEventListener('mouseup', handleMouseUp);
-        if (aiIsListening) stopAISpeechRecognition();
-    };
-
-    voiceBtn.addEventListener('mousedown', (e) => {
+    // トグル方式: 1回押して開始、もう1回押して確定
+    voiceBtn.addEventListener('click', (e) => {
         e.preventDefault();
-        startAISpeechRecognition();
-        document.addEventListener('mouseup', handleMouseUp);
-    });
-
-    // Touch events (mobile)
-    voiceBtn.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        debugLog('AI voice touchstart');
-        startAISpeechRecognition();
-    }, { passive: false });
-    voiceBtn.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        debugLog('AI voice touchend');
-        if (aiIsListening) stopAISpeechRecognition();
-    }, { passive: false });
-    voiceBtn.addEventListener('touchcancel', (e) => {
-        debugLog('AI voice touchcancel');
-        if (aiIsListening) stopAISpeechRecognition();
+        if (aiIsListening) {
+            stopAISpeechRecognition();
+        } else {
+            startAISpeechRecognition();
+        }
     });
 
     // Textarea: Ctrl+Enter to send
