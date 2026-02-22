@@ -245,7 +245,10 @@ function speakWithClientTTS(text) {
     // Cancel any ongoing speech
     speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    const cleaned = cleanTextForTTS(text);
+    if (!cleaned) return;
+
+    const utterance = new SpeechSynthesisUtterance(cleaned);
     utterance.lang = 'ja-JP';
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
@@ -299,13 +302,37 @@ async function playEdgeTTS(text) {
     });
 }
 
+// TTS用にテキストからマークダウン記号・URLを除去（Python版 clean_text_for_tts と同等）
+function cleanTextForTTS(text) {
+    // マークダウンリンク [text](url) → text
+    text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+    // コードブロック ```...``` → 除去
+    text = text.replace(/```[\s\S]*?```/g, '');
+    // 裸のURL
+    text = text.replace(/https?:\/\/\S+/g, '');
+    // 見出し記号 (### text → text)
+    text = text.replace(/^#{1,6}\s+/gm, '');
+    // 太字・斜体 (**text** or *text* → text)
+    text = text.replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1');
+    // リスト記号 (- text → text)
+    text = text.replace(/^\s*[-*+]\s+/gm, '');
+    // 番号リスト (1. text → text)
+    text = text.replace(/^\s*\d+\.\s+/gm, '');
+    // インラインコード (`code` → code)
+    text = text.replace(/`([^`]+)`/g, '$1');
+    // 連続空白を整理
+    text = text.replace(/ {2,}/g, ' ');
+    return text.trim();
+}
+
 // Flush complete sentences from client TTS buffer into the queue
 function flushClientTTSSentences() {
     const sentenceEnd = /[。！？!?\n]/;
     let lastIndex = 0;
     for (let i = 0; i < aiClientTTSBuffer.length; i++) {
         if (sentenceEnd.test(aiClientTTSBuffer[i])) {
-            const sentence = aiClientTTSBuffer.substring(lastIndex, i + 1).trim();
+            const raw = aiClientTTSBuffer.substring(lastIndex, i + 1).trim();
+            const sentence = cleanTextForTTS(raw);
             if (sentence) {
                 aiClientTTSQueue.push(sentence);
             }
@@ -861,7 +888,8 @@ function handleAIStreamEvent(data) {
         const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
         if (ttsMode === 'client' || ttsMode === 'edge') {
             if (aiClientTTSBuffer.trim()) {
-                aiClientTTSQueue.push(aiClientTTSBuffer.trim());
+                const remaining = cleanTextForTTS(aiClientTTSBuffer);
+                if (remaining) aiClientTTSQueue.push(remaining);
                 aiClientTTSBuffer = '';
             }
             processClientTTSQueue();
