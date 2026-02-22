@@ -1446,7 +1446,13 @@ function closeSettings() {
 
 // TTSモードを取得
 function getTtsMode() {
-    return localStorage.getItem('ptt_tts_mode') || 'edge';
+    const mode = localStorage.getItem('ptt_tts_mode') || 'edge';
+    // サーバーTTSモードは廃止 → Edge TTSにフォールバック
+    if (mode === 'server' || mode === 'server_stream') {
+        saveTtsMode('edge');
+        return 'edge';
+    }
+    return mode;
 }
 
 // TTSモードを保存
