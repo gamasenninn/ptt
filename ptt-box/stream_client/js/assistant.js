@@ -496,6 +496,8 @@ function startAISpeechRecognition() {
         aiRecognition.start();
         voiceBtn.textContent = '🎤 聞き取り中...';
         voiceBtn.classList.add('listening');
+        const sendBtn = document.getElementById('aiSendBtn');
+        if (sendBtn) sendBtn.disabled = true;
         if (statusEl) {
             statusEl.textContent = '音声認識中...';
             statusEl.style.color = '#2ed573';
@@ -545,6 +547,8 @@ function stopAISpeechRecognition() {
     // Reset button state
     voiceBtn.textContent = '🎤 音声入力';
     voiceBtn.classList.remove('listening');
+    const sendBtn = document.getElementById('aiSendBtn');
+    if (sendBtn) sendBtn.disabled = false;
 
     // Get final text from preview
     const finalText = previewContent.textContent.trim();
