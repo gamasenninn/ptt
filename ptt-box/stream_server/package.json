@@ -12,6 +12,7 @@
     "test:watch": "jest --watch"
   },
   "dependencies": {
+    "@andresaya/edge-tts": "^1.8.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.0",
     "serialport": "^13.0.0",

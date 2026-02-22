@@ -23,6 +23,9 @@ let aiChatHistory = [];
 // TTS playback state
 let aiTTSPlaying = false;
 
+// Edge TTS state
+let edgeTTSAudio = null;     // 現在再生中のAudio要素（停止用）
+
 // Client TTS streaming state
 let aiClientTTSBuffer = '';        // テキストデルタの蓄積バッファ
 let aiClientTTSQueue = [];         // 読み上げ待ちの文キュー
@@ -56,6 +59,7 @@ function sendAIQuery() {
     aiClientTTSQueue = [];
     aiClientTTSSpeaking = false;
     if ('speechSynthesis' in window) speechSynthesis.cancel();
+    if (edgeTTSAudio) { edgeTTSAudio.pause(); edgeTTSAudio = null; }
 
     // Initialize streaming state
     aiStreamingText = '';
@@ -160,6 +164,12 @@ function stopAITTS() {
         speechSynthesis.cancel();
     }
 
+    // Edge TTS audio停止
+    if (edgeTTSAudio) {
+        edgeTTSAudio.pause();
+        edgeTTSAudio = null;
+    }
+
     // クライアントTTSキューをリセット
     aiClientTTSBuffer = '';
     aiClientTTSQueue = [];
@@ -253,6 +263,42 @@ function speakWithClientTTS(text) {
     speechSynthesis.speak(utterance);
 }
 
+// ========== Edge TTS Functions ==========
+
+async function playEdgeTTS(text) {
+    const voice = localStorage.getItem('edge_tts_voice') || 'ja-JP-NanamiNeural';
+    debugLog('Edge TTS: synthesizing "' + text.substring(0, 30) + '..." voice=' + voice);
+
+    const resp = await fetch('/api/tts/edge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice })
+    });
+
+    if (!resp.ok) {
+        const err = await resp.text();
+        throw new Error('Edge TTS server error: ' + resp.status + ' ' + err);
+    }
+
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+
+    return new Promise((resolve, reject) => {
+        edgeTTSAudio = new Audio(url);
+        edgeTTSAudio.onended = () => {
+            URL.revokeObjectURL(url);
+            edgeTTSAudio = null;
+            resolve();
+        };
+        edgeTTSAudio.onerror = (e) => {
+            URL.revokeObjectURL(url);
+            edgeTTSAudio = null;
+            reject(new Error('Audio playback error'));
+        };
+        edgeTTSAudio.play().catch(reject);
+    });
+}
+
 // Flush complete sentences from client TTS buffer into the queue
 function flushClientTTSSentences() {
     const sentenceEnd = /[。！？!?\n]/;
@@ -273,23 +319,37 @@ function flushClientTTSSentences() {
 function processClientTTSQueue() {
     if (aiClientTTSSpeaking || aiClientTTSQueue.length === 0) return;
 
+    const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'client';
     const sentence = aiClientTTSQueue.shift();
-    const utterance = new SpeechSynthesisUtterance(sentence);
-    utterance.lang = 'ja-JP';
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
     aiClientTTSSpeaking = true;
 
-    utterance.onend = () => {
-        aiClientTTSSpeaking = false;
-        processClientTTSQueue();
-    };
-    utterance.onerror = () => {
-        aiClientTTSSpeaking = false;
-        processClientTTSQueue();
-    };
+    if (ttsMode === 'edge') {
+        playEdgeTTS(sentence).then(() => {
+            aiClientTTSSpeaking = false;
+            processClientTTSQueue();
+        }).catch((e) => {
+            debugLog('Edge TTS error: ' + (e && e.message || e));
+            aiClientTTSSpeaking = false;
+            processClientTTSQueue();
+        });
+    } else {
+        // Web Speech API (既存)
+        const utterance = new SpeechSynthesisUtterance(sentence);
+        utterance.lang = 'ja-JP';
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
 
-    speechSynthesis.speak(utterance);
+        utterance.onend = () => {
+            aiClientTTSSpeaking = false;
+            processClientTTSQueue();
+        };
+        utterance.onerror = () => {
+            aiClientTTSSpeaking = false;
+            processClientTTSQueue();
+        };
+
+        speechSynthesis.speak(utterance);
+    }
 }
 
 function handleAITTSStopped(data) {
@@ -784,7 +844,7 @@ function handleAIStreamEvent(data) {
 
             // クライアントTTSストリーミング: 文単位で逐次読み上げ
             const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
-            if (ttsMode === 'client') {
+            if (ttsMode === 'client' || ttsMode === 'edge') {
                 aiClientTTSBuffer += data.delta;
                 flushClientTTSSentences();
                 processClientTTSQueue();
@@ -799,7 +859,7 @@ function handleAIStreamEvent(data) {
 
         // クライアントTTS: バッファに残った未完成文も読み上げ
         const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
-        if (ttsMode === 'client') {
+        if (ttsMode === 'client' || ttsMode === 'edge') {
             if (aiClientTTSBuffer.trim()) {
                 aiClientTTSQueue.push(aiClientTTSBuffer.trim());
                 aiClientTTSBuffer = '';

@@ -984,6 +984,25 @@ class StreamServer {
             res.json({ success: true });
         });
 
+        // Edge TTS API (サーバーサイドプロキシ)
+        this.app.post('/api/tts/edge', async (req, res) => {
+            const { text, voice } = req.body;
+            if (!text) {
+                return res.status(400).json({ success: false, error: 'text required' });
+            }
+            try {
+                const { EdgeTTS } = require('@andresaya/edge-tts');
+                const tts = new EdgeTTS();
+                await tts.synthesize(text, voice || 'ja-JP-NanamiNeural');
+                const buffer = tts.toBuffer();
+                res.set('Content-Type', 'audio/mpeg');
+                res.send(buffer);
+            } catch (e) {
+                log('Edge TTS error: ' + e.message);
+                res.status(500).json({ success: false, error: e.message });
+            }
+        });
+
         // ダッシュボード静的ファイル
         const dashPath = path.join(__dirname, '..', 'stream_client', 'dash');
         this.app.use('/dash', express.static(dashPath));

@@ -1429,6 +1429,7 @@ function openSettings() {
         updatePttKeyDisplay();
         loadDisplayNameToInput();
         loadTtsModeToSelect();
+        loadEdgeTtsVoice();
     }
 }
 
@@ -1459,6 +1460,29 @@ function loadTtsModeToSelect() {
     const select = document.getElementById('ttsModeSelect');
     if (select) {
         select.value = getTtsMode();
+        toggleEdgeTtsVoiceGroup(select.value);
+    }
+}
+
+// Edge TTS音声選択の表示/非表示切替
+function toggleEdgeTtsVoiceGroup(mode) {
+    const group = document.getElementById('edgeTtsVoiceGroup');
+    if (group) {
+        group.style.display = mode === 'edge' ? 'block' : 'none';
+    }
+}
+
+// Edge TTS音声を保存
+function saveEdgeTtsVoice(voice) {
+    localStorage.setItem('edge_tts_voice', voice);
+    debugLog('Edge TTS voice saved: ' + voice);
+}
+
+// Edge TTS音声を読み込み
+function loadEdgeTtsVoice() {
+    const select = document.getElementById('edgeTtsVoiceSelect');
+    if (select) {
+        select.value = localStorage.getItem('edge_tts_voice') || 'ja-JP-NanamiNeural';
     }
 }
 
