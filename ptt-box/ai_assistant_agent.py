@@ -97,13 +97,35 @@ HEARTBEAT_INTERVAL = 30  # 秒
 # システムプロンプト（外部ファイルから読み込み）
 SYSTEM_PROMPT_PATH = Path(os.environ.get("SYSTEM_PROMPT_PATH", Path(__file__).parent / "ASSISTANT.md"))
 
-# 音声入力テキスト整形用システムプロンプト
-REFINE_SYSTEM_PROMPT = """音声入力されたテキストを自然な日本語に整形してください。
+# 音声入力テキスト整形用プロンプト（外部ファイルから読み込み）
+REFINE_PROMPT_PATH = Path(os.environ.get("REFINE_PROMPT_PATH", Path(__file__).parent / "REFINE_PROMPT.md"))
+REFINE_DICT_PATH = Path(os.environ.get("REFINE_DICT_PATH", Path(__file__).parent / "REFINE_DICT.md"))
+
+REFINE_SYSTEM_PROMPT_FALLBACK = """音声入力されたテキストを自然な日本語に整形してください。
 - 誤変換を修正
 - フィラー（えーと、あのー等）を除去
 - 適切な句読点を追加
 - 意味や内容は変更しない
 - 整形後のテキストのみを返す（説明不要）"""
+
+
+def load_refine_prompt() -> str:
+    """整形用システムプロンプトを外部ファイルから読み込む（毎回最新を読む）"""
+    parts = []
+
+    # メインプロンプト
+    if REFINE_PROMPT_PATH.exists():
+        parts.append(REFINE_PROMPT_PATH.read_text(encoding="utf-8").strip())
+    else:
+        parts.append(REFINE_SYSTEM_PROMPT_FALLBACK)
+
+    # 個人辞書（存在すれば追加）
+    if REFINE_DICT_PATH.exists():
+        dict_text = REFINE_DICT_PATH.read_text(encoding="utf-8").strip()
+        if dict_text:
+            parts.append(dict_text)
+
+    return "\n\n".join(parts)
 
 
 def load_system_prompt(context=None, agent=None) -> str:
@@ -1045,7 +1067,7 @@ class AssistantService:
             response = await client.chat.completions.create(
                 model=AI_MODEL,
                 messages=[
-                    {"role": "system", "content": REFINE_SYSTEM_PROMPT},
+                    {"role": "system", "content": load_refine_prompt()},
                     {"role": "user", "content": text}
                 ],
                 temperature=0.3,

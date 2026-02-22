@@ -1001,6 +1001,79 @@ class StreamServer {
             }
         });
 
+        // AI Assistant ストリーミングクエリ (HTTP SSEプロキシ)
+        // WebSocket不要でクライアントから直接SSEを受信可能
+        this.app.post('/api/ai/query_stream', async (req, res) => {
+            const { query, tts_mode, session_id } = req.body;
+            if (!query) {
+                return res.status(400).json({ error: 'Empty query' });
+            }
+
+            log(`[HTTP] AI query (stream): ${query.substring(0, 50)}... (tts=${tts_mode || 'none'})`);
+
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('X-Accel-Buffering', 'no');
+
+            try {
+                const response = await fetch(`${AI_ASSISTANT_URL}/query_stream`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query,
+                        tts_mode: tts_mode || 'none',
+                        session_id: session_id || 'default'
+                    }),
+                    signal: AbortSignal.timeout(AI_ASSISTANT_TIMEOUT)
+                });
+
+                if (!response.ok) {
+                    res.write(`data: ${JSON.stringify({ type: 'error', message: `HTTP ${response.status}: ${response.statusText}` })}\n\n`);
+                    res.end();
+                    return;
+                }
+
+                // Web ReadableStream → Node Readable に変換してパイプ
+                const { Readable } = require('stream');
+                const nodeStream = Readable.fromWeb(response.body);
+                nodeStream.pipe(res);
+
+                // クライアント切断時にアップストリーム接続もクリーンアップ
+                req.on('close', () => {
+                    nodeStream.destroy();
+                });
+            } catch (e) {
+                const msg = e.code === 'ECONNREFUSED' || e.cause?.code === 'ECONNREFUSED'
+                    ? 'AI Assistant not available'
+                    : e.message;
+                log(`[HTTP] AI stream error: ${msg}`);
+                res.write(`data: ${JSON.stringify({ type: 'error', message: msg })}\n\n`);
+                res.end();
+            }
+        });
+
+        // AI Assistant TTS停止 (HTTP)
+        this.app.post('/api/ai/stop_tts', async (req, res) => {
+            log('[HTTP] AI stop TTS requested');
+            try {
+                const response = await fetch(`${AI_ASSISTANT_URL}/stop_tts`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    signal: AbortSignal.timeout(AI_ASSISTANT_TIMEOUT)
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    res.json(data);
+                } else {
+                    res.status(502).json({ stopped: false, error: 'Request failed' });
+                }
+            } catch (e) {
+                log('[HTTP] AI stop TTS error: ' + e.message);
+                res.status(502).json({ stopped: false, error: e.message });
+            }
+        });
+
         // Edge TTS API (サーバーサイドプロキシ)
         this.app.post('/api/tts/edge', async (req, res) => {
             const { text, voice } = req.body;

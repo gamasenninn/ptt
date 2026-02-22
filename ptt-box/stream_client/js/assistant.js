@@ -1,5 +1,5 @@
 // AI Assistant integration for Webトランシーバー
-// Uses existing WebSocket connection from stream.js
+// HTTP SSEで動作（WebSocket/WebRTC接続不要）
 
 // AI Voice input state
 let aiRecognition = null;
@@ -14,6 +14,7 @@ let aiVoiceTimeout = null;
 // AI Streaming state
 let aiStreamingMessage = null;
 let aiStreamingText = '';
+let aiStreamAbortController = null;  // HTTP SSEストリーミング中断用
 
 // Chat history persistence
 const AI_CHAT_STORAGE_KEY = 'aiChatHistory';
@@ -42,18 +43,16 @@ if (typeof marked !== 'undefined') {
 
 // ========== AI Query Functions ==========
 
-function sendAIQuery() {
+async function sendAIQuery() {
     const textarea = document.getElementById('aiQueryInput');
     const query = textarea.value.trim();
     if (!query) return;
 
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        addAIChatMessage('error', 'サーバーに接続されていません');
-        return;
-    }
-
     // Add user message to chat
     addAIChatMessage('user', query, false);
+
+    // Clear input
+    textarea.value = '';
 
     // クライアントTTSリセット（前回の読み上げを停止）
     aiClientTTSBuffer = '';
@@ -63,6 +62,12 @@ function sendAIQuery() {
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     if (edgeTTSAudio) { edgeTTSAudio.pause(); edgeTTSAudio = null; }
 
+    // 前回のストリーミングを中断
+    if (aiStreamAbortController) {
+        aiStreamAbortController.abort();
+        aiStreamAbortController = null;
+    }
+
     // Initialize streaming state
     aiStreamingText = '';
     aiStreamingMessage = addAIChatMessage('ai streaming', '');
@@ -70,20 +75,77 @@ function sendAIQuery() {
     updateStreamingStatus('thinking');
 
     // Get TTS mode from settings
-    const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
+    // WebSocket未接続時はサーバーTTSが使えないため、edge/clientにフォールバック
+    let ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'edge';
+    const wsConnected = typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN;
+    if (!wsConnected && ttsMode === 'server') {
+        ttsMode = 'edge';
+    }
 
-    // Send query through WebSocket using streaming endpoint
-    ws.send(JSON.stringify({
-        type: 'ai_query_stream',
-        query: query,
-        check_wake_word: false,
-        tts_mode: ttsMode
-    }));
+    debugLog('AI query (HTTP SSE): ' + query.substring(0, 50) + '... (tts_mode=' + ttsMode + ')');
 
-    debugLog('AI query sent (stream): ' + query.substring(0, 50) + '... (tts_mode=' + ttsMode + ')');
+    // HTTP SSEでストリーミング受信
+    aiStreamAbortController = new AbortController();
 
-    // Clear input
-    textarea.value = '';
+    try {
+        const res = await fetch('/api/ai/query_stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, tts_mode: ttsMode }),
+            signal: aiStreamAbortController.signal
+        });
+
+        if (!res.ok) {
+            throw new Error('HTTP ' + res.status + ': ' + res.statusText);
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const eventData = JSON.parse(line.slice(6));
+                        // SSEではtype直接、WSではeventTypeにリネームされていた
+                        // handleAIStreamEventはeventTypeを参照するので変換
+                        handleAIStreamEvent({
+                            ...eventData,
+                            eventType: eventData.type
+                        });
+                    } catch (parseError) {
+                        // JSONパースエラーは無視
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        if (e.name === 'AbortError') {
+            debugLog('AI query aborted');
+            return;
+        }
+        debugLog('AI query error: ' + e.message);
+        if (aiStreamingMessage) {
+            aiStreamingMessage.classList.remove('streaming');
+            aiStreamingMessage.classList.add('error');
+            const content = aiStreamingMessage.querySelector('.content');
+            if (content) {
+                content.textContent = 'エラー: ' + e.message;
+            }
+            aiStreamingMessage = null;
+            aiStreamingText = '';
+        }
+    } finally {
+        aiStreamAbortController = null;
+    }
 }
 
 // Update streaming message status
@@ -177,15 +239,24 @@ function stopAITTS() {
     aiClientTTSQueue = [];
     aiClientTTSSpeaking = false;
 
+    // 進行中のSSEストリーミングを中断
+    if (aiStreamAbortController) {
+        aiStreamAbortController.abort();
+        aiStreamAbortController = null;
+    }
+
     // クライアント側audio要素を停止
     const audio = document.getElementById('p2p-audio-server');
     if (audio) {
         audio.pause();
     }
 
-    // サーバー側TTS停止リクエスト
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    // サーバー側TTS停止リクエスト（WebSocket or HTTP）
+    if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'ai_stop_tts' }));
+    } else {
+        // HTTP fallback
+        fetch('/api/ai/stop_tts', { method: 'POST' }).catch(() => {});
     }
 
     aiTTSPlaying = false;
