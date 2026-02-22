@@ -23,6 +23,11 @@ let aiChatHistory = [];
 // TTS playback state
 let aiTTSPlaying = false;
 
+// Client TTS streaming state
+let aiClientTTSBuffer = '';        // テキストデルタの蓄積バッファ
+let aiClientTTSQueue = [];         // 読み上げ待ちの文キュー
+let aiClientTTSSpeaking = false;   // 現在読み上げ中かどうか
+
 // marked.js initialization
 if (typeof marked !== 'undefined') {
     marked.setOptions({
@@ -45,6 +50,12 @@ function sendAIQuery() {
 
     // Add user message to chat
     addAIChatMessage('user', query, false);
+
+    // クライアントTTSリセット（前回の読み上げを停止）
+    aiClientTTSBuffer = '';
+    aiClientTTSQueue = [];
+    aiClientTTSSpeaking = false;
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
 
     // Initialize streaming state
     aiStreamingText = '';
@@ -149,6 +160,11 @@ function stopAITTS() {
         speechSynthesis.cancel();
     }
 
+    // クライアントTTSキューをリセット
+    aiClientTTSBuffer = '';
+    aiClientTTSQueue = [];
+    aiClientTTSSpeaking = false;
+
     // クライアント側audio要素を停止
     const audio = document.getElementById('p2p-audio-server');
     if (audio) {
@@ -232,6 +248,45 @@ function speakWithClientTTS(text) {
     };
     utterance.onerror = (e) => {
         debugLog('Client TTS error: ' + e.error);
+    };
+
+    speechSynthesis.speak(utterance);
+}
+
+// Flush complete sentences from client TTS buffer into the queue
+function flushClientTTSSentences() {
+    const sentenceEnd = /[。！？!?\n]/;
+    let lastIndex = 0;
+    for (let i = 0; i < aiClientTTSBuffer.length; i++) {
+        if (sentenceEnd.test(aiClientTTSBuffer[i])) {
+            const sentence = aiClientTTSBuffer.substring(lastIndex, i + 1).trim();
+            if (sentence) {
+                aiClientTTSQueue.push(sentence);
+            }
+            lastIndex = i + 1;
+        }
+    }
+    aiClientTTSBuffer = aiClientTTSBuffer.substring(lastIndex);
+}
+
+// Process client TTS queue one sentence at a time
+function processClientTTSQueue() {
+    if (aiClientTTSSpeaking || aiClientTTSQueue.length === 0) return;
+
+    const sentence = aiClientTTSQueue.shift();
+    const utterance = new SpeechSynthesisUtterance(sentence);
+    utterance.lang = 'ja-JP';
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    aiClientTTSSpeaking = true;
+
+    utterance.onend = () => {
+        aiClientTTSSpeaking = false;
+        processClientTTSQueue();
+    };
+    utterance.onerror = () => {
+        aiClientTTSSpeaking = false;
+        processClientTTSQueue();
     };
 
     speechSynthesis.speak(utterance);
@@ -726,6 +781,14 @@ function handleAIStreamEvent(data) {
                     debugLog('[TTS診断] p2p-audio-server NOT FOUND');
                 }
             }
+
+            // クライアントTTSストリーミング: 文単位で逐次読み上げ
+            const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
+            if (ttsMode === 'client') {
+                aiClientTTSBuffer += data.delta;
+                flushClientTTSSentences();
+                processClientTTSQueue();
+            }
         }
     } else if (eventType === 'done') {
         // 完了イベント
@@ -734,10 +797,14 @@ function handleAIStreamEvent(data) {
         // TTS再生状態をリセット
         setAITTSPlaying(false);
 
-        // Client-side TTS if mode is 'client'
+        // クライアントTTS: バッファに残った未完成文も読み上げ
         const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
-        if (ttsMode === 'client' && data.response) {
-            speakWithClientTTS(data.response);
+        if (ttsMode === 'client') {
+            if (aiClientTTSBuffer.trim()) {
+                aiClientTTSQueue.push(aiClientTTSBuffer.trim());
+                aiClientTTSBuffer = '';
+            }
+            processClientTTSQueue();
         }
     }
 }
