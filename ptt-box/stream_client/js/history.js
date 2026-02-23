@@ -28,6 +28,13 @@ function switchTab(tabName) {
     });
     document.getElementById('tab-' + tabName).classList.add('active');
 
+    // AIタブ切替時のWake Lock制御
+    if (tabName === 'ai') {
+        if (typeof requestAIWakeLock === 'function') requestAIWakeLock();
+    } else {
+        if (typeof releaseAIWakeLock === 'function') releaseAIWakeLock();
+    }
+
     // 履歴タブに切り替えたら読み込み
     if (tabName === 'history') {
         loadHistory();
