@@ -1,5 +1,5 @@
 // AI Assistant integration for Webトランシーバー
-// Uses existing WebSocket connection from stream.js
+// HTTP SSEで動作（WebSocket/WebRTC接続不要）
 
 // AI Voice input state
 let aiRecognition = null;
@@ -9,13 +9,35 @@ let aiVoiceFinalText = '';
 let aiVoiceInterimText = '';
 let aiSavedCursorPos = 0;
 let aiLastAddedTranscript = '';  // Android重複防止用
+let aiVoiceTimeout = null;
+
+// Vosk speech recognition state
+let voskWs = null;
+let voskAudioContext = null;
+let voskMediaStream = null;
+let voskProcessor = null;
 
 // AI Streaming state
 let aiStreamingMessage = null;
 let aiStreamingText = '';
+let aiStreamAbortController = null;  // HTTP SSEストリーミング中断用
+
+// Chat history persistence
+const AI_CHAT_STORAGE_KEY = 'aiChatHistory';
+const AI_CHAT_MAX_MESSAGES = 50;
+let aiChatHistory = [];
 
 // TTS playback state
 let aiTTSPlaying = false;
+
+// Edge TTS state
+let edgeTTSAudio = null;     // 現在再生中のAudio要素（停止用）
+
+// Client TTS streaming state
+let aiClientTTSBuffer = '';        // テキストデルタの蓄積バッファ
+let aiClientTTSQueue = [];         // 読み上げ待ちの文キュー
+let aiClientTTSSpeaking = false;   // 現在読み上げ中かどうか
+let aiClientTTSInCodeBlock = false; // コードブロック内フラグ（```で切替）
 
 // marked.js initialization
 if (typeof marked !== 'undefined') {
@@ -25,20 +47,40 @@ if (typeof marked !== 'undefined') {
     });
 }
 
+// ========== Textarea Auto-Resize ==========
+
+function autoResizeTextarea(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+}
+
 // ========== AI Query Functions ==========
 
-function sendAIQuery() {
+async function sendAIQuery() {
     const textarea = document.getElementById('aiQueryInput');
     const query = textarea.value.trim();
     if (!query) return;
 
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        addAIChatMessage('error', 'サーバーに接続されていません');
-        return;
-    }
-
     // Add user message to chat
     addAIChatMessage('user', query, false);
+
+    // Clear input and reset height
+    textarea.value = '';
+    textarea.style.height = 'auto';
+
+    // クライアントTTSリセット（前回の読み上げを停止）
+    aiClientTTSBuffer = '';
+    aiClientTTSQueue = [];
+    aiClientTTSSpeaking = false;
+    aiClientTTSInCodeBlock = false;
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    if (edgeTTSAudio) { edgeTTSAudio.pause(); edgeTTSAudio = null; }
+
+    // 前回のストリーミングを中断
+    if (aiStreamAbortController) {
+        aiStreamAbortController.abort();
+        aiStreamAbortController = null;
+    }
 
     // Initialize streaming state
     aiStreamingText = '';
@@ -47,20 +89,77 @@ function sendAIQuery() {
     updateStreamingStatus('thinking');
 
     // Get TTS mode from settings
-    const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
+    // WebSocket未接続時はサーバーTTSが使えないため、edge/clientにフォールバック
+    let ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'edge';
+    const wsConnected = typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN;
+    if (!wsConnected && ttsMode === 'server') {
+        ttsMode = 'edge';
+    }
 
-    // Send query through WebSocket using streaming endpoint
-    ws.send(JSON.stringify({
-        type: 'ai_query_stream',
-        query: query,
-        check_wake_word: false,
-        tts_mode: ttsMode
-    }));
+    debugLog('AI query (HTTP SSE): ' + query.substring(0, 50) + '... (tts_mode=' + ttsMode + ')');
 
-    debugLog('AI query sent (stream): ' + query.substring(0, 50) + '... (tts_mode=' + ttsMode + ')');
+    // HTTP SSEでストリーミング受信
+    aiStreamAbortController = new AbortController();
 
-    // Clear input
-    textarea.value = '';
+    try {
+        const res = await fetch('/api/ai/query_stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, tts_mode: ttsMode }),
+            signal: aiStreamAbortController.signal
+        });
+
+        if (!res.ok) {
+            throw new Error('HTTP ' + res.status + ': ' + res.statusText);
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const eventData = JSON.parse(line.slice(6));
+                        // SSEではtype直接、WSではeventTypeにリネームされていた
+                        // handleAIStreamEventはeventTypeを参照するので変換
+                        handleAIStreamEvent({
+                            ...eventData,
+                            eventType: eventData.type
+                        });
+                    } catch (parseError) {
+                        // JSONパースエラーは無視
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        if (e.name === 'AbortError') {
+            debugLog('AI query aborted');
+            return;
+        }
+        debugLog('AI query error: ' + e.message);
+        if (aiStreamingMessage) {
+            aiStreamingMessage.classList.remove('streaming');
+            aiStreamingMessage.classList.add('error');
+            const content = aiStreamingMessage.querySelector('.content');
+            if (content) {
+                content.textContent = 'エラー: ' + e.message;
+            }
+            aiStreamingMessage = null;
+            aiStreamingText = '';
+        }
+    } finally {
+        aiStreamAbortController = null;
+    }
 }
 
 // Update streaming message status
@@ -127,6 +226,9 @@ function finalizeStreamingMessage(response) {
         container.scrollTop = container.scrollHeight;
     }
 
+    // ストリーミング完了した応答を保存
+    saveAIChatMessage('ai', response, true);
+
     // 状態をリセット
     aiStreamingMessage = null;
     aiStreamingText = '';
@@ -140,15 +242,35 @@ function stopAITTS() {
         speechSynthesis.cancel();
     }
 
+    // Edge TTS audio停止
+    if (edgeTTSAudio) {
+        edgeTTSAudio.pause();
+        edgeTTSAudio = null;
+    }
+
+    // クライアントTTSキューをリセット
+    aiClientTTSBuffer = '';
+    aiClientTTSQueue = [];
+    aiClientTTSSpeaking = false;
+
+    // 進行中のSSEストリーミングを中断
+    if (aiStreamAbortController) {
+        aiStreamAbortController.abort();
+        aiStreamAbortController = null;
+    }
+
     // クライアント側audio要素を停止
     const audio = document.getElementById('p2p-audio-server');
     if (audio) {
         audio.pause();
     }
 
-    // サーバー側TTS停止リクエスト
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    // サーバー側TTS停止リクエスト（WebSocket or HTTP）
+    if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'ai_stop_tts' }));
+    } else {
+        // HTTP fallback
+        fetch('/api/ai/stop_tts', { method: 'POST' }).catch(() => {});
     }
 
     aiTTSPlaying = false;
@@ -169,6 +291,37 @@ function setAITTSPlaying(playing) {
 function clearAIChat() {
     const container = document.getElementById('aiChatContainer');
     container.innerHTML = '<div class="ai-chat-empty">AIに質問してみましょう...</div>';
+    aiChatHistory = [];
+    localStorage.removeItem(AI_CHAT_STORAGE_KEY);
+}
+
+// ========== Voice Input Refinement ==========
+
+async function refineVoiceInput() {
+    const textarea = document.getElementById('aiQueryInput');
+    const text = textarea.value.trim();
+    if (!text) return;
+
+    const btn = document.getElementById('aiRefineBtn');
+    btn.textContent = '整形中...';
+    btn.disabled = true;
+
+    try {
+        const res = await fetch('/api/refine', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+        const data = await res.json();
+        if (data.refined) {
+            textarea.value = data.refined;
+        }
+    } catch (e) {
+        debugLog('Refine error: ' + e.message);
+    } finally {
+        btn.textContent = '✨ 整形';
+        btn.disabled = false;
+    }
 }
 
 // ========== AI Response Handling ==========
@@ -208,7 +361,10 @@ function speakWithClientTTS(text) {
     // Cancel any ongoing speech
     speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    const cleaned = cleanTextForTTS(text);
+    if (!cleaned) return;
+
+    const utterance = new SpeechSynthesisUtterance(cleaned);
     utterance.lang = 'ja-JP';
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
@@ -224,6 +380,129 @@ function speakWithClientTTS(text) {
     };
 
     speechSynthesis.speak(utterance);
+}
+
+// ========== Edge TTS Functions ==========
+
+async function playEdgeTTS(text) {
+    const voice = localStorage.getItem('edge_tts_voice') || 'ja-JP-NanamiNeural';
+    debugLog('Edge TTS: synthesizing "' + text.substring(0, 30) + '..." voice=' + voice);
+
+    const resp = await fetch('/api/tts/edge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice })
+    });
+
+    if (!resp.ok) {
+        const err = await resp.text();
+        throw new Error('Edge TTS server error: ' + resp.status + ' ' + err);
+    }
+
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+
+    return new Promise((resolve, reject) => {
+        edgeTTSAudio = new Audio(url);
+        edgeTTSAudio.onended = () => {
+            URL.revokeObjectURL(url);
+            edgeTTSAudio = null;
+            resolve();
+        };
+        edgeTTSAudio.onerror = (e) => {
+            URL.revokeObjectURL(url);
+            edgeTTSAudio = null;
+            reject(new Error('Audio playback error'));
+        };
+        edgeTTSAudio.play().catch(reject);
+    });
+}
+
+// TTS用にテキストからマークダウン記号・URLを除去（Python版 clean_text_for_tts と同等）
+function cleanTextForTTS(text) {
+    // マークダウンリンク [text](url) → text
+    text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+    // コードブロック ```...``` → 除去
+    text = text.replace(/```[\s\S]*?```/g, '');
+    // 裸のURL
+    text = text.replace(/https?:\/\/\S+/g, '');
+    // 見出し記号 (### text → text)
+    text = text.replace(/^#{1,6}\s+/gm, '');
+    // 太字・斜体 (**text** or *text* → text)
+    text = text.replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1');
+    // リスト記号 (- text → text)
+    text = text.replace(/^\s*[-*+]\s+/gm, '');
+    // 番号リスト (1. text → text)
+    text = text.replace(/^\s*\d+\.\s+/gm, '');
+    // インラインコード (`code` → code)
+    text = text.replace(/`([^`]+)`/g, '$1');
+    // 連続空白を整理
+    text = text.replace(/ {2,}/g, ' ');
+    return text.trim();
+}
+
+// Flush complete sentences from client TTS buffer into the queue
+function flushClientTTSSentences() {
+    const sentenceEnd = /[。！？!?\n]/;
+    let lastIndex = 0;
+    for (let i = 0; i < aiClientTTSBuffer.length; i++) {
+        if (sentenceEnd.test(aiClientTTSBuffer[i])) {
+            const raw = aiClientTTSBuffer.substring(lastIndex, i + 1).trim();
+            lastIndex = i + 1;
+
+            // コードブロック開閉の検出（```を含む行でトグル）
+            if (raw.includes('```')) {
+                aiClientTTSInCodeBlock = !aiClientTTSInCodeBlock;
+                continue;  // ```行自体はスキップ
+            }
+
+            // コードブロック内はスキップ
+            if (aiClientTTSInCodeBlock) continue;
+
+            const sentence = cleanTextForTTS(raw);
+            if (sentence) {
+                aiClientTTSQueue.push(sentence);
+            }
+        }
+    }
+    aiClientTTSBuffer = aiClientTTSBuffer.substring(lastIndex);
+}
+
+// Process client TTS queue one sentence at a time
+function processClientTTSQueue() {
+    if (aiClientTTSSpeaking || aiClientTTSQueue.length === 0) return;
+
+    const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'client';
+    const sentence = aiClientTTSQueue.shift();
+    aiClientTTSSpeaking = true;
+
+    if (ttsMode === 'edge') {
+        playEdgeTTS(sentence).then(() => {
+            aiClientTTSSpeaking = false;
+            processClientTTSQueue();
+        }).catch((e) => {
+            debugLog('Edge TTS error: ' + (e && e.message || e));
+            aiClientTTSSpeaking = false;
+            processClientTTSQueue();
+        });
+    } else {
+        // Web Speech API (既存)
+        const utterance = new SpeechSynthesisUtterance(sentence);
+        utterance.lang = 'ja-JP';
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+
+        utterance.onend = () => {
+            aiClientTTSSpeaking = false;
+            processClientTTSQueue();
+        };
+        utterance.onerror = () => {
+            aiClientTTSSpeaking = false;
+            processClientTTSQueue();
+        };
+
+        speechSynthesis.speak(utterance);
+    }
 }
 
 function handleAITTSStopped(data) {
@@ -256,6 +535,12 @@ function addAIChatMessage(type, content, isMarkdown = false) {
 
     container.appendChild(message);
     container.scrollTop = container.scrollHeight;
+
+    // ストリーミング中・一時的なメッセージは保存しない
+    if (type === 'user' || type === 'ai') {
+        saveAIChatMessage(type, content, isMarkdown);
+    }
+
     return message;
 }
 
@@ -265,7 +550,72 @@ function escapeHtmlAI(text) {
     return div.innerHTML;
 }
 
+// ========== Chat History Persistence ==========
+
+function saveAIChatMessage(type, content, isMarkdown) {
+    aiChatHistory.push({ type, content, isMarkdown });
+    if (aiChatHistory.length > AI_CHAT_MAX_MESSAGES) {
+        aiChatHistory = aiChatHistory.slice(-AI_CHAT_MAX_MESSAGES);
+    }
+    try {
+        localStorage.setItem(AI_CHAT_STORAGE_KEY, JSON.stringify(aiChatHistory));
+    } catch (e) {
+        debugLog('Chat history save error: ' + e.message);
+    }
+}
+
+function loadAIChatHistory() {
+    try {
+        const saved = localStorage.getItem(AI_CHAT_STORAGE_KEY);
+        if (!saved) return;
+        aiChatHistory = JSON.parse(saved);
+        if (!Array.isArray(aiChatHistory) || aiChatHistory.length === 0) {
+            aiChatHistory = [];
+            return;
+        }
+
+        const container = document.getElementById('aiChatContainer');
+        const empty = container.querySelector('.ai-chat-empty');
+        if (empty) empty.remove();
+
+        for (const msg of aiChatHistory) {
+            const message = document.createElement('div');
+            message.className = 'ai-chat-message ' + msg.type;
+
+            const roleText = msg.type === 'user' ? 'あなた' : 'AI';
+            let contentHtml;
+            if (msg.isMarkdown && typeof marked !== 'undefined') {
+                contentHtml = marked.parse(msg.content);
+            } else {
+                contentHtml = escapeHtmlAI(msg.content);
+            }
+
+            message.innerHTML = '<div class="role">' + roleText + '</div><div class="content">' + contentHtml + '</div>';
+            container.appendChild(message);
+        }
+
+        container.scrollTop = container.scrollHeight;
+        debugLog('Chat history restored: ' + aiChatHistory.length + ' messages');
+    } catch (e) {
+        debugLog('Chat history load error: ' + e.message);
+        aiChatHistory = [];
+    }
+}
+
 // ========== Voice Input Functions ==========
+
+// 蓄積テキスト(a)の末尾と新テキスト(b)の先頭の重複を検出
+// 例: a="何時か", b="何時かそして" → overlap=3
+function findAIVoiceOverlap(a, b) {
+    if (!a || !b) return 0;
+    const maxLen = Math.min(a.length, b.length);
+    for (let len = maxLen; len >= 3; len--) {
+        if (a.endsWith(b.substring(0, len))) {
+            return len;
+        }
+    }
+    return 0;
+}
 
 // SpeechRecognition の初期化（getUserMediaは不要）
 function setupAISpeechRecognition() {
@@ -292,9 +642,18 @@ function setupAISpeechRecognition() {
                 const transcript = event.results[i][0].transcript;
                 const isFinal = event.results[i].isFinal;
                 if (isFinal) {
-                    // Android対策: 同じtranscriptの重複追加を防止
                     if (transcript && transcript !== aiLastAddedTranscript) {
-                        aiVoiceFinalText += transcript;
+                        // モバイル再起動時の重複防止: 蓄積テキスト末尾との重複を検出
+                        const overlap = findAIVoiceOverlap(aiVoiceFinalText, transcript);
+                        if (overlap > 0) {
+                            const remainder = transcript.substring(overlap);
+                            if (remainder) {
+                                aiVoiceFinalText += remainder;
+                                debugLog('AI voice overlap (' + overlap + ' chars), added remainder');
+                            }
+                        } else {
+                            aiVoiceFinalText += transcript;
+                        }
                         aiLastAddedTranscript = transcript;
                     }
                 } else {
@@ -318,11 +677,15 @@ function setupAISpeechRecognition() {
 
         aiRecognition.onerror = (event) => {
             debugLog('AI voice error: ' + event.error);
+            // no-speech / aborted はモバイルで頻発するため無視（onendで再起動）
+            if (event.error === 'no-speech' || event.error === 'aborted') {
+                return;
+            }
             if (statusEl) {
                 if (event.error === 'not-allowed') {
                     statusEl.textContent = 'マイク許可なし';
                     statusEl.style.color = '#ff4757';
-                } else if (event.error !== 'aborted') {
+                } else {
                     statusEl.textContent = 'エラー: ' + event.error;
                     statusEl.style.color = '#ff4757';
                 }
@@ -332,12 +695,16 @@ function setupAISpeechRecognition() {
 
         aiRecognition.onend = () => {
             if (aiIsListening) {
-                // 継続モードでない場合は再起動を試みる
-                try {
-                    aiRecognition.start();
-                } catch (e) {
-                    debugLog('AI voice restart failed: ' + e.message);
-                }
+                // モバイルでは無音検出でonendが頻発する
+                // 少し待ってから再起動し、マイクUIのちらつきを軽減
+                setTimeout(() => {
+                    if (!aiIsListening) return;
+                    try {
+                        aiRecognition.start();
+                    } catch (e) {
+                        debugLog('AI voice restart failed: ' + e.message);
+                    }
+                }, 200);
             }
         };
 
@@ -405,15 +772,32 @@ function startAISpeechRecognition() {
         aiRecognition.start();
         voiceBtn.textContent = '🎤 聞き取り中...';
         voiceBtn.classList.add('listening');
+        const sendBtn = document.getElementById('aiSendBtn');
+        if (sendBtn) sendBtn.disabled = true;
+        const refineBtn = document.getElementById('aiRefineBtn');
+        if (refineBtn) refineBtn.disabled = true;
         if (statusEl) {
             statusEl.textContent = '音声認識中...';
             statusEl.style.color = '#2ed573';
         }
         debugLog('AI voice input started');
+
+        // 30秒タイムアウト
+        aiVoiceTimeout = setTimeout(() => {
+            if (aiIsListening) {
+                debugLog('AI voice input timeout');
+                stopAISpeechRecognition();
+            }
+        }, 30000);
     } catch (e) {
         debugLog('AI voice start error: ' + e.message);
         aiIsListening = false;
         preview.classList.remove('active');
+        // エラー時はボタンを復帰
+        const sendBtnErr = document.getElementById('aiSendBtn');
+        if (sendBtnErr) sendBtnErr.disabled = false;
+        const refineBtnErr = document.getElementById('aiRefineBtn');
+        if (refineBtnErr) refineBtnErr.disabled = false;
         // エラー時はマイクを再取得
         if (typeof resumeWebRTCMicrophone === 'function') {
             resumeWebRTCMicrophone();
@@ -426,6 +810,10 @@ function startAISpeechRecognition() {
 }
 
 function stopAISpeechRecognition() {
+    if (aiVoiceTimeout) {
+        clearTimeout(aiVoiceTimeout);
+        aiVoiceTimeout = null;
+    }
     aiIsListening = false;
     if (aiRecognition) {
         try {
@@ -442,6 +830,10 @@ function stopAISpeechRecognition() {
     // Reset button state
     voiceBtn.textContent = '🎤 音声入力';
     voiceBtn.classList.remove('listening');
+    const sendBtn = document.getElementById('aiSendBtn');
+    if (sendBtn) sendBtn.disabled = false;
+    const refineBtn = document.getElementById('aiRefineBtn');
+    if (refineBtn) refineBtn.disabled = false;
 
     // Get final text from preview
     const finalText = previewContent.textContent.trim();
@@ -463,6 +855,7 @@ function stopAISpeechRecognition() {
         const insertText = (needSpaceBefore ? ' ' : '') + finalText + (needSpaceAfter ? ' ' : '');
 
         textarea.value = before + insertText + after;
+        autoResizeTextarea(textarea);
 
         const newCursorPos = pos + insertText.length;
         textarea.focus();
@@ -490,6 +883,265 @@ function stopAISpeechRecognition() {
     }
 }
 
+// ========== Vosk Speech Recognition ==========
+
+function getVoskUrl() {
+    // Node.jsサーバー経由のプロキシ（HTTPS環境でもwss://で接続可能）
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return protocol + '//' + location.host + '/vosk/ws';
+}
+
+function getSpeechEngine() {
+    return localStorage.getItem('ptt_speech_engine') || 'webspeech';
+}
+
+function saveSpeechEngine(engine) {
+    localStorage.setItem('ptt_speech_engine', engine);
+    debugLog('Speech engine saved: ' + engine);
+}
+
+function startVoskRecognition() {
+    if (aiIsListening) return;
+
+    const voiceBtn = document.getElementById('aiVoiceInputBtn');
+    const preview = document.getElementById('aiVoicePreview');
+    const previewContent = document.getElementById('aiVoicePreviewContent');
+    const textarea = document.getElementById('aiQueryInput');
+    const statusEl = document.getElementById('aiMicStatus');
+
+    aiSavedCursorPos = textarea.selectionStart;
+    aiVoiceFinalText = '';
+    aiVoiceInterimText = '';
+    aiIsListening = true;
+
+    previewContent.textContent = '接続中...';
+    previewContent.classList.add('interim');
+    preview.classList.add('active');
+
+    // WebRTCマイクを一時停止
+    if (typeof pauseWebRTCMicrophone === 'function') {
+        pauseWebRTCMicrophone();
+    }
+
+    voiceBtn.textContent = '🎤 接続中...';
+    voiceBtn.classList.add('listening');
+    var sendBtn = document.getElementById('aiSendBtn');
+    if (sendBtn) sendBtn.disabled = true;
+    var refineBtn = document.getElementById('aiRefineBtn');
+    if (refineBtn) refineBtn.disabled = true;
+
+    // Connect to Vosk WebSocket
+    var url = getVoskUrl();
+    debugLog('Vosk connecting: ' + url);
+
+    try {
+        voskWs = new WebSocket(url);
+    } catch (e) {
+        debugLog('Vosk WebSocket error: ' + e.message);
+        stopVoskRecognition();
+        return;
+    }
+
+    voskWs.onopen = function() {
+        debugLog('Vosk connected');
+        voiceBtn.textContent = '🎤 聞き取り中...';
+        previewContent.textContent = '聞き取り中...';
+        if (statusEl) {
+            statusEl.textContent = 'Vosk認識中...';
+            statusEl.style.color = '#2ed573';
+        }
+
+        // Start capturing audio
+        startVoskAudioCapture();
+    };
+
+    voskWs.onmessage = function(event) {
+        try {
+            var data = JSON.parse(event.data);
+        } catch (e) {
+            return;
+        }
+
+        if (data.text !== undefined && data.text !== '') {
+            // Final result
+            aiVoiceFinalText += data.text;
+            aiVoiceInterimText = '';
+            debugLog('Vosk final: ' + data.text);
+        } else if (data.partial !== undefined && data.partial !== '') {
+            // Partial result
+            aiVoiceInterimText = data.partial;
+        }
+
+        var displayText = aiVoiceFinalText + aiVoiceInterimText;
+        if (displayText) {
+            previewContent.textContent = displayText;
+            previewContent.classList.toggle('interim', aiVoiceInterimText.length > 0);
+        } else {
+            previewContent.textContent = '聞き取り中...';
+            previewContent.classList.add('interim');
+        }
+    };
+
+    voskWs.onerror = function(e) {
+        debugLog('Vosk WebSocket error');
+        if (statusEl) {
+            statusEl.textContent = 'Vosk接続エラー';
+            statusEl.style.color = '#ff4757';
+        }
+    };
+
+    voskWs.onclose = function() {
+        debugLog('Vosk disconnected');
+        if (aiIsListening) {
+            // Unexpected close while listening
+            stopVoskRecognition();
+        }
+    };
+
+    // 30秒タイムアウト
+    aiVoiceTimeout = setTimeout(function() {
+        if (aiIsListening) {
+            debugLog('Vosk voice input timeout');
+            stopVoskRecognition();
+        }
+    }, 30000);
+}
+
+function startVoskAudioCapture() {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+        voskMediaStream = stream;
+
+        // Create AudioContext at 16kHz for Vosk
+        var contextOptions = { sampleRate: 16000 };
+        voskAudioContext = new (window.AudioContext || window.webkitAudioContext)(contextOptions);
+        var source = voskAudioContext.createMediaStreamSource(stream);
+
+        // Use ScriptProcessorNode (widely supported)
+        // bufferSize=4096 at 16kHz = ~256ms chunks
+        voskProcessor = voskAudioContext.createScriptProcessor(4096, 1, 1);
+        voskProcessor.onaudioprocess = function(e) {
+            if (!voskWs || voskWs.readyState !== WebSocket.OPEN) return;
+
+            var inputData = e.inputBuffer.getChannelData(0);
+            // Convert Float32 to Int16
+            var pcm16 = new Int16Array(inputData.length);
+            for (var i = 0; i < inputData.length; i++) {
+                var s = Math.max(-1, Math.min(1, inputData[i]));
+                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            voskWs.send(pcm16.buffer);
+        };
+
+        source.connect(voskProcessor);
+        voskProcessor.connect(voskAudioContext.destination);
+
+        debugLog('Vosk audio capture started (rate=' + voskAudioContext.sampleRate + ')');
+    }).catch(function(err) {
+        debugLog('Vosk getUserMedia error: ' + err.message);
+        var statusEl = document.getElementById('aiMicStatus');
+        if (statusEl) {
+            statusEl.textContent = 'マイク許可なし';
+            statusEl.style.color = '#ff4757';
+        }
+        stopVoskRecognition();
+    });
+}
+
+function stopVoskRecognition() {
+    if (aiVoiceTimeout) {
+        clearTimeout(aiVoiceTimeout);
+        aiVoiceTimeout = null;
+    }
+    aiIsListening = false;
+
+    // Send EOF to get final result, then close
+    if (voskWs && voskWs.readyState === WebSocket.OPEN) {
+        try {
+            voskWs.send(JSON.stringify({ eof: 1 }));
+        } catch (e) {}
+        // Close after a brief delay to receive final result
+        setTimeout(function() {
+            if (voskWs) {
+                voskWs.close();
+                voskWs = null;
+            }
+        }, 300);
+    } else {
+        if (voskWs) {
+            voskWs.close();
+            voskWs = null;
+        }
+    }
+
+    // Stop audio capture
+    if (voskProcessor) {
+        voskProcessor.disconnect();
+        voskProcessor = null;
+    }
+    if (voskAudioContext) {
+        voskAudioContext.close().catch(function() {});
+        voskAudioContext = null;
+    }
+    if (voskMediaStream) {
+        voskMediaStream.getTracks().forEach(function(t) { t.stop(); });
+        voskMediaStream = null;
+    }
+
+    var textarea = document.getElementById('aiQueryInput');
+    var voiceBtn = document.getElementById('aiVoiceInputBtn');
+    var preview = document.getElementById('aiVoicePreview');
+    var previewContent = document.getElementById('aiVoicePreviewContent');
+    var statusEl = document.getElementById('aiMicStatus');
+
+    voiceBtn.textContent = '🎤 音声入力';
+    voiceBtn.classList.remove('listening');
+    var sendBtn = document.getElementById('aiSendBtn');
+    if (sendBtn) sendBtn.disabled = false;
+    var refineBtn = document.getElementById('aiRefineBtn');
+    if (refineBtn) refineBtn.disabled = false;
+
+    var finalText = previewContent.textContent.trim();
+    preview.classList.remove('active');
+
+    // Insert text at cursor position
+    if (finalText && finalText !== '聞き取り中...' && finalText !== '接続中...') {
+        var text = textarea.value;
+        var pos = aiSavedCursorPos;
+        var before = text.substring(0, pos);
+        var after = text.substring(pos);
+        var needSpaceBefore = before.length > 0 && !before.endsWith(' ') && !before.endsWith('\n');
+        var needSpaceAfter = after.length > 0 && !after.startsWith(' ') && !after.startsWith('\n');
+        var insertText = (needSpaceBefore ? ' ' : '') + finalText + (needSpaceAfter ? ' ' : '');
+
+        textarea.value = before + insertText + after;
+        autoResizeTextarea(textarea);
+
+        var newCursorPos = pos + insertText.length;
+        textarea.focus();
+        textarea.selectionStart = textarea.selectionEnd = newCursorPos;
+
+        debugLog('Vosk voice input: ' + finalText);
+        if (statusEl) {
+            statusEl.textContent = 'タップで音声入力';
+            statusEl.style.color = '#888';
+        }
+    } else {
+        debugLog('Vosk voice input: no text');
+        if (statusEl) {
+            statusEl.textContent = 'タップで音声入力';
+            statusEl.style.color = '#888';
+        }
+    }
+
+    aiVoiceFinalText = '';
+    aiVoiceInterimText = '';
+
+    // WebRTCマイクを再開
+    if (typeof resumeWebRTCMicrophone === 'function') {
+        resumeWebRTCMicrophone();
+    }
+}
+
 // ========== Initialization ==========
 
 function initAIAssistant() {
@@ -501,11 +1153,11 @@ function initAIAssistant() {
         return;
     }
 
-    // オンデマンドマイク実装により、PTT未使用時はマイクが解放されているため
-    // モバイルでもSpeechRecognitionが使用可能になった（はず）
-
+    const engine = getSpeechEngine();
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
+
+    // Voskモードならブラウザ対応チェック不要（WebSocket + getUserMediaのみ）
+    if (engine !== 'vosk' && !SpeechRecognition) {
         voiceBtn.disabled = true;
         voiceBtn.textContent = '非対応';
         if (status) {
@@ -516,39 +1168,29 @@ function initAIAssistant() {
         return;
     }
 
-    debugLog('AI assistant initializing...');
+    debugLog('AI assistant initializing (engine=' + engine + ')...');
 
-    // Mouse events (with document-level mouseup listener)
-    const handleMouseUp = () => {
-        document.removeEventListener('mouseup', handleMouseUp);
-        if (aiIsListening) stopAISpeechRecognition();
-    };
-
-    voiceBtn.addEventListener('mousedown', (e) => {
+    // トグル方式: 1回押して開始、もう1回押して確定
+    voiceBtn.addEventListener('click', (e) => {
         e.preventDefault();
-        startAISpeechRecognition();
-        document.addEventListener('mouseup', handleMouseUp);
+        if (aiIsListening) {
+            // 現在のエンジンに応じて停止
+            if (getSpeechEngine() === 'vosk') {
+                stopVoskRecognition();
+            } else {
+                stopAISpeechRecognition();
+            }
+        } else {
+            // 現在のエンジンに応じて開始
+            if (getSpeechEngine() === 'vosk') {
+                startVoskRecognition();
+            } else {
+                startAISpeechRecognition();
+            }
+        }
     });
 
-    // Touch events (mobile)
-    voiceBtn.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        debugLog('AI voice touchstart');
-        startAISpeechRecognition();
-    }, { passive: false });
-    voiceBtn.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        debugLog('AI voice touchend');
-        if (aiIsListening) stopAISpeechRecognition();
-    }, { passive: false });
-    voiceBtn.addEventListener('touchcancel', (e) => {
-        debugLog('AI voice touchcancel');
-        if (aiIsListening) stopAISpeechRecognition();
-    });
-
-    // Textarea: Ctrl+Enter to send
+    // Textarea: Ctrl+Enter to send（auto-resizeはDOMContentLoadedで設定）
     const textarea = document.getElementById('aiQueryInput');
     textarea.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && e.ctrlKey) {
@@ -568,7 +1210,14 @@ function initAIAssistant() {
 
 // Initialize when DOM is ready
 window.addEventListener('DOMContentLoaded', () => {
+    loadAIChatHistory();
     initAIAssistant();
+
+    // Textarea auto-resize（音声機能の有無に関係なく動作）
+    const textarea = document.getElementById('aiQueryInput');
+    if (textarea) {
+        textarea.addEventListener('input', () => autoResizeTextarea(textarea));
+    }
 });
 
 // Hook into stream.js message handler
@@ -638,6 +1287,14 @@ function handleAIStreamEvent(data) {
                     debugLog('[TTS診断] p2p-audio-server NOT FOUND');
                 }
             }
+
+            // クライアントTTSストリーミング: 文単位で逐次読み上げ
+            const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
+            if (ttsMode === 'client' || ttsMode === 'edge') {
+                aiClientTTSBuffer += data.delta;
+                flushClientTTSSentences();
+                processClientTTSQueue();
+            }
         }
     } else if (eventType === 'done') {
         // 完了イベント
@@ -646,10 +1303,15 @@ function handleAIStreamEvent(data) {
         // TTS再生状態をリセット
         setAITTSPlaying(false);
 
-        // Client-side TTS if mode is 'client'
+        // クライアントTTS: バッファに残った未完成文も読み上げ
         const ttsMode = typeof getTtsMode === 'function' ? getTtsMode() : 'server';
-        if (ttsMode === 'client' && data.response) {
-            speakWithClientTTS(data.response);
+        if (ttsMode === 'client' || ttsMode === 'edge') {
+            if (aiClientTTSBuffer.trim()) {
+                const remaining = cleanTextForTTS(aiClientTTSBuffer);
+                if (remaining) aiClientTTSQueue.push(remaining);
+                aiClientTTSBuffer = '';
+            }
+            processClientTTSQueue();
         }
     }
 }
