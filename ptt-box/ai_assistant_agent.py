@@ -83,7 +83,6 @@ MCP_CONFIG_PATH = Path(os.environ.get("MCP_CONFIG_PATH", Path(__file__).parent /
 # Agent SDK設定
 MAX_TURNS = int(os.environ.get("AGENT_MAX_TURNS", "10"))
 SESSION_DB_PATH = Path(os.environ.get("AGENT_SESSION_DB", Path(__file__).parent / "sessions.db"))
-SESSION_HISTORY_LIMIT = int(os.environ.get("AGENT_SESSION_HISTORY_LIMIT", "50"))
 TOOL_OUTPUT_MAX_CHARS = int(os.environ.get("AGENT_TOOL_OUTPUT_MAX_CHARS", "3000"))
 TOOL_OUTPUT_PREVIEW_CHARS = int(os.environ.get("AGENT_TOOL_OUTPUT_PREVIEW_CHARS", "500"))
 
@@ -367,16 +366,12 @@ def create_run_config():
     """セッション肥大化対策用のRunConfigを生成"""
     from agents import RunConfig
     from agents.extensions import ToolOutputTrimmer
-    from agents.memory import SessionSettings
 
     return RunConfig(
         call_model_input_filter=ToolOutputTrimmer(
             recent_turns=2,
             max_output_chars=TOOL_OUTPUT_MAX_CHARS,
             preview_chars=TOOL_OUTPUT_PREVIEW_CHARS,
-        ),
-        session_settings=SessionSettings(
-            limit=SESSION_HISTORY_LIMIT,
         ),
     )
 
