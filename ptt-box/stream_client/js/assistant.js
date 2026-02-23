@@ -862,11 +862,13 @@ function stopAISpeechRecognition() {
     // 暫定テキストを除去（確定テキストのみ残す）
     aiVoiceInterimText = '';
     updateTextareaWithVoiceText();
+    const finalCursorPos = aiVoiceInsertPos + aiVoiceInsertedLength;
 
-    // textarea保護を解除
+    // textarea保護を解除（readOnly解除・focusでカーソルがリセットされるため、その後に再設定）
     textarea.classList.remove('voice-active');
     textarea.readOnly = false;
     textarea.focus();
+    textarea.selectionStart = textarea.selectionEnd = finalCursorPos;
 
     debugLog('AI voice input: ' + (aiVoiceFinalText || 'no text'));
     if (statusEl) {
@@ -1102,11 +1104,13 @@ function stopVoskRecognition() {
     // 暫定テキストを除去（確定テキストのみ残す）
     aiVoiceInterimText = '';
     updateTextareaWithVoiceText();
+    var finalCursorPos = aiVoiceInsertPos + aiVoiceInsertedLength;
 
-    // textarea保護を解除
+    // textarea保護を解除（readOnly解除・focusでカーソルがリセットされるため、その後に再設定）
     textarea.classList.remove('voice-active');
     textarea.readOnly = false;
     textarea.focus();
+    textarea.selectionStart = textarea.selectionEnd = finalCursorPos;
 
     debugLog('Vosk voice input: ' + (aiVoiceFinalText || 'no text'));
     if (statusEl) {
