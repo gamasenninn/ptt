@@ -615,8 +615,10 @@
             color: #fff;
             font-size: 16px;
             font-family: inherit;
-            resize: none;
-            min-height: 60px;
+            resize: vertical;
+            min-height: 44px;
+            max-height: 200px;
+            overflow-y: auto;
         }
         #aiQueryInput::placeholder {
             color: #666;
@@ -680,6 +682,10 @@
         }
         .ai-btn-voice:hover:not(:disabled) {
             background: #5a5a7a;
+        }
+        .ai-btn-voice:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
         .ai-btn-voice.listening {
             background: #2ed573;
@@ -934,6 +940,7 @@
                 <button class="ai-btn-voice" id="aiVoiceInputBtn">
                     🎤 音声入力
                 </button>
+                <button class="ai-btn-voice" id="aiRefineBtn" onclick="refineVoiceInput()" style="flex: 0.6;">✨ 整形</button>
                 <button class="ai-btn-send" id="aiSendBtn" onclick="sendAIQuery()">
                     送信
                 </button>
@@ -1045,16 +1052,32 @@
                     <div style="margin-top: 8px; font-size: 12px; color: #888;">送信音量を調整（0.5x〜3.0x）</div>
                 </div>
                 <div style="margin-bottom: 20px;">
+                    <div style="margin-bottom: 10px; font-weight: 500;">音声認識エンジン</div>
+                    <select id="speechEngineSelect" onchange="saveSpeechEngine(this.value)" style="width: 100%; padding: 12px; background: #0a0a15; border: 1px solid #333; border-radius: 6px; color: #eee; font-size: 14px; cursor: pointer;">
+                        <option value="webspeech">Web Speech API（高精度）</option>
+                        <option value="vosk">Vosk（低遅延・安定）</option>
+                    </select>
+                    <div style="margin-top: 8px; font-size: 12px; color: #888;">
+                        Web Speech API: Google音声認識（高精度、ネット必須）<br>
+                        Vosk: ローカル認識（低遅延・安定、サーバー起動必須）
+                    </div>
+                </div>
+                <div style="margin-bottom: 20px;">
                     <div style="margin-bottom: 10px; font-weight: 500;">AI音声</div>
-                    <select id="ttsModeSelect" onchange="saveTtsMode(this.value)" style="width: 100%; padding: 12px; background: #0a0a15; border: 1px solid #333; border-radius: 6px; color: #eee; font-size: 14px; cursor: pointer;">
-                        <option value="server">サーバーTTS（高品質）</option>
-                        <option value="server_stream">サーバーTTS（ストリーミング）</option>
+                    <select id="ttsModeSelect" onchange="saveTtsMode(this.value); toggleEdgeTtsVoiceGroup(this.value)" style="width: 100%; padding: 12px; background: #0a0a15; border: 1px solid #333; border-radius: 6px; color: #eee; font-size: 14px; cursor: pointer;">
+                        <option value="edge">Edge TTS（高品質・端末）</option>
                         <option value="client">端末TTS（軽量）</option>
                         <option value="none">音声なし</option>
                     </select>
+                    <div id="edgeTtsVoiceGroup" style="margin-top: 8px; display: none;">
+                        <select id="edgeTtsVoiceSelect" onchange="saveEdgeTtsVoice(this.value)" style="width: 100%; padding: 10px; background: #0a0a15; border: 1px solid #333; border-radius: 6px; color: #eee; font-size: 14px; cursor: pointer;">
+                            <option value="ja-JP-NanamiNeural">Nanami（女性）</option>
+                            <option value="ja-JP-KeitaNeural">Keita（男性）</option>
+                        </select>
+                    </div>
                     <div style="margin-top: 8px; font-size: 12px; color: #888;">
-                        ストリーミング: 文ごとに読み上げ開始（高速）<br>
-                        高品質: 全文完成後に読み上げ（安定）
+                        Edge TTS: MSニューラル音声（高品質・端末処理）<br>
+                        端末TTS: ブラウザ内蔵の音声合成（軽量）
                     </div>
                 </div>
                 <div style="margin-bottom: 10px;">

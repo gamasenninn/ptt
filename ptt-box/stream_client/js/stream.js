@@ -1429,6 +1429,8 @@ function openSettings() {
         updatePttKeyDisplay();
         loadDisplayNameToInput();
         loadTtsModeToSelect();
+        loadEdgeTtsVoice();
+        loadSpeechEngineToSelect();
     }
 }
 
@@ -1445,7 +1447,13 @@ function closeSettings() {
 
 // TTSモードを取得
 function getTtsMode() {
-    return localStorage.getItem('ptt_tts_mode') || 'server';
+    const mode = localStorage.getItem('ptt_tts_mode') || 'edge';
+    // サーバーTTSモードは廃止 → Edge TTSにフォールバック
+    if (mode === 'server' || mode === 'server_stream') {
+        saveTtsMode('edge');
+        return 'edge';
+    }
+    return mode;
 }
 
 // TTSモードを保存
@@ -1459,6 +1467,39 @@ function loadTtsModeToSelect() {
     const select = document.getElementById('ttsModeSelect');
     if (select) {
         select.value = getTtsMode();
+        toggleEdgeTtsVoiceGroup(select.value);
+    }
+}
+
+// Edge TTS音声選択の表示/非表示切替
+function toggleEdgeTtsVoiceGroup(mode) {
+    const group = document.getElementById('edgeTtsVoiceGroup');
+    if (group) {
+        group.style.display = mode === 'edge' ? 'block' : 'none';
+    }
+}
+
+// Edge TTS音声を保存
+function saveEdgeTtsVoice(voice) {
+    localStorage.setItem('edge_tts_voice', voice);
+    debugLog('Edge TTS voice saved: ' + voice);
+}
+
+// Edge TTS音声を読み込み
+function loadEdgeTtsVoice() {
+    const select = document.getElementById('edgeTtsVoiceSelect');
+    if (select) {
+        select.value = localStorage.getItem('edge_tts_voice') || 'ja-JP-NanamiNeural';
+    }
+}
+
+// ========== 音声認識エンジン設定 ==========
+
+// 設定画面を開いた時に音声認識エンジンを読み込み
+function loadSpeechEngineToSelect() {
+    const select = document.getElementById('speechEngineSelect');
+    if (select) {
+        select.value = getSpeechEngine();
     }
 }
 

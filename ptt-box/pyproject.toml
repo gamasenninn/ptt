@@ -20,4 +20,7 @@ dependencies = [
     "edge-tts>=6.1.0",
     "fastmcp>=2.0.0",
     "aiohttp>=3.9.0",
+    # Vosk realtime speech recognition
+    "vosk>=0.3.45",
+    "websockets>=12.0",
 ]

@@ -39,3 +39,17 @@ coverage/
 
 # Server logs
 ptt-box/stream_server/logs/
+
+# Python service logs
+ptt-box/logs/
+ptt-box/mcp-shell.log
+
+# Runtime databases
+ptt-box/sessions.db
+ptt-box/sandbox/
+
+# Vosk models (large binary files)
+ptt-box/vosk-model*/
+
+# Claude Code
+.claude/
