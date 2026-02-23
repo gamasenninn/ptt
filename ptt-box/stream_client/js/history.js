@@ -3,6 +3,7 @@
 let historyFiles = [];
 let currentPlayingFile = null;
 let editingFilename = null;
+let autoPlayIndex = -1;  // 連続再生中の現在位置（historyFilesのindex）、-1 = 無効
 
 // Pull-to-Refresh 状態
 let pullStartY = 0;
@@ -112,6 +113,14 @@ function renderHistoryList() {
         `;
     }
     listEl.innerHTML = html;
+
+    // 連続再生中: 再生中アイテムが見えるよう自動スクロール
+    if (currentPlayingFile) {
+        const playingEl = listEl.querySelector('.history-item.playing');
+        if (playingEl) {
+            playingEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
 }
 
 // HTMLエスケープ
@@ -153,7 +162,7 @@ function loadHistoryVolumeSetting() {
     }
 }
 
-// 音声再生（トグル）
+// 音声再生（トグル）- クリック地点から時系列順（古い→新しい）に連続再生
 function playHistoryAudio(wavFile) {
     const audio = document.getElementById('historyAudio');
 
@@ -163,14 +172,19 @@ function playHistoryAudio(wavFile) {
         audio.volume = volumeSlider.value / 100;
     }
 
-    // 同じファイルなら停止
+    // 同じファイルなら停止（連続再生もキャンセル）
     if (currentPlayingFile === wavFile) {
         audio.pause();
         audio.currentTime = 0;
         currentPlayingFile = null;
+        autoPlayIndex = -1;
         renderHistoryList();
         return;
     }
+
+    // クリックされたファイルのindexを記録
+    const idx = historyFiles.findIndex(f => f.wavFile === wavFile);
+    autoPlayIndex = idx;
 
     // 新しいファイルを再生
     audio.src = '/api/audio?file=' + encodeURIComponent(wavFile);
@@ -184,7 +198,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const audio = document.getElementById('historyAudio');
     if (audio) {
         audio.addEventListener('ended', () => {
+            // 連続再生: 時系列で次（index を1減らす = より新しいファイル）を再生
+            if (autoPlayIndex > 0) {
+                autoPlayIndex--;
+                const nextFile = historyFiles[autoPlayIndex];
+                if (nextFile && nextFile.wavFile) {
+                    audio.src = '/api/audio?file=' + encodeURIComponent(nextFile.wavFile);
+                    audio.play().catch(e => console.error('Auto play error:', e));
+                    currentPlayingFile = nextFile.wavFile;
+                    renderHistoryList();
+                    return;
+                }
+            }
+            // 最新まで再生完了 or 連続再生無効
             currentPlayingFile = null;
+            autoPlayIndex = -1;
             renderHistoryList();
         });
     }
