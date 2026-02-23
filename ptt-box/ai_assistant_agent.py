@@ -83,6 +83,9 @@ MCP_CONFIG_PATH = Path(os.environ.get("MCP_CONFIG_PATH", Path(__file__).parent /
 # Agent SDK設定
 MAX_TURNS = int(os.environ.get("AGENT_MAX_TURNS", "10"))
 SESSION_DB_PATH = Path(os.environ.get("AGENT_SESSION_DB", Path(__file__).parent / "sessions.db"))
+SESSION_HISTORY_LIMIT = int(os.environ.get("AGENT_SESSION_HISTORY_LIMIT", "50"))
+TOOL_OUTPUT_MAX_CHARS = int(os.environ.get("AGENT_TOOL_OUTPUT_MAX_CHARS", "3000"))
+TOOL_OUTPUT_PREVIEW_CHARS = int(os.environ.get("AGENT_TOOL_OUTPUT_PREVIEW_CHARS", "500"))
 
 # ウェイクワードリスト
 WAKE_WORDS_STR = os.environ.get("WAKE_WORDS", "OKガーコ,okガーコ,オーケーガーコ,ガーコちゃん")
@@ -360,6 +363,24 @@ def create_logging_hooks():
     return LoggingAgentHooks()
 
 
+def create_run_config():
+    """セッション肥大化対策用のRunConfigを生成"""
+    from agents import RunConfig
+    from agents.extensions import ToolOutputTrimmer
+    from agents.memory import SessionSettings
+
+    return RunConfig(
+        call_model_input_filter=ToolOutputTrimmer(
+            recent_turns=2,
+            max_output_chars=TOOL_OUTPUT_MAX_CHARS,
+            preview_chars=TOOL_OUTPUT_PREVIEW_CHARS,
+        ),
+        session_settings=SessionSettings(
+            limit=SESSION_HISTORY_LIMIT,
+        ),
+    )
+
+
 # ========== Agent Assistant ==========
 
 class AgentAssistant:
@@ -475,6 +496,7 @@ class AgentAssistant:
                 query,
                 session=session,
                 max_turns=MAX_TURNS,
+                run_config=create_run_config(),
             )
 
             response_text = result.final_output or ""
@@ -485,6 +507,19 @@ class AgentAssistant:
 
         except Exception as e:
             log(f"エラー: {e}", level="error")
+            error_str = str(e).lower()
+            # コンテキストウィンドウ超過の場合 → セッションクリアで自動復帰
+            if any(kw in error_str for kw in [
+                "context_length_exceeded", "maximum context length",
+                "context window", "too many tokens", "request too large",
+            ]):
+                log("コンテキストウィンドウ超過を検出、セッションをクリアします", level="warning")
+                try:
+                    recovery_session = SQLiteSession(session_id, str(SESSION_DB_PATH))
+                    await recovery_session.clear_session()
+                except Exception as clear_err:
+                    log(f"セッションクリアエラー: {clear_err}", level="error")
+                return "会話履歴が大きくなりすぎたため、自動的にリセットしました。もう一度お話しください。"
             # MaxTurnsExceeded の場合
             if "MaxTurns" in str(type(e).__name__):
                 return "処理が複雑すぎます。もう少し簡単な質問をしてください。"
@@ -522,6 +557,7 @@ class AgentAssistant:
                 query,
                 session=session,
                 max_turns=MAX_TURNS,
+                run_config=create_run_config(),
             )
 
             final_text = ""
@@ -571,8 +607,21 @@ class AgentAssistant:
 
         except Exception as e:
             log(f"ストリームエラー: {e}", level="error")
+            error_str = str(e).lower()
+            # コンテキストウィンドウ超過の場合 → セッションクリアで自動復帰
+            if any(kw in error_str for kw in [
+                "context_length_exceeded", "maximum context length",
+                "context window", "too many tokens", "request too large",
+            ]):
+                log("コンテキストウィンドウ超過を検出、セッションをクリアします", level="warning")
+                try:
+                    recovery_session = SQLiteSession(session_id, str(SESSION_DB_PATH))
+                    await recovery_session.clear_session()
+                except Exception as clear_err:
+                    log(f"セッションクリアエラー: {clear_err}", level="error")
+                yield {"type": "done", "response": "会話履歴が大きくなりすぎたため、自動的にリセットしました。もう一度お話しください。"}
             # MaxTurnsExceeded の場合
-            if "MaxTurns" in str(type(e).__name__):
+            elif "MaxTurns" in str(type(e).__name__):
                 yield {"type": "done", "response": "処理が複雑すぎます。もう少し簡単な質問をしてください。"}
             else:
                 yield {"type": "error", "message": str(e)}

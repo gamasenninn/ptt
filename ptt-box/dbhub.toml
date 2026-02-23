@@ -1,0 +1,14 @@
+[[sources]]
+id = "hksdb"
+type = "mysql"
+dsn = "mysql://hikousen:rs151000@192.168.11.213:3306/hksdb"
+
+[[tools]]
+name = "execute_sql"
+source = "hksdb"
+readonly = true
+max_rows = 50
+
+[[tools]]
+name = "search_objects"
+source = "hksdb"
