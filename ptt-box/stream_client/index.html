@@ -623,42 +623,13 @@
         #aiQueryInput::placeholder {
             color: #666;
         }
-        .ai-voice-preview {
-            display: none;
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(26, 58, 46, 0.97);
-            border: 2px solid #2ed573;
-            border-radius: 6px;
-            padding: 12px;
-            font-size: 16px;
-            color: #fff;
-            overflow-y: auto;
-            z-index: 10;
-        }
-        .ai-voice-preview.active {
-            display: block;
-            animation: ai-pulse-border 1.5s infinite;
-        }
         @keyframes ai-pulse-border {
             0%, 100% { border-color: #2ed573; }
             50% { border-color: #1a8a4e; }
         }
-        .ai-voice-label {
-            font-size: 12px;
-            color: #2ed573;
-            margin-bottom: 6px;
-        }
-        .ai-voice-content {
-            color: #fff;
-            min-height: 24px;
-        }
-        .ai-voice-content.interim {
-            color: #aaa;
-            font-style: italic;
+        #aiQueryInput.voice-active {
+            border: 2px solid #2ed573;
+            animation: ai-pulse-border 1.5s infinite;
         }
         .ai-button-row {
             display: flex;
@@ -930,11 +901,6 @@
             <div class="ai-input-container">
                 <textarea id="aiQueryInput" rows="2"
                           placeholder="AIに質問... (Ctrl+Enter で送信)"></textarea>
-                <!-- Voice Preview (PTT中のみ表示、textareaに重ねて表示) -->
-                <div id="aiVoicePreview" class="ai-voice-preview">
-                    <div class="ai-voice-label">🎤 音声入力中</div>
-                    <div id="aiVoicePreviewContent" class="ai-voice-content">聞き取り中...</div>
-                </div>
             </div>
             <div class="ai-button-row">
                 <button class="ai-btn-voice" id="aiVoiceInputBtn">
