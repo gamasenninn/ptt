@@ -807,6 +807,60 @@
             background: #5c5f7e;
             color: #fff;
         }
+        /* Information Toast */
+        .info-toast-container {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 900;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-width: 320px;
+            pointer-events: none;
+        }
+        .info-toast {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 12px 14px;
+            background: rgba(22, 33, 62, 0.92);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            color: #eee;
+            font-size: 13px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            opacity: 0;
+            transform: translateX(40px);
+            transition: opacity 0.3s, transform 0.3s;
+            pointer-events: auto;
+        }
+        .info-toast.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        .info-toast.fade-out {
+            opacity: 0;
+            transform: translateX(40px);
+        }
+        .info-toast-icon {
+            font-size: 20px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+        .info-toast-body {
+            flex: 1;
+            min-width: 0;
+        }
+        .info-toast-title {
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+        .info-toast-text {
+            color: #bbb;
+            word-break: break-word;
+        }
     </style>
 </head>
 <body>
@@ -1072,6 +1126,7 @@
     <script src="js/stream.js"></script>
     <script src="js/history.js"></script>
     <script src="js/assistant.js"></script>
+    <script src="js/info.js"></script>
     <script>
         // Service Worker登録
         if ('serviceWorker' in navigator) {

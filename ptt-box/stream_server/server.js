@@ -284,6 +284,9 @@ class StreamServer {
         // サービスヘルス監視
         this.serviceHealth = new Map();  // serviceName -> { lastSeen: timestamp, status: 'up'|'down'|'unknown' }
 
+        // インフォメーション最新値キャッシュ
+        this.infoLatest = new Map();  // key -> { category, key, ...payload, timestamp }
+
         // Express設定
         this.app = express();
         this.server = http.createServer(this.app);
@@ -302,6 +305,9 @@ class StreamServer {
 
         // サービスヘルスAPI設定
         this.setupHealthApi();
+
+        // インフォメーションAPI設定
+        this.setupInformationApi();
 
         // History API設定
         this.setupHistoryApi();
@@ -583,6 +589,50 @@ class StreamServer {
             type: 'health_status',
             services: status
         };
+        for (const client of this.clients.values()) {
+            client.send(msg);
+        }
+    }
+
+    // 汎用インフォメーションAPI設定
+    setupInformationApi() {
+        // POST /api/information - 汎用情報受信
+        this.app.post('/api/information', (req, res) => {
+            const { category, key, ...rest } = req.body;
+            if (!category || typeof category !== 'string')
+                return res.status(400).json({ error: 'category is required' });
+
+            const infoKey = key || category;  // keyが無ければcategoryをキーに
+            this.ingestInformation({
+                category,
+                key: infoKey,
+                ...rest,
+                timestamp: rest.timestamp || new Date().toISOString()
+            });
+            res.json({ success: true });
+        });
+
+        // GET /api/information/latest - 最新値一覧
+        this.app.get('/api/information/latest', (req, res) => {
+            const items = {};
+            for (const [k, v] of this.infoLatest) items[k] = v;
+            res.json({ items });
+        });
+    }
+
+    ingestInformation(payload) {
+        this.infoLatest.set(payload.key, payload);
+        // メモリ制限: 最大100件
+        if (this.infoLatest.size > 100) {
+            const oldest = this.infoLatest.keys().next().value;
+            this.infoLatest.delete(oldest);
+        }
+        this.broadcastInformation(payload);
+        log(`[Info] ${payload.category}/${payload.key}: ${JSON.stringify(payload).substring(0, 100)}`);
+    }
+
+    broadcastInformation(payload) {
+        const msg = { type: 'information', ...payload };
         for (const client of this.clients.values()) {
             client.send(msg);
         }
