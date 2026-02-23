@@ -8,6 +8,10 @@
       "command": "uvx",
       "args": ["mcp-server-time", "--local-timezone", "Asia/Tokyo"]
     },
+    "memory": {
+      "command": "uvx",
+      "args": ["basic-memory", "mcp", "--project", "main"]
+    },
     "tavily": {
       "command": "npx",
       "args": ["-y", "tavily-mcp@latest"],
