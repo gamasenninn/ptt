@@ -422,7 +422,7 @@ class AgentAssistant:
             # Agent作成（hooksでツール呼び出しをログ）
             # instructions に関数を渡すことで、毎回ファイルから読み込む
             self.agent = Agent(
-                name="Garko",
+                name="GAACO",
                 instructions=load_system_prompt,
                 mcp_servers=self.manager.active_servers,
                 model=AI_MODEL,
@@ -432,7 +432,7 @@ class AgentAssistant:
             # MCPサーバーなしでAgent作成
             # instructions に関数を渡すことで、毎回ファイルから読み込む
             self.agent = Agent(
-                name="Garko",
+                name="GAACO",
                 instructions=load_system_prompt,
                 model=AI_MODEL,
                 hooks=create_logging_hooks(),
