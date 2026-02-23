@@ -415,6 +415,11 @@ async function connect() {
                 if (vapidPublicKey) {
                     setupPushNotifications();
                 }
+
+                // 最新インフォメーション取得
+                setTimeout(() => {
+                    if (typeof fetchLatestInformation === 'function') fetchLatestInformation();
+                }, 2000);
             } else if (data.type === 'answer') {
                 debugLog('Received answer, applying remote description');
                 await pc.setRemoteDescription(new RTCSessionDescription({
@@ -498,6 +503,8 @@ async function connect() {
             } else if (data.type === 'health_status') {
                 // サービスヘルス状態更新
                 updateServiceStatus(data.services);
+            } else if (data.type === 'information') {
+                if (typeof handleInformation === 'function') handleInformation(data);
             }
             // AI Assistant messages (handled by assistant.js)
             else if (typeof processAIMessage === 'function') {
