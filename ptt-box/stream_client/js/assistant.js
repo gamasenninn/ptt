@@ -18,6 +18,11 @@ let voskAudioContext = null;
 let voskMediaStream = null;
 let voskProcessor = null;
 
+// AI Wake Lock state
+let aiWakeLock = null;
+let aiWakeLockTimeout = null;
+const AI_WAKELOCK_DURATION = 5 * 60 * 1000; // 5分
+
 // AI Streaming state
 let aiStreamingMessage = null;
 let aiStreamingText = '';
@@ -46,6 +51,45 @@ if (typeof marked !== 'undefined') {
         breaks: true,
         gfm: true
     });
+}
+
+// ========== AI Wake Lock ==========
+
+async function requestAIWakeLock() {
+    // 既存タイマーをリセット
+    if (aiWakeLockTimeout) clearTimeout(aiWakeLockTimeout);
+
+    // Wake Lock取得（未取得またはreleased時）
+    if (!aiWakeLock || aiWakeLock.released) {
+        if ('wakeLock' in navigator) {
+            try {
+                aiWakeLock = await navigator.wakeLock.request('screen');
+                debugLog('AI Wake Lock acquired');
+                aiWakeLock.addEventListener('release', () => {
+                    debugLog('AI Wake Lock released');
+                });
+            } catch (err) {
+                debugLog('AI Wake Lock failed: ' + err.message);
+                return;
+            }
+        }
+    }
+
+    // 5分後に自動解放
+    aiWakeLockTimeout = setTimeout(() => {
+        releaseAIWakeLock();
+    }, AI_WAKELOCK_DURATION);
+}
+
+function releaseAIWakeLock() {
+    if (aiWakeLockTimeout) {
+        clearTimeout(aiWakeLockTimeout);
+        aiWakeLockTimeout = null;
+    }
+    if (aiWakeLock && !aiWakeLock.released) {
+        aiWakeLock.release();
+        aiWakeLock = null;
+    }
 }
 
 // ========== Textarea Auto-Resize ==========
@@ -1191,6 +1235,13 @@ function initAIAssistant() {
         status.style.color = '#888';
     }
 
+    // AIタブ内の操作でWake Lockを延長
+    const aiTab = document.getElementById('tab-ai');
+    if (aiTab) {
+        aiTab.addEventListener('touchstart', () => requestAIWakeLock(), { passive: true });
+        aiTab.addEventListener('click', () => requestAIWakeLock());
+    }
+
     debugLog('AI assistant initialized');
 }
 
@@ -1204,6 +1255,16 @@ window.addEventListener('DOMContentLoaded', () => {
     if (textarea) {
         textarea.addEventListener('input', () => autoResizeTextarea(textarea));
     }
+
+    // AIタブがアクティブな状態でページ復帰時にWake Lock再取得
+    document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState === 'visible') {
+            const aiTabEl = document.getElementById('tab-ai');
+            if (aiTabEl && aiTabEl.classList.contains('active')) {
+                await requestAIWakeLock();
+            }
+        }
+    });
 });
 
 // Hook into stream.js message handler
