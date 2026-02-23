@@ -7,7 +7,8 @@ let aiIsListening = false;
 let aiRecognitionReady = false;
 let aiVoiceFinalText = '';
 let aiVoiceInterimText = '';
-let aiSavedCursorPos = 0;
+let aiVoiceInsertPos = 0;
+let aiVoiceInsertedLength = 0;
 let aiLastAddedTranscript = '';  // Android重複防止用
 let aiVoiceTimeout = null;
 
@@ -16,6 +17,11 @@ let voskWs = null;
 let voskAudioContext = null;
 let voskMediaStream = null;
 let voskProcessor = null;
+
+// AI Wake Lock state
+let aiWakeLock = null;
+let aiWakeLockTimeout = null;
+const AI_WAKELOCK_DURATION = 5 * 60 * 1000; // 5分
 
 // AI Streaming state
 let aiStreamingMessage = null;
@@ -45,6 +51,45 @@ if (typeof marked !== 'undefined') {
         breaks: true,
         gfm: true
     });
+}
+
+// ========== AI Wake Lock ==========
+
+async function requestAIWakeLock() {
+    // 既存タイマーをリセット
+    if (aiWakeLockTimeout) clearTimeout(aiWakeLockTimeout);
+
+    // Wake Lock取得（未取得またはreleased時）
+    if (!aiWakeLock || aiWakeLock.released) {
+        if ('wakeLock' in navigator) {
+            try {
+                aiWakeLock = await navigator.wakeLock.request('screen');
+                debugLog('AI Wake Lock acquired');
+                aiWakeLock.addEventListener('release', () => {
+                    debugLog('AI Wake Lock released');
+                });
+            } catch (err) {
+                debugLog('AI Wake Lock failed: ' + err.message);
+                return;
+            }
+        }
+    }
+
+    // 5分後に自動解放
+    aiWakeLockTimeout = setTimeout(() => {
+        releaseAIWakeLock();
+    }, AI_WAKELOCK_DURATION);
+}
+
+function releaseAIWakeLock() {
+    if (aiWakeLockTimeout) {
+        clearTimeout(aiWakeLockTimeout);
+        aiWakeLockTimeout = null;
+    }
+    if (aiWakeLock && !aiWakeLock.released) {
+        aiWakeLock.release();
+        aiWakeLock = null;
+    }
 }
 
 // ========== Textarea Auto-Resize ==========
@@ -298,6 +343,17 @@ function clearAIChat() {
 // ========== Voice Input Refinement ==========
 
 async function refineVoiceInput() {
+    // 音声入力中なら停止して確定してから整形へ進む
+    if (aiIsListening) {
+        if (getSpeechEngine() === 'vosk') {
+            stopVoskRecognition();
+        } else {
+            stopAISpeechRecognition();
+        }
+        // 停止処理でテキストがtextareaに挿入されるのを少し待つ
+        await new Promise(r => setTimeout(r, 100));
+    }
+
     const textarea = document.getElementById('aiQueryInput');
     const text = textarea.value.trim();
     if (!text) return;
@@ -617,6 +673,24 @@ function findAIVoiceOverlap(a, b) {
     return 0;
 }
 
+// textarea内の音声テキストをリアルタイム更新
+function updateTextareaWithVoiceText() {
+    const textarea = document.getElementById('aiQueryInput');
+    if (!textarea) return;
+
+    const voiceText = aiVoiceFinalText + aiVoiceInterimText;
+    const text = textarea.value;
+    const before = text.substring(0, aiVoiceInsertPos);
+    const after = text.substring(aiVoiceInsertPos + aiVoiceInsertedLength);
+
+    textarea.value = before + voiceText + after;
+    aiVoiceInsertedLength = voiceText.length;
+
+    const cursorPos = aiVoiceInsertPos + aiVoiceInsertedLength;
+    textarea.selectionStart = textarea.selectionEnd = cursorPos;
+    autoResizeTextarea(textarea);
+}
+
 // SpeechRecognition の初期化（getUserMediaは不要）
 function setupAISpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -661,18 +735,8 @@ function setupAISpeechRecognition() {
                 }
             }
 
-            const previewContent = document.getElementById('aiVoicePreviewContent');
-            const displayText = aiVoiceFinalText + sessionInterim;
-
-            if (displayText) {
-                previewContent.textContent = displayText;
-                previewContent.classList.toggle('interim', sessionInterim.length > 0);
-            } else {
-                previewContent.textContent = '聞き取り中...';
-                previewContent.classList.add('interim');
-            }
-
             aiVoiceInterimText = sessionInterim;
+            updateTextareaWithVoiceText();
         };
 
         aiRecognition.onerror = (event) => {
@@ -744,13 +808,20 @@ function startAISpeechRecognition() {
     }
 
     const voiceBtn = document.getElementById('aiVoiceInputBtn');
-    const preview = document.getElementById('aiVoicePreview');
-    const previewContent = document.getElementById('aiVoicePreviewContent');
     const textarea = document.getElementById('aiQueryInput');
     const statusEl = document.getElementById('aiMicStatus');
 
-    // Save cursor position
-    aiSavedCursorPos = textarea.selectionStart;
+    // Save cursor position and prepare insert
+    aiVoiceInsertPos = textarea.selectionStart;
+    aiVoiceInsertedLength = 0;
+
+    // カーソル前にスペース挿入（既存テキストとの結合対策）
+    const textBefore = textarea.value.substring(0, aiVoiceInsertPos);
+    if (textBefore.length > 0 && !textBefore.endsWith(' ') && !textBefore.endsWith('\n')) {
+        const text = textarea.value;
+        textarea.value = textBefore + ' ' + text.substring(aiVoiceInsertPos);
+        aiVoiceInsertPos += 1;
+    }
 
     // Reset state
     aiVoiceFinalText = '';
@@ -758,10 +829,9 @@ function startAISpeechRecognition() {
     aiLastAddedTranscript = '';
     aiIsListening = true;
 
-    // Show preview
-    previewContent.textContent = '聞き取り中...';
-    previewContent.classList.add('interim');
-    preview.classList.add('active');
+    // textarea視覚フィードバック
+    textarea.classList.add('voice-active');
+    textarea.readOnly = true;
 
     // WebRTCマイクを一時停止（SpeechRecognitionがマイクを使えるように）
     if (typeof pauseWebRTCMicrophone === 'function') {
@@ -774,8 +844,7 @@ function startAISpeechRecognition() {
         voiceBtn.classList.add('listening');
         const sendBtn = document.getElementById('aiSendBtn');
         if (sendBtn) sendBtn.disabled = true;
-        const refineBtn = document.getElementById('aiRefineBtn');
-        if (refineBtn) refineBtn.disabled = true;
+        // 整形ボタンは音声入力中も有効のまま（押すと音声確定→整形の1ステップ操作）
         if (statusEl) {
             statusEl.textContent = '音声認識中...';
             statusEl.style.color = '#2ed573';
@@ -792,7 +861,8 @@ function startAISpeechRecognition() {
     } catch (e) {
         debugLog('AI voice start error: ' + e.message);
         aiIsListening = false;
-        preview.classList.remove('active');
+        textarea.classList.remove('voice-active');
+        textarea.readOnly = false;
         // エラー時はボタンを復帰
         const sendBtnErr = document.getElementById('aiSendBtn');
         if (sendBtnErr) sendBtnErr.disabled = false;
@@ -823,8 +893,6 @@ function stopAISpeechRecognition() {
 
     const textarea = document.getElementById('aiQueryInput');
     const voiceBtn = document.getElementById('aiVoiceInputBtn');
-    const preview = document.getElementById('aiVoicePreview');
-    const previewContent = document.getElementById('aiVoicePreviewContent');
     const statusEl = document.getElementById('aiMicStatus');
 
     // Reset button state
@@ -835,47 +903,26 @@ function stopAISpeechRecognition() {
     const refineBtn = document.getElementById('aiRefineBtn');
     if (refineBtn) refineBtn.disabled = false;
 
-    // Get final text from preview
-    const finalText = previewContent.textContent.trim();
+    // 暫定テキストを除去（確定テキストのみ残す）
+    aiVoiceInterimText = '';
+    updateTextareaWithVoiceText();
+    const finalCursorPos = aiVoiceInsertPos + aiVoiceInsertedLength;
 
-    // Hide preview
-    preview.classList.remove('active');
+    // textarea保護を解除（readOnly解除・focusでカーソルがリセットされるため、その後に再設定）
+    textarea.classList.remove('voice-active');
+    textarea.readOnly = false;
+    textarea.focus();
+    textarea.selectionStart = textarea.selectionEnd = finalCursorPos;
 
-    // Insert text at cursor position
-    if (finalText && finalText !== '聞き取り中...') {
-        const text = textarea.value;
-        const pos = aiSavedCursorPos;
-
-        const before = text.substring(0, pos);
-        const after = text.substring(pos);
-
-        const needSpaceBefore = before.length > 0 && !before.endsWith(' ') && !before.endsWith('\n');
-        const needSpaceAfter = after.length > 0 && !after.startsWith(' ') && !after.startsWith('\n');
-
-        const insertText = (needSpaceBefore ? ' ' : '') + finalText + (needSpaceAfter ? ' ' : '');
-
-        textarea.value = before + insertText + after;
-        autoResizeTextarea(textarea);
-
-        const newCursorPos = pos + insertText.length;
-        textarea.focus();
-        textarea.selectionStart = textarea.selectionEnd = newCursorPos;
-
-        debugLog('AI voice input: ' + finalText);
-        if (statusEl) {
-            statusEl.textContent = 'タップで音声入力';
-            statusEl.style.color = '#888';
-        }
-    } else {
-        debugLog('AI voice input: no text');
-        if (statusEl) {
-            statusEl.textContent = 'タップで音声入力';
-            statusEl.style.color = '#888';
-        }
+    debugLog('AI voice input: ' + (aiVoiceFinalText || 'no text'));
+    if (statusEl) {
+        statusEl.textContent = 'タップで音声入力';
+        statusEl.style.color = '#888';
     }
 
     aiVoiceFinalText = '';
     aiVoiceInterimText = '';
+    aiVoiceInsertedLength = 0;
 
     // WebRTCマイクを再開
     if (typeof resumeWebRTCMicrophone === 'function') {
@@ -904,19 +951,28 @@ function startVoskRecognition() {
     if (aiIsListening) return;
 
     const voiceBtn = document.getElementById('aiVoiceInputBtn');
-    const preview = document.getElementById('aiVoicePreview');
-    const previewContent = document.getElementById('aiVoicePreviewContent');
     const textarea = document.getElementById('aiQueryInput');
     const statusEl = document.getElementById('aiMicStatus');
 
-    aiSavedCursorPos = textarea.selectionStart;
+    // Save cursor position and prepare insert
+    aiVoiceInsertPos = textarea.selectionStart;
+    aiVoiceInsertedLength = 0;
+
+    // カーソル前にスペース挿入（既存テキストとの結合対策）
+    var textBefore = textarea.value.substring(0, aiVoiceInsertPos);
+    if (textBefore.length > 0 && !textBefore.endsWith(' ') && !textBefore.endsWith('\n')) {
+        var text = textarea.value;
+        textarea.value = textBefore + ' ' + text.substring(aiVoiceInsertPos);
+        aiVoiceInsertPos += 1;
+    }
+
     aiVoiceFinalText = '';
     aiVoiceInterimText = '';
     aiIsListening = true;
 
-    previewContent.textContent = '接続中...';
-    previewContent.classList.add('interim');
-    preview.classList.add('active');
+    // textarea視覚フィードバック
+    textarea.classList.add('voice-active');
+    textarea.readOnly = true;
 
     // WebRTCマイクを一時停止
     if (typeof pauseWebRTCMicrophone === 'function') {
@@ -927,8 +983,7 @@ function startVoskRecognition() {
     voiceBtn.classList.add('listening');
     var sendBtn = document.getElementById('aiSendBtn');
     if (sendBtn) sendBtn.disabled = true;
-    var refineBtn = document.getElementById('aiRefineBtn');
-    if (refineBtn) refineBtn.disabled = true;
+    // 整形ボタンは音声入力中も有効のまま（押すと音声確定→整形の1ステップ操作）
 
     // Connect to Vosk WebSocket
     var url = getVoskUrl();
@@ -945,7 +1000,6 @@ function startVoskRecognition() {
     voskWs.onopen = function() {
         debugLog('Vosk connected');
         voiceBtn.textContent = '🎤 聞き取り中...';
-        previewContent.textContent = '聞き取り中...';
         if (statusEl) {
             statusEl.textContent = 'Vosk認識中...';
             statusEl.style.color = '#2ed573';
@@ -972,14 +1026,7 @@ function startVoskRecognition() {
             aiVoiceInterimText = data.partial;
         }
 
-        var displayText = aiVoiceFinalText + aiVoiceInterimText;
-        if (displayText) {
-            previewContent.textContent = displayText;
-            previewContent.classList.toggle('interim', aiVoiceInterimText.length > 0);
-        } else {
-            previewContent.textContent = '聞き取り中...';
-            previewContent.classList.add('interim');
-        }
+        updateTextareaWithVoiceText();
     };
 
     voskWs.onerror = function(e) {
@@ -1089,8 +1136,6 @@ function stopVoskRecognition() {
 
     var textarea = document.getElementById('aiQueryInput');
     var voiceBtn = document.getElementById('aiVoiceInputBtn');
-    var preview = document.getElementById('aiVoicePreview');
-    var previewContent = document.getElementById('aiVoicePreviewContent');
     var statusEl = document.getElementById('aiMicStatus');
 
     voiceBtn.textContent = '🎤 音声入力';
@@ -1100,41 +1145,26 @@ function stopVoskRecognition() {
     var refineBtn = document.getElementById('aiRefineBtn');
     if (refineBtn) refineBtn.disabled = false;
 
-    var finalText = previewContent.textContent.trim();
-    preview.classList.remove('active');
+    // 暫定テキストを除去（確定テキストのみ残す）
+    aiVoiceInterimText = '';
+    updateTextareaWithVoiceText();
+    var finalCursorPos = aiVoiceInsertPos + aiVoiceInsertedLength;
 
-    // Insert text at cursor position
-    if (finalText && finalText !== '聞き取り中...' && finalText !== '接続中...') {
-        var text = textarea.value;
-        var pos = aiSavedCursorPos;
-        var before = text.substring(0, pos);
-        var after = text.substring(pos);
-        var needSpaceBefore = before.length > 0 && !before.endsWith(' ') && !before.endsWith('\n');
-        var needSpaceAfter = after.length > 0 && !after.startsWith(' ') && !after.startsWith('\n');
-        var insertText = (needSpaceBefore ? ' ' : '') + finalText + (needSpaceAfter ? ' ' : '');
+    // textarea保護を解除（readOnly解除・focusでカーソルがリセットされるため、その後に再設定）
+    textarea.classList.remove('voice-active');
+    textarea.readOnly = false;
+    textarea.focus();
+    textarea.selectionStart = textarea.selectionEnd = finalCursorPos;
 
-        textarea.value = before + insertText + after;
-        autoResizeTextarea(textarea);
-
-        var newCursorPos = pos + insertText.length;
-        textarea.focus();
-        textarea.selectionStart = textarea.selectionEnd = newCursorPos;
-
-        debugLog('Vosk voice input: ' + finalText);
-        if (statusEl) {
-            statusEl.textContent = 'タップで音声入力';
-            statusEl.style.color = '#888';
-        }
-    } else {
-        debugLog('Vosk voice input: no text');
-        if (statusEl) {
-            statusEl.textContent = 'タップで音声入力';
-            statusEl.style.color = '#888';
-        }
+    debugLog('Vosk voice input: ' + (aiVoiceFinalText || 'no text'));
+    if (statusEl) {
+        statusEl.textContent = 'タップで音声入力';
+        statusEl.style.color = '#888';
     }
 
     aiVoiceFinalText = '';
     aiVoiceInterimText = '';
+    aiVoiceInsertedLength = 0;
 
     // WebRTCマイクを再開
     if (typeof resumeWebRTCMicrophone === 'function') {
@@ -1205,6 +1235,13 @@ function initAIAssistant() {
         status.style.color = '#888';
     }
 
+    // AIタブ内の操作でWake Lockを延長
+    const aiTab = document.getElementById('tab-ai');
+    if (aiTab) {
+        aiTab.addEventListener('touchstart', () => requestAIWakeLock(), { passive: true });
+        aiTab.addEventListener('click', () => requestAIWakeLock());
+    }
+
     debugLog('AI assistant initialized');
 }
 
@@ -1218,6 +1255,16 @@ window.addEventListener('DOMContentLoaded', () => {
     if (textarea) {
         textarea.addEventListener('input', () => autoResizeTextarea(textarea));
     }
+
+    // AIタブがアクティブな状態でページ復帰時にWake Lock再取得
+    document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState === 'visible') {
+            const aiTabEl = document.getElementById('tab-ai');
+            if (aiTabEl && aiTabEl.classList.contains('active')) {
+                await requestAIWakeLock();
+            }
+        }
+    });
 });
 
 // Hook into stream.js message handler
