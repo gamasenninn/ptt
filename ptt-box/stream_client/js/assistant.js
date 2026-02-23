@@ -298,6 +298,17 @@ function clearAIChat() {
 // ========== Voice Input Refinement ==========
 
 async function refineVoiceInput() {
+    // 音声入力中なら停止して確定してから整形へ進む
+    if (aiIsListening) {
+        if (getSpeechEngine() === 'vosk') {
+            stopVoskRecognition();
+        } else {
+            stopAISpeechRecognition();
+        }
+        // 停止処理でテキストがtextareaに挿入されるのを少し待つ
+        await new Promise(r => setTimeout(r, 100));
+    }
+
     const textarea = document.getElementById('aiQueryInput');
     const text = textarea.value.trim();
     if (!text) return;
@@ -774,8 +785,7 @@ function startAISpeechRecognition() {
         voiceBtn.classList.add('listening');
         const sendBtn = document.getElementById('aiSendBtn');
         if (sendBtn) sendBtn.disabled = true;
-        const refineBtn = document.getElementById('aiRefineBtn');
-        if (refineBtn) refineBtn.disabled = true;
+        // 整形ボタンは音声入力中も有効のまま（押すと音声確定→整形の1ステップ操作）
         if (statusEl) {
             statusEl.textContent = '音声認識中...';
             statusEl.style.color = '#2ed573';
@@ -927,8 +937,7 @@ function startVoskRecognition() {
     voiceBtn.classList.add('listening');
     var sendBtn = document.getElementById('aiSendBtn');
     if (sendBtn) sendBtn.disabled = true;
-    var refineBtn = document.getElementById('aiRefineBtn');
-    if (refineBtn) refineBtn.disabled = true;
+    // 整形ボタンは音声入力中も有効のまま（押すと音声確定→整形の1ステップ操作）
 
     // Connect to Vosk WebSocket
     var url = getVoskUrl();
