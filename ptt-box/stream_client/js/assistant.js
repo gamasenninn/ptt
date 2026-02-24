@@ -102,6 +102,17 @@ function autoResizeTextarea(textarea) {
 // ========== AI Query Functions ==========
 
 async function sendAIQuery() {
+    // 音声入力中なら暫定テキストを確定し、停止してから送信
+    if (aiIsListening) {
+        aiVoiceFinalText += aiVoiceInterimText;
+        aiVoiceInterimText = '';
+        if (typeof aiRecognition !== 'undefined' && aiRecognition) {
+            stopAISpeechRecognition();
+        } else {
+            stopVoskRecognition();
+        }
+    }
+
     const textarea = document.getElementById('aiQueryInput');
     const query = textarea.value.trim();
     if (!query) return;
@@ -709,6 +720,7 @@ function setupAISpeechRecognition() {
         aiRecognition.interimResults = true;
 
         aiRecognition.onresult = (event) => {
+            if (!aiIsListening) return;  // 停止後の遅延イベントを無視
             let sessionInterim = '';
 
             // event.resultIndex から始めて新しい結果のみ処理
@@ -842,9 +854,7 @@ function startAISpeechRecognition() {
         aiRecognition.start();
         voiceBtn.textContent = '🎤 聞き取り中...';
         voiceBtn.classList.add('listening');
-        const sendBtn = document.getElementById('aiSendBtn');
-        if (sendBtn) sendBtn.disabled = true;
-        // 整形ボタンは音声入力中も有効のまま（押すと音声確定→整形の1ステップ操作）
+        // 送信ボタンは有効のまま（押すと音声確定→送信の1ステップ操作）
         if (statusEl) {
             statusEl.textContent = '音声認識中...';
             statusEl.style.color = '#2ed573';
@@ -898,8 +908,6 @@ function stopAISpeechRecognition() {
     // Reset button state
     voiceBtn.textContent = '🎤 音声入力';
     voiceBtn.classList.remove('listening');
-    const sendBtn = document.getElementById('aiSendBtn');
-    if (sendBtn) sendBtn.disabled = false;
     const refineBtn = document.getElementById('aiRefineBtn');
     if (refineBtn) refineBtn.disabled = false;
 
@@ -981,9 +989,7 @@ function startVoskRecognition() {
 
     voiceBtn.textContent = '🎤 接続中...';
     voiceBtn.classList.add('listening');
-    var sendBtn = document.getElementById('aiSendBtn');
-    if (sendBtn) sendBtn.disabled = true;
-    // 整形ボタンは音声入力中も有効のまま（押すと音声確定→整形の1ステップ操作）
+    // 送信ボタンは有効のまま（押すと音声確定→送信の1ステップ操作）
 
     // Connect to Vosk WebSocket
     var url = getVoskUrl();
@@ -1010,6 +1016,7 @@ function startVoskRecognition() {
     };
 
     voskWs.onmessage = function(event) {
+        if (!aiIsListening) return;  // 停止後の遅延イベントを無視
         try {
             var data = JSON.parse(event.data);
         } catch (e) {
@@ -1140,8 +1147,6 @@ function stopVoskRecognition() {
 
     voiceBtn.textContent = '🎤 音声入力';
     voiceBtn.classList.remove('listening');
-    var sendBtn = document.getElementById('aiSendBtn');
-    if (sendBtn) sendBtn.disabled = false;
     var refineBtn = document.getElementById('aiRefineBtn');
     if (refineBtn) refineBtn.disabled = false;
 
