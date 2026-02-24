@@ -507,6 +507,7 @@ class AgentAssistant:
             if any(kw in error_str for kw in [
                 "context_length_exceeded", "maximum context length",
                 "context window", "too many tokens", "request too large",
+                "no tool call found",
             ]):
                 log("コンテキストウィンドウ超過を検出、セッションをクリアします", level="warning")
                 try:
@@ -607,6 +608,7 @@ class AgentAssistant:
             if any(kw in error_str for kw in [
                 "context_length_exceeded", "maximum context length",
                 "context window", "too many tokens", "request too large",
+                "no tool call found",
             ]):
                 log("コンテキストウィンドウ超過を検出、セッションをクリアします", level="warning")
                 try:
