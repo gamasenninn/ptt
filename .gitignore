@@ -46,6 +46,9 @@ ptt-box/mcp-shell.log
 
 # Runtime databases
 ptt-box/sessions.db
+
+# DBHub config (contains DB credentials)
+ptt-box/dbhub.toml
 ptt-box/sandbox/
 
 # Vosk models (large binary files)
