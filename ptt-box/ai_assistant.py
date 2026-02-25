@@ -391,6 +391,10 @@ def clean_text_for_tts(text: str) -> str:
     text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
     # インラインコード (`code` → code)
     text = re.sub(r'`([^`]+)`', r'\1', text)
+    # マークダウンテーブル区切り線 (|---|---|)
+    text = re.sub(r'^\s*\|?[\s\-:]+(\|[\s\-:]+)+\|?\s*$', '', text, flags=re.MULTILINE)
+    # テーブルのパイプ記号
+    text = re.sub(r'\|', ' ', text)
     # 連続空白を整理
     text = re.sub(r'  +', ' ', text)
     return text.strip()
