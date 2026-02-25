@@ -503,6 +503,10 @@ function cleanTextForTTS(text) {
     text = text.replace(/^\s*\d+\.\s+/gm, '');
     // インラインコード (`code` → code)
     text = text.replace(/`([^`]+)`/g, '$1');
+    // マークダウンテーブル区切り線 (|---|---|)
+    text = text.replace(/^\s*\|?[\s\-:]+(\|[\s\-:]+)+\|?\s*$/gm, '');
+    // テーブルのパイプ記号
+    text = text.replace(/\|/g, ' ');
     // 連続空白を整理
     text = text.replace(/ {2,}/g, ' ');
     return text.trim();
