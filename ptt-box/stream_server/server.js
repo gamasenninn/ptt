@@ -2403,19 +2403,32 @@ class StreamServer {
         connInfo.audioTrack = audioTrack;
         p2pPc.addTrack(audioTrack);
 
-        // Offer作成
-        const offer = await p2pPc.createOffer();
-        await p2pPc.setLocalDescription(offer);
+        // Offer作成（非同期中にPCがclose/cleanupされる可能性があるためtry-catch）
+        try {
+            const offer = await p2pPc.createOffer();
 
-        // ICE gathering待機
-        await this.waitForIceGathering(p2pPc);
+            // createOffer中にPCがcloseされた場合を検出
+            if (p2pPc.connectionState === 'closed' || !this.p2pConnections.has(client.clientId)) {
+                log(`P2P to ${client.displayName}: connection closed during offer creation, aborting`);
+                return;
+            }
 
-        // Offer送信
-        client.send({
-            type: 'p2p_offer',
-            from: this.serverClientId,
-            sdp: p2pPc.localDescription.sdp
-        });
+            await p2pPc.setLocalDescription(offer);
+
+            // ICE gathering待機
+            await this.waitForIceGathering(p2pPc);
+
+            // Offer送信
+            client.send({
+                type: 'p2p_offer',
+                from: this.serverClientId,
+                sdp: p2pPc.localDescription.sdp
+            });
+        } catch (e) {
+            log(`P2P to ${client.displayName}: offer failed (${e.message}), cleaning up`);
+            try { p2pPc.close(); } catch (_) {}
+            this.p2pConnections.delete(client.clientId);
+        }
     }
 
     async handleP2PAnswer(client, sdp) {
