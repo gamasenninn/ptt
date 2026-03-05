@@ -2347,7 +2347,17 @@ class StreamServer {
                 if (connInfo.cleanupTimer) {
                     clearTimeout(connInfo.cleanupTimer);
                     connInfo.cleanupTimer = null;
-                    log(`P2P to ${client.displayName}: recovered, timer cancelled`);
+                    log(`P2P to ${client.displayName}: recovered, cleanup timer cancelled`);
+                }
+
+                // P2P回復 = ネットワーク復旧の兆候 → ICE restartタイマーをキャンセル
+                // メイン接続の回復にはもう少し時間がかかる場合がある
+                if (client.iceRestartTimer) {
+                    clearTimeout(client.iceRestartTimer);
+                    client.iceRestartTimer = null;
+                    client.iceRestartInProgress = false;
+                    client.iceRestartSuccessTime = Date.now();
+                    log(`${client.displayName}: ICE restart timer cancelled (P2P recovered)`);
                 }
 
             } else if (p2pPc.connectionState === 'failed' || p2pPc.connectionState === 'closed') {
