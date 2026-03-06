@@ -1503,6 +1503,16 @@ class StreamServer {
                         if (otherId !== client.clientId &&
                             otherClient.displayName === msg.displayName) {
                             log(`${msg.displayName}: Closing stale connection ${otherId} (replaced by ${client.clientId})`);
+                            // ws.close()は非同期のためhandleDisconnectの呼び出しが遅延する
+                            // タイマーは即座にキャンセルしないと旧接続のタイマーが発火してしまう
+                            if (otherClient.iceRestartTimer) {
+                                clearTimeout(otherClient.iceRestartTimer);
+                                otherClient.iceRestartTimer = null;
+                            }
+                            if (otherClient.offerTimeout) {
+                                clearTimeout(otherClient.offerTimeout);
+                                otherClient.offerTimeout = null;
+                            }
                             otherClient.ws.close(1000, 'Replaced by new connection');
                             break;
                         }
