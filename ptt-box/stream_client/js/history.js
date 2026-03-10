@@ -5,6 +5,30 @@ let currentPlayingFile = null;
 let editingFilename = null;
 let autoPlayIndex = -1;  // 連続再生中の現在位置（historyFilesのindex）、-1 = 無効
 
+// Wake Lock（連続再生中のスリープ防止）
+let historyWakeLock = null;
+
+async function requestHistoryWakeLock() {
+    if (historyWakeLock && !historyWakeLock.released) return;
+    if (!('wakeLock' in navigator)) return;
+    try {
+        historyWakeLock = await navigator.wakeLock.request('screen');
+        debugLog('History Wake Lock acquired');
+        historyWakeLock.addEventListener('release', () => {
+            debugLog('History Wake Lock released');
+        });
+    } catch (err) {
+        debugLog('History Wake Lock failed: ' + err.message);
+    }
+}
+
+function releaseHistoryWakeLock() {
+    if (historyWakeLock && !historyWakeLock.released) {
+        historyWakeLock.release();
+        historyWakeLock = null;
+    }
+}
+
 // Pull-to-Refresh 状態
 let pullStartY = 0;
 let isPulling = false;
@@ -33,6 +57,11 @@ function switchTab(tabName) {
         if (typeof requestAIWakeLock === 'function') requestAIWakeLock();
     } else {
         if (typeof releaseAIWakeLock === 'function') releaseAIWakeLock();
+    }
+
+    // 履歴タブから離れたら連続再生のWake Lockを解放
+    if (tabName !== 'history' && currentPlayingFile) {
+        releaseHistoryWakeLock();
     }
 
     // 履歴タブに切り替えたら読み込み
@@ -185,6 +214,7 @@ function playHistoryAudio(wavFile) {
         audio.currentTime = 0;
         currentPlayingFile = null;
         autoPlayIndex = -1;
+        releaseHistoryWakeLock();
         renderHistoryList();
         return;
     }
@@ -197,6 +227,7 @@ function playHistoryAudio(wavFile) {
     audio.src = '/api/audio?file=' + encodeURIComponent(wavFile);
     audio.play().catch(e => console.error('Play error:', e));
     currentPlayingFile = wavFile;
+    requestHistoryWakeLock();
     renderHistoryList();
 }
 
@@ -220,9 +251,17 @@ document.addEventListener('DOMContentLoaded', () => {
             // 最新まで再生完了 or 連続再生無効
             currentPlayingFile = null;
             autoPlayIndex = -1;
+            releaseHistoryWakeLock();
             renderHistoryList();
         });
     }
+
+    // 画面復帰時にWake Lockを再取得（再生中の場合）
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && currentPlayingFile) {
+            requestHistoryWakeLock();
+        }
+    });
 
     // 保存された履歴音量を読み込み
     loadHistoryVolumeSetting();
