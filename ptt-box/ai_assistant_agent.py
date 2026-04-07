@@ -68,7 +68,7 @@ if ENABLE_FILE_LOG:
 
 # ========== 設定 ==========
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
+AI_MODEL = os.environ.get("AI_MODEL", "gpt-5.4-mini")
 TTS_VOICE = os.environ.get("TTS_VOICE", "ja-JP-NanamiNeural")
 TTS_ENABLED = os.environ.get("TTS_ENABLED", "true").lower() == "true"
 TTS_VOLUME_GAIN = float(os.environ.get("TTS_VOLUME_GAIN", "1.5"))  # TTS音量ゲイン（1.0=等倍, 1.5=1.5倍）
@@ -131,11 +131,22 @@ def load_refine_prompt() -> str:
 
 
 def load_system_prompt(context=None, agent=None) -> str:
-    """システムプロンプトを外部ファイルから読み込む（毎回最新を読む）"""
+    """システムプロンプトを外部ファイルから読み込む（毎回最新を読む）
+    ASSISTANT.md（共通） + ASSISTANT.local.md（環境固有）をマージ
+    """
     if SYSTEM_PROMPT_PATH.exists():
-        return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     else:
-        return "あなたはAIアシスタントです。簡潔に応答してください。"
+        prompt = "あなたはAIアシスタントです。簡潔に応答してください。"
+
+    # ローカル追加プロンプト（環境固有の設定）
+    local_path = SYSTEM_PROMPT_PATH.parent / "ASSISTANT.local.md"
+    if local_path.exists():
+        local_text = local_path.read_text(encoding="utf-8").strip()
+        if local_text:
+            prompt = prompt.rstrip() + "\n\n" + local_text
+
+    return prompt
 
 
 def log(msg: str, level: str = "info"):
@@ -315,6 +326,7 @@ def load_mcp_servers(config_path: Path) -> list:
             },
             cache_tools_list=True,
             tool_filter=tool_filter,
+            client_session_timeout_seconds=30,
         )
         servers.append(server)
         log(f"  MCP: {name} ({command})")
@@ -407,6 +419,7 @@ class AgentAssistant:
             self.manager = MCPServerManager(
                 servers,
                 drop_failed_servers=True,
+                connect_timeout_seconds=30,
             )
             await self.manager.__aenter__()
 

@@ -26,6 +26,9 @@ ptt-box/recordings/client_names.json
 .env
 .env.backup
 
+# Local prompt overrides
+ASSISTANT.local.md
+
 # Upload done markers
 *.updone
 
