@@ -65,7 +65,7 @@ if ENABLE_FILE_LOG:
 
 # ========== 設定 ==========
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
+AI_MODEL = os.environ.get("AI_MODEL", "gpt-5.4-mini")
 AI_RESPONSE_MAX_TOKENS = int(os.environ.get("AI_RESPONSE_MAX_TOKENS", "500"))
 
 # 会話履歴設定
@@ -94,11 +94,22 @@ HEARTBEAT_INTERVAL = 30  # ハートビート送信間隔（秒）
 SYSTEM_PROMPT_PATH = Path(os.environ.get("SYSTEM_PROMPT_PATH", Path(__file__).parent / "ASSISTANT.md"))
 
 def load_system_prompt() -> str:
-    """システムプロンプトを外部ファイルから読み込む"""
+    """システムプロンプトを外部ファイルから読み込む
+    ASSISTANT.md（共通） + ASSISTANT.local.md（環境固有）をマージ
+    """
     if SYSTEM_PROMPT_PATH.exists():
-        return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     else:
-        return "あなたはAIアシスタントです。簡潔に応答してください。"
+        prompt = "あなたはAIアシスタントです。簡潔に応答してください。"
+
+    # ローカル追加プロンプト（環境固有の設定）
+    local_path = SYSTEM_PROMPT_PATH.parent / "ASSISTANT.local.md"
+    if local_path.exists():
+        local_text = local_path.read_text(encoding="utf-8").strip()
+        if local_text:
+            prompt = prompt.rstrip() + "\n\n" + local_text
+
+    return prompt
 
 
 def log(msg: str, level: str = "info"):

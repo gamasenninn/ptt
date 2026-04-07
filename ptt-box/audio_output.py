@@ -7,10 +7,11 @@ stdin から連続OGG/Opusストリームを受け取り、指定デバイスに
   PTT間の無音時もプロセスは維持される
 
 Usage:
-  python audio_output.py [device_id]
+  python audio_output.py [device_id_or_name]
 
 Environment:
-  SPEAKER_DEVICE_ID - 出力デバイスID (コマンドライン引数が優先)
+  SPEAKER_DEVICE_NAME - 出力デバイス名（部分一致検索、優先）
+  SPEAKER_DEVICE_ID - 出力デバイスID (SPEAKER_DEVICE_NAMEが未設定時のフォールバック)
 """
 import sys
 import os
@@ -20,8 +21,6 @@ import queue
 import numpy as np
 import sounddevice as sd
 
-# 設定
-DEVICE_ID = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get('SPEAKER_DEVICE_ID', 0))
 SAMPLE_RATE = 48000
 CHANNELS = 1
 BLOCKSIZE = 480  # 10ms @ 48kHz（低遅延）
@@ -29,7 +28,50 @@ BLOCKSIZE = 480  # 10ms @ 48kHz（低遅延）
 def log(msg):
     print(f"[audio_output] {msg}", file=sys.stderr, flush=True)
 
-log(f"Starting audio output to device {DEVICE_ID}")
+def find_device_by_name(name):
+    """デバイス名で出力デバイスを検索（部分一致）。見つからなければNone。"""
+    devices = sd.query_devices()
+    for i, dev in enumerate(devices):
+        if name in dev['name'] and dev['max_output_channels'] > 0:
+            return i, dev['name']
+    return None, None
+
+def resolve_device():
+    """コマンドライン引数 → SPEAKER_DEVICE_NAME → SPEAKER_DEVICE_ID の優先順でデバイスを決定"""
+    arg = sys.argv[1] if len(sys.argv) > 1 else None
+
+    # 引数が数値でない場合はデバイス名として扱う
+    if arg and not arg.isdigit():
+        device_id, device_name = find_device_by_name(arg)
+        if device_id is not None:
+            log(f"Device found by name '{arg}': id={device_id}, name={device_name}")
+            return device_id, device_name
+        log(f"WARNING: Device name '{arg}' not found, falling back to SPEAKER_DEVICE_ID")
+
+    # 引数が数値の場合はそのまま使う
+    if arg and arg.isdigit():
+        device_id = int(arg)
+        dev_info = sd.query_devices(device_id)
+        log(f"Device by ID: id={device_id}, name={dev_info['name']}")
+        return device_id, dev_info['name']
+
+    # 環境変数 SPEAKER_DEVICE_NAME で検索
+    env_name = os.environ.get('SPEAKER_DEVICE_NAME', '')
+    if env_name:
+        device_id, device_name = find_device_by_name(env_name)
+        if device_id is not None:
+            log(f"Device found by SPEAKER_DEVICE_NAME '{env_name}': id={device_id}, name={device_name}")
+            return device_id, device_name
+        log(f"WARNING: SPEAKER_DEVICE_NAME '{env_name}' not found, falling back to SPEAKER_DEVICE_ID")
+
+    # フォールバック: SPEAKER_DEVICE_ID
+    device_id = int(os.environ.get('SPEAKER_DEVICE_ID', 0))
+    dev_info = sd.query_devices(device_id)
+    log(f"Device by SPEAKER_DEVICE_ID: id={device_id}, name={dev_info['name']}")
+    return device_id, dev_info['name']
+
+DEVICE_ID, DEVICE_NAME = resolve_device()
+log(f"Starting audio output to device {DEVICE_ID} ({DEVICE_NAME})")
 
 # 音声データキュー（小さく = 低遅延）
 audio_queue = queue.Queue(maxsize=5)  # 5 * 10ms = 50ms max

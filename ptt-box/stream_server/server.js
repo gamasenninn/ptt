@@ -37,7 +37,8 @@ const MIC_DEVICE = process.env.MIC_DEVICE || 'CABLE Output (VB-Audio Virtual Cab
 const MIC_VOLUME = parseFloat(process.env.MIC_VOLUME) || 1.0;  // マイク音量倍率（デフォルト1.0）
 const MIC_SAMPLE_RATE = parseInt(process.env.MIC_SAMPLE_RATE) || 48000;  // マイク入力サンプルレート
 const SPEAKER_DEVICE = process.env.SPEAKER_DEVICE || '';  // 空の場合はシステムデフォルト（ffplay用）
-const SPEAKER_DEVICE_ID = process.env.SPEAKER_DEVICE_ID || '0';  // デバイスID（Python用）
+const SPEAKER_DEVICE_NAME = process.env.SPEAKER_DEVICE_NAME || '';  // デバイス名検索（Python用、優先）
+const SPEAKER_DEVICE_ID = process.env.SPEAKER_DEVICE_ID || '0';  // デバイスID（Python用、フォールバック）
 const USE_PYTHON_AUDIO = process.env.USE_PYTHON_AUDIO === 'true';  // Python音声出力を使用
 const ENABLE_LOCAL_AUDIO = process.env.ENABLE_LOCAL_AUDIO !== 'false';  // デフォルト有効
 const ENABLE_SERVER_MIC = process.env.ENABLE_SERVER_MIC !== 'false';  // デフォルト有効
@@ -2906,7 +2907,9 @@ class StreamServer {
             // Python + sounddevice を使用（デバイス指定可能）
             const pythonScript = path.join(__dirname, '..', 'audio_output.py');
 
-            this.speakerProcess = spawn('uv', ['run', 'python', pythonScript, SPEAKER_DEVICE_ID], {
+            // デバイス名が指定されていればそれを優先、なければIDを渡す
+            const speakerArg = SPEAKER_DEVICE_NAME || SPEAKER_DEVICE_ID;
+            this.speakerProcess = spawn('uv', ['run', 'python', pythonScript, speakerArg], {
                 stdio: ['pipe', 'ignore', 'pipe'],
                 cwd: path.join(__dirname, '..')  // ptt-box ディレクトリで実行
             });
@@ -2928,7 +2931,7 @@ class StreamServer {
                 this.oggGranulePos = 0;
             });
 
-            log(`Speaker output started (Python, device=${SPEAKER_DEVICE_ID})`);
+            log(`Speaker output started (Python, device=${SPEAKER_DEVICE_NAME ? `name="${SPEAKER_DEVICE_NAME}"` : `id=${SPEAKER_DEVICE_ID}`})`);
         } else {
             // ffplay を使用（従来方式）
             const ffplayArgs = [
