@@ -1449,6 +1449,13 @@ function openSettings() {
         loadTtsModeToSelect();
         loadEdgeTtsVoice();
         loadSpeechEngineToSelect();
+        // 音量スライダーを同期
+        const vol = document.getElementById('volumeSlider');
+        const p2pVol = document.getElementById('p2pVolumeSlider');
+        const sVol = document.getElementById('settingsVolumeSlider');
+        const sP2p = document.getElementById('settingsP2pVolumeSlider');
+        if (vol && sVol) { sVol.value = vol.value; document.getElementById('settingsVolumeValue').textContent = vol.value + '%'; }
+        if (p2pVol && sP2p) { sP2p.value = p2pVol.value; document.getElementById('settingsP2pVolumeValue').textContent = p2pVol.value + '%'; }
     }
 }
 
