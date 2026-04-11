@@ -99,6 +99,8 @@
         }
         button:not(.ptt-button).secondary {
             background: var(--btn-secondary);
+            border: 1px solid var(--btn-secondary-border);
+            color: var(--btn-secondary-text);
         }
         button:not(.ptt-button).secondary:hover:not(:disabled) {
             background: var(--btn-secondary-hover);
@@ -396,8 +398,8 @@
         .history-edit-btn {
             padding: 6px 12px;
             background: var(--btn-secondary);
-            border: none;
-            color: var(--text-tertiary);
+            border: 1px solid var(--btn-secondary-border);
+            color: var(--btn-secondary-text);
             font-size: 12px;
             border-radius: 4px;
             cursor: pointer;
@@ -502,8 +504,8 @@
         }
         .modal-btn-secondary {
             background: var(--btn-secondary);
-            color: var(--text-primary);
-            border: none;
+            color: var(--btn-secondary-text);
+            border: 1px solid var(--btn-secondary-border);
         }
 
         /* Clients Count */
@@ -614,7 +616,7 @@
             border: 1px solid var(--border-main);
             border-radius: 6px;
             background: var(--bg-input);
-            color: var(--text-white);
+            color: var(--text-primary);
             font-size: 16px;
             font-family: inherit;
             resize: vertical;
@@ -642,9 +644,9 @@
             flex: 1;
             padding: 12px 16px;
             background: var(--btn-voice);
-            border: none;
+            border: 1px solid var(--btn-secondary-border);
             border-radius: 6px;
-            color: var(--text-white);
+            color: var(--btn-secondary-text);
             font-size: 14px;
             cursor: pointer;
             transition: background 0.2s;
@@ -798,9 +800,9 @@
             width: 100%;
             padding: 10px;
             background: var(--btn-secondary);
-            border: none;
+            border: 1px solid var(--btn-secondary-border);
             border-radius: 6px;
-            color: var(--text-tertiary);
+            color: var(--btn-secondary-text);
             font-size: 13px;
             cursor: pointer;
             transition: background 0.2s;
@@ -939,7 +941,7 @@
             </div>
 
             <div style="margin-top: 10px;">
-                <button onclick="openSettings()" style="background: var(--btn-secondary); padding: 8px 16px; font-size: 14px; width: 100%;">⚙️ 設定</button>
+                <button onclick="openSettings()" style="background: var(--btn-secondary); border: 1px solid var(--btn-secondary-border); color: var(--btn-secondary-text); padding: 8px 16px; font-size: 14px; width: 100%;">⚙️ 設定</button>
             </div>
 
             <div id="debugButtonContainer" style="margin-top: 10px; display: none;">
@@ -981,7 +983,7 @@
         <!-- History Tab -->
         <div id="tab-history" class="tab-content">
             <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
-                <button onclick="loadHistory()" style="background: var(--btn-secondary); padding: 10px 20px; font-size: 14px;">更新</button>
+                <button onclick="loadHistory()" style="background: var(--btn-secondary); border: 1px solid var(--btn-secondary-border); color: var(--btn-secondary-text); padding: 10px 20px; font-size: 14px;">更新</button>
                 <div style="flex: 1; display: flex; align-items: center; gap: 8px;">
                     <span style="font-size: 16px;">🔊</span>
                     <input type="range" id="historyVolumeSlider" min="0" max="100" value="40"
@@ -1038,7 +1040,7 @@
                     <div style="margin-bottom: 10px; font-weight: 500;">表示名</div>
                     <div style="display: flex; gap: 10px; align-items: center;">
                         <input type="text" id="displayNameInput" placeholder="名前を入力" maxlength="20" style="flex: 1; padding: 12px; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 6px; color: var(--text-primary); font-size: 14px;">
-                        <button onclick="saveDisplayName()" style="padding: 12px 20px; background: var(--btn-secondary); border: none; color: var(--text-primary); border-radius: 6px; cursor: pointer;">保存</button>
+                        <button onclick="saveDisplayName()" style="padding: 12px 20px; background: var(--btn-secondary); border: 1px solid var(--btn-secondary-border); color: var(--btn-secondary-text); border-radius: 6px; cursor: pointer;">保存</button>
                     </div>
                     <div id="displayNameHint" style="margin-top: 10px; font-size: 12px; color: var(--text-secondary);">他のユーザーに表示される名前です</div>
                 </div>
@@ -1046,7 +1048,7 @@
                     <div style="margin-bottom: 10px; font-weight: 500;">PTTショートカットキー</div>
                     <div style="display: flex; gap: 10px; align-items: center;">
                         <div id="pttKeyDisplay" style="flex: 1; padding: 12px; background: var(--bg-input); border-radius: 6px; text-align: center; font-family: monospace;">Ctrl+Space</div>
-                        <button onclick="startKeyRegistration()" id="registerKeyBtn" style="padding: 12px 20px; background: var(--btn-secondary); border: none; color: var(--text-primary); border-radius: 6px; cursor: pointer;">登録</button>
+                        <button onclick="startKeyRegistration()" id="registerKeyBtn" style="padding: 12px 20px; background: var(--btn-secondary); border: 1px solid var(--btn-secondary-border); color: var(--btn-secondary-text); border-radius: 6px; cursor: pointer;">登録</button>
                     </div>
                     <div id="keyRegistrationHint" style="margin-top: 10px; font-size: 12px; color: var(--text-secondary); display: none;">キーを押してください...</div>
                 </div>

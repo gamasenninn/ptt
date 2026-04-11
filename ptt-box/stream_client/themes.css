@@ -60,11 +60,19 @@
     /* ボタン */
     --btn-secondary: #3d405b;
     --btn-secondary-hover: #5c5f7e;
+    --btn-secondary-border: transparent;
+    --btn-secondary-text: inherit;
     --btn-disabled: #555;
     --btn-voice: #4a4a6a;
     --btn-voice-hover: #5a5a7a;
     --btn-stop: #ff6b6b;
     --btn-stop-hover: #ee5a5a;
+    --btn-danger-bg: var(--status-error);
+    --btn-danger-border: transparent;
+    --btn-danger-text: var(--text-primary);
+    --btn-warning-bg: var(--status-warning);
+    --btn-warning-border: transparent;
+    --btn-warning-text: #000;
 
     /* チャット */
     --chat-user-bg: #1e3a5f;
@@ -173,11 +181,13 @@
     --border-medium: #ccc;
     --border-light: #bbb;
 
-    --btn-secondary: #e0e0e0;
-    --btn-secondary-hover: #d0d0d0;
+    --btn-secondary: rgba(0, 151, 167, 0.12);
+    --btn-secondary-hover: rgba(0, 151, 167, 0.22);
+    --btn-secondary-border: rgba(0, 151, 167, 0.3);
+    --btn-secondary-text: #0097A7;
     --btn-disabled: #ccc;
-    --btn-voice: #d8d8e8;
-    --btn-voice-hover: #c8c8d8;
+    --btn-voice: rgba(0, 151, 167, 0.12);
+    --btn-voice-hover: rgba(0, 151, 167, 0.22);
     --btn-stop: #ef5350;
     --btn-stop-hover: #e53935;
 
@@ -209,6 +219,13 @@
     --status-blocked-bg: #f3e5f5;
     --status-blocked-text: #7b1fa2;
     --status-warning-bg: #fff8e1;
+
+    --btn-danger-bg: rgba(233, 69, 96, 0.12);
+    --btn-danger-border: rgba(233, 69, 96, 0.3);
+    --btn-danger-text: #c62828;
+    --btn-warning-bg: rgba(245, 166, 35, 0.15);
+    --btn-warning-border: rgba(245, 166, 35, 0.3);
+    --btn-warning-text: #e65100;
 }
 
 /* ==========================================================================
