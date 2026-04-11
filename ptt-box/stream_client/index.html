@@ -88,7 +88,7 @@
         .connected .connection-indicator { background: var(--status-success-soft); }
         .preparing .connection-indicator { background: var(--status-neutral); animation: pulse 1s infinite; }
         .blocked .connection-indicator { background: var(--status-blocked-text); }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):not(.minimal-conn-btn):not(.minimal-settings-btn) {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):not(.minimal-conn-btn):not(.minimal-settings-btn):not(.settings-close-float) {
             background: var(--status-error);
             color: var(--text-white);
             border: none;
@@ -99,10 +99,10 @@
             margin: 5px;
             transition: background 0.2s;
         }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):not(.minimal-conn-btn):not(.minimal-settings-btn):hover:not(:disabled) {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):not(.minimal-conn-btn):not(.minimal-settings-btn):not(.settings-close-float):hover:not(:disabled) {
             background: var(--status-error-hover);
         }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):not(.minimal-conn-btn):not(.minimal-settings-btn):disabled {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):not(.minimal-conn-btn):not(.minimal-settings-btn):not(.settings-close-float):disabled {
             background: var(--btn-disabled);
             cursor: not-allowed;
         }
@@ -892,6 +892,26 @@
         [data-mode="minimal"] .minimal-hide {
             display: none !important;
         }
+        [data-mode="minimal"] #settingsModalHeader {
+            display: none !important;
+        }
+        .settings-close-float {
+            display: none;
+        }
+        [data-mode="minimal"] .settings-close-float {
+            display: block;
+            position: sticky;
+            top: 0;
+            float: right;
+            background: none;
+            border: none;
+            font-size: 22px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+            z-index: 1;
+        }
         [data-mode="minimal"] body {
             margin: 0;
             padding: 0;
@@ -1112,11 +1132,12 @@
     <!-- Settings Modal -->
     <div id="settingsModal" class="modal-overlay">
         <div class="modal-content" style="max-width: 400px;">
-            <div class="modal-header">
-                <span class="modal-title">設定</span>
+            <div class="modal-header" id="settingsModalHeader">
+                <span class="modal-title minimal-hide">設定</span>
                 <button class="modal-close" onclick="closeSettings()">&times;</button>
             </div>
-            <div class="modal-body">
+            <div class="modal-body" id="settingsModalBody" style="position: relative;">
+                <button class="settings-close-float" onclick="closeSettings()">&times;</button>
                 <div style="margin-bottom: 20px;">
                     <div style="margin-bottom: 10px; font-weight: 500;">表示名</div>
                     <div style="display: flex; gap: 10px; align-items: center;">
@@ -1223,7 +1244,7 @@
                     <button onclick="location.reload()" style="width: 100%; padding: 12px; background: var(--status-error-bg); border: none; color: var(--status-error-text); border-radius: 6px; cursor: pointer;">ページを再読み込み</button>
                 </div>
             </div>
-            <div class="modal-footer">
+            <div class="modal-footer minimal-hide">
                 <button class="modal-btn modal-btn-secondary" onclick="closeSettings()">閉じる</button>
             </div>
         </div>
