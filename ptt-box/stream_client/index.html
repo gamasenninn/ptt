@@ -1,7 +1,16 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <script>document.documentElement.dataset.theme = localStorage.getItem('ptt-theme') || 'midnight';</script>
+    <script>
+    (function(){
+        var p = new URLSearchParams(location.search);
+        document.documentElement.dataset.theme = p.get('theme') || localStorage.getItem('ptt-theme') || 'midnight';
+        var m = p.get('mode') || localStorage.getItem('ptt-mode') || 'normal';
+        document.documentElement.dataset.mode = m;
+        if (p.has('theme')) localStorage.setItem('ptt-theme', p.get('theme'));
+        if (p.has('mode')) localStorage.setItem('ptt-mode', m);
+    })();
+    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#16213e">
@@ -79,7 +88,7 @@
         .connected .connection-indicator { background: var(--status-success-soft); }
         .preparing .connection-indicator { background: var(--status-neutral); animation: pulse 1s infinite; }
         .blocked .connection-indicator { background: var(--status-blocked-text); }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch) {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):not(.minimal-conn-btn):not(.minimal-settings-btn) {
             background: var(--status-error);
             color: var(--text-white);
             border: none;
@@ -90,10 +99,10 @@
             margin: 5px;
             transition: background 0.2s;
         }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):hover:not(:disabled) {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):not(.minimal-conn-btn):not(.minimal-settings-btn):hover:not(:disabled) {
             background: var(--status-error-hover);
         }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):disabled {
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):not(.minimal-conn-btn):not(.minimal-settings-btn):disabled {
             background: var(--btn-disabled);
             cursor: not-allowed;
         }
@@ -865,6 +874,68 @@
             color: var(--text-dim);
             word-break: break-word;
         }
+
+        /* ========== Minimal Mode ========== */
+        .minimal-header {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        [data-mode="minimal"] .minimal-header {
+            display: flex;
+        }
+        [data-mode="minimal"] .tab-nav,
+        [data-mode="minimal"] #connectionToggle,
+        [data-mode="minimal"] #serviceStatus,
+        [data-mode="minimal"] #speakerStatus,
+        [data-mode="minimal"] .minimal-hide {
+            display: none !important;
+        }
+        [data-mode="minimal"] body {
+            margin: 0;
+            padding: 0;
+        }
+        [data-mode="minimal"] .container {
+            border-radius: 0;
+            padding: 5px 10px;
+        }
+        .minimal-conn-btn {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: none;
+            font-size: 13px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .minimal-conn-btn.disconnected {
+            background: var(--btn-secondary);
+            border: 1px solid var(--btn-secondary-border);
+            color: var(--btn-secondary-text);
+        }
+        .minimal-conn-btn.connecting {
+            background: var(--btn-secondary);
+            border: 1px solid var(--btn-secondary-border);
+            color: var(--btn-secondary-text);
+        }
+        .minimal-conn-btn.connected {
+            background: var(--btn-secondary);
+            border: 1px solid var(--btn-secondary-border);
+            color: var(--btn-secondary-text);
+        }
+        .minimal-settings-btn {
+            background: var(--btn-secondary);
+            border: 1px solid var(--btn-secondary-border);
+            color: var(--btn-secondary-text);
+            font-size: 16px;
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 6px;
+            line-height: 1;
+        }
     </style>
 </head>
 <body>
@@ -879,6 +950,16 @@
 
         <!-- Transceiver Tab -->
         <div id="tab-transceiver" class="tab-content active">
+            <!-- Minimal mode header -->
+            <div class="minimal-header">
+                <button id="minimalConnBtn" class="minimal-conn-btn disconnected" onclick="toggleConnection()">
+                    <span class="connection-indicator"></span>
+                    <span class="minimal-conn-text">未接続</span>
+                </button>
+                <div id="minimalSpeakerStatus" style="flex: 1; text-align: center; font-size: 13px;">待機中</div>
+                <button class="minimal-settings-btn" onclick="openSettings()">⚙️</button>
+            </div>
+
             <!-- Connection Toggle -->
             <button id="connectionToggle" class="connection-toggle disconnected" onclick="toggleConnection()">
                 <span class="connection-indicator"></span>
@@ -924,7 +1005,7 @@
 
             <audio id="audio" autoplay playsinline></audio>
 
-            <div style="margin-top: 12px; display: flex; align-items: center; gap: 10px;">
+            <div class="minimal-hide" style="margin-top: 12px; display: flex; align-items: center; gap: 10px;">
                 <span style="font-size: 20px;" title="PCストリーム">🔈</span>
                 <input type="range" id="volumeSlider" min="0" max="100" value="40"
                        style="flex: 1; height: 8px; cursor: pointer; accent-color: var(--accent);"
@@ -932,7 +1013,7 @@
                 <span id="volumeValue" style="min-width: 40px; text-align: right;">40%</span>
             </div>
 
-            <div style="margin-top: 8px; display: flex; align-items: center; gap: 10px;">
+            <div class="minimal-hide" style="margin-top: 8px; display: flex; align-items: center; gap: 10px;">
                 <span style="font-size: 20px;" title="P2P音声">👥</span>
                 <input type="range" id="p2pVolumeSlider" min="0" max="100" value="40"
                        style="flex: 1; height: 8px; cursor: pointer; accent-color: var(--slider-p2p);"
@@ -940,17 +1021,17 @@
                 <span id="p2pVolumeValue" style="min-width: 40px; text-align: right;">40%</span>
             </div>
 
-            <div style="margin-top: 10px;">
+            <div class="minimal-hide" style="margin-top: 10px;">
                 <button onclick="openSettings()" style="background: var(--btn-secondary); border: 1px solid var(--btn-secondary-border); color: var(--btn-secondary-text); padding: 8px 16px; font-size: 14px; width: 100%;">⚙️ 設定</button>
             </div>
 
-            <div id="debugButtonContainer" style="margin-top: 10px; display: none;">
+            <div id="debugButtonContainer" class="minimal-hide" style="margin-top: 10px; display: none;">
                 <button onclick="toggleDebug()" style="background: var(--border-main); padding: 8px 16px; font-size: 14px; width: 100%;">デバッグ表示</button>
             </div>
 
-            <div id="debug" style="margin-top: 10px; font-size: 12px; color: var(--text-tertiary); text-align: left; max-height: 200px; overflow-y: auto; background: var(--bg-input); padding: 12px; border-radius: 6px; word-break: break-all; display: none;">
+            <div id="debug" class="minimal-hide" style="margin-top: 10px; font-size: 12px; color: var(--text-tertiary); text-align: left; max-height: 200px; overflow-y: auto; background: var(--bg-input); padding: 12px; border-radius: 6px; word-break: break-all; display: none;">
             </div>
-            <button id="sendLogsBtn" onclick="sendLogsToServer()" style="margin-top: 8px; background: var(--bg-section); padding: 8px 16px; font-size: 14px; width: 100%; display: none;">📤 ログをサーバーに送信</button>
+            <button id="sendLogsBtn" class="minimal-hide" onclick="sendLogsToServer()" style="margin-top: 8px; background: var(--bg-section); padding: 8px 16px; font-size: 14px; width: 100%; display: none;">📤 ログをサーバーに送信</button>
         </div>
 
         <!-- AI Tab -->
@@ -1105,6 +1186,13 @@
                     </div>
                 </div>
                 <div style="margin-bottom: 20px;">
+                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" id="minimalModeToggle" onchange="toggleMinimalMode(this.checked)" style="width: 18px; height: 18px; cursor: pointer;">
+                        <span>最小表示モード</span>
+                    </label>
+                    <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">iframe埋め込み用のコンパクト表示</div>
+                </div>
+                <div style="margin-bottom: 20px;">
                     <div style="margin-bottom: 10px; font-weight: 500;">テーマ</div>
                     <div class="theme-picker" id="themePicker">
                         <div style="text-align: center;"><button class="theme-swatch" data-theme="midnight" style="--swatch: #60efff" title="Midnight"></button><div class="theme-swatch-label">Midnight</div></div>
@@ -1163,6 +1251,15 @@
         });
         // 初期状態のアクティブ表示
         setTheme(localStorage.getItem('ptt-theme') || 'midnight');
+
+        // 最小表示モード切り替え
+        function toggleMinimalMode(enabled) {
+            const mode = enabled ? 'minimal' : 'normal';
+            document.documentElement.dataset.mode = mode;
+            localStorage.setItem('ptt-mode', mode);
+        }
+        // 初期状態
+        document.getElementById('minimalModeToggle').checked = document.documentElement.dataset.mode === 'minimal';
     </script>
     <script>
         // Service Worker登録
