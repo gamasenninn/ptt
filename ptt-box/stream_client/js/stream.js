@@ -332,6 +332,8 @@ function updateConnectionToggle(state) {
     const text = toggle.querySelector('.connection-text');
     toggle.className = 'connection-toggle ' + state;
 
+    const minimalTexts = { disconnected: '未接続', connecting: '接続中...', preparing: '準備中', connected: '接続済み', blocked: 'ブロック' };
+
     switch (state) {
         case 'disconnected':
             text.textContent = '未接続 - タップで接続';
@@ -348,6 +350,14 @@ function updateConnectionToggle(state) {
         case 'blocked':
             text.textContent = '別のタブで接続中です - タップで再試行';
             break;
+    }
+
+    // Minimal mode header sync
+    const minBtn = document.getElementById('minimalConnBtn');
+    if (minBtn) {
+        minBtn.className = 'minimal-conn-btn ' + state;
+        const minText = minBtn.querySelector('.minimal-conn-text');
+        if (minText) minText.textContent = minimalTexts[state] || state;
     }
 }
 
@@ -2048,19 +2058,12 @@ function updatePttState(state, speakerName) {
     }
 
     // 送信者名表示更新
-    if (speakerNameEl) {
-        switch (state) {
-            case 'idle':
-                speakerNameEl.textContent = '待機中';
-                break;
-            case 'transmitting':
-                speakerNameEl.textContent = '送信中: ' + speakerName;
-                break;
-            case 'receiving':
-                speakerNameEl.textContent = '受信中: ' + speakerName;
-                break;
-        }
-    }
+    const statusText = state === 'idle' ? '待機中' : state === 'transmitting' ? '送信中: ' + speakerName : '受信中: ' + speakerName;
+    if (speakerNameEl) speakerNameEl.textContent = statusText;
+
+    // Minimal mode speaker status sync
+    const minSpeaker = document.getElementById('minimalSpeakerStatus');
+    if (minSpeaker) minSpeaker.textContent = statusText;
 }
 
 // ========== P2P接続管理 ==========
