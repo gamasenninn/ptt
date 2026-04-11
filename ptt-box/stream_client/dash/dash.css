@@ -6,8 +6,8 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #1a1a2e;
-    color: #eee;
+    background: var(--bg-page);
+    color: var(--text-primary);
     min-height: 100vh;
 }
 
@@ -27,7 +27,7 @@ body {
 }
 
 .login-box {
-    background: #16213e;
+    background: var(--bg-card);
     padding: 2rem;
     border-radius: 8px;
     text-align: center;
@@ -36,25 +36,25 @@ body {
 
 .login-box h1 {
     margin-bottom: 1.5rem;
-    color: #60efff;
+    color: var(--accent);
 }
 
 .login-box input {
     width: 100%;
     padding: 0.75rem;
     margin-bottom: 1rem;
-    border: 1px solid #333;
+    border: 1px solid var(--border-main);
     border-radius: 4px;
-    background: #0f0f23;
-    color: #eee;
+    background: var(--bg-chat);
+    color: var(--text-primary);
     font-size: 1rem;
 }
 
 .login-box button {
     width: 100%;
     padding: 0.75rem;
-    background: #60efff;
-    color: #000;
+    background: var(--accent);
+    color: var(--text-dark);
     border: none;
     border-radius: 4px;
     font-size: 1rem;
@@ -62,11 +62,11 @@ body {
 }
 
 .login-box button:hover {
-    background: #4dd9e6;
+    background: var(--accent-hover);
 }
 
 .error {
-    color: #e94560;
+    color: var(--status-error);
     margin-top: 1rem;
 }
 
@@ -81,13 +81,13 @@ header {
     justify-content: space-between;
     align-items: center;
     padding: 1rem 2rem;
-    background: #16213e;
-    border-bottom: 1px solid #333;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-main);
 }
 
 header h1 {
     font-size: 1.25rem;
-    color: #60efff;
+    color: var(--accent);
 }
 
 main {
@@ -102,14 +102,14 @@ main {
 }
 
 .card {
-    background: #16213e;
+    background: var(--bg-card);
     border-radius: 8px;
     padding: 1.5rem;
 }
 
 .card h2 {
     font-size: 1rem;
-    color: #888;
+    color: var(--text-secondary);
     margin-bottom: 1rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -133,7 +133,7 @@ main {
 
 .status-item .label {
     font-size: 0.75rem;
-    color: #888;
+    color: var(--text-secondary);
     margin-bottom: 0.25rem;
 }
 
@@ -180,17 +180,17 @@ main {
 }
 
 .status-inline .label {
-    color: #888;
+    color: var(--text-secondary);
     font-size: 0.75rem;
 }
 
 .status-inline .value {
     font-weight: 600;
-    color: #eee;
+    color: var(--text-primary);
 }
 
 .status-inline .value-sub {
-    color: #888;
+    color: var(--text-secondary);
     font-size: 0.8rem;
 }
 
@@ -228,18 +228,18 @@ button:disabled {
 }
 
 .btn-secondary {
-    background: #333;
-    color: #eee;
+    background: var(--border-main);
+    color: var(--text-primary);
 }
 
 .btn-danger {
-    background: #e94560;
-    color: #fff;
+    background: var(--status-error);
+    color: var(--text-primary);
 }
 
 .btn-warning {
-    background: #f5a623;
-    color: #000;
+    background: var(--status-warning);
+    color: var(--text-dark);
 }
 
 .btn-small {
@@ -256,17 +256,17 @@ table {
 th, td {
     padding: 0.75rem;
     text-align: left;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid var(--border-main);
 }
 
 th {
-    color: #888;
+    color: var(--text-secondary);
     font-size: 0.75rem;
     text-transform: uppercase;
 }
 
 tbody tr:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--table-hover);
 }
 
 /* フッター */
@@ -274,35 +274,35 @@ footer {
     display: flex;
     justify-content: space-between;
     padding: 0.75rem 2rem;
-    background: #16213e;
-    border-top: 1px solid #333;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border-main);
     font-size: 0.75rem;
-    color: #888;
+    color: var(--text-secondary);
 }
 
 /* 状態インジケーター */
 .state-idle {
-    color: #888;
+    color: var(--text-secondary);
 }
 
 .state-transmitting {
-    color: #e94560;
+    color: var(--status-error);
 }
 
 .state-running {
-    color: #4ade80;
+    color: var(--status-success);
 }
 
 .state-stopped {
-    color: #888;
+    color: var(--text-secondary);
 }
 
 .state-connected {
-    color: #4ade80;
+    color: var(--status-success);
 }
 
 .state-disconnected {
-    color: #e94560;
+    color: var(--status-error);
 }
 
 /* モバイル対応 */

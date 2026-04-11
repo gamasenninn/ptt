@@ -1,0 +1,249 @@
+/* ==========================================================================
+   PTT Web Transceiver - Color Theme System
+   CSS変数によるカラーテーマ管理
+   ========================================================================== */
+
+:root, [data-theme="midnight"] {
+    /* 背景 */
+    --bg-page: #1a1a2e;
+    --bg-card: #16213e;
+    --bg-section: #0f3460;
+    --bg-input: #0a0a15;
+    --bg-chat: #0f0f23;
+    --bg-meter: #0a1628;
+    --bg-hover: #1a4a7a;
+
+    /* アクセント */
+    --accent: #60efff;
+    --accent-hover: #4dd9e6;
+    --accent-ai: #00d9ff;
+    --accent-ai-hover: #00b8d9;
+    --accent-on-accent: #000;          /* アクセント背景上のテキスト */
+    --accent-on-accent-dark: #1a1a2e;  /* アクセント背景上のテキスト（濃色） */
+
+    /* ステータス — 全ダークテーマ共通 */
+    --status-error: #e94560;
+    --status-error-hover: #ff6b6b;
+    --status-error-bg: #641220;
+    --status-error-text: #f8d7da;
+    --status-error-hint: #f87171;
+    --status-success: #4ade80;
+    --status-success-soft: #95d5b2;
+    --status-success-bg: #1b4332;
+    --status-success-bright: #2ed573;
+    --status-success-border-dim: #1a8a4e;
+    --status-warning: #f5a623;
+    --status-warning-bg: #5c4d1a;
+    --status-service-up: #4caf50;
+    --status-service-down: #f44336;
+    --status-service-unknown: #9e9e9e;
+    --status-blocked-bg: #4a1942;
+    --status-blocked-text: #e8b4d8;
+    --status-neutral: #f4f1de;
+
+    /* テキスト */
+    --text-primary: #eee;
+    --text-secondary: #888;
+    --text-tertiary: #aaa;
+    --text-muted: #666;
+    --text-light: #ccc;
+    --text-dim: #bbb;
+    --text-white: #fff;
+    --text-dark: #000;
+    --text-streaming: #ddd;
+
+    /* ボーダー */
+    --border-main: #333;
+    --border-medium: #444;
+    --border-light: #555;
+
+    /* ボタン */
+    --btn-secondary: #3d405b;
+    --btn-secondary-hover: #5c5f7e;
+    --btn-disabled: #555;
+    --btn-voice: #4a4a6a;
+    --btn-voice-hover: #5a5a7a;
+    --btn-stop: #ff6b6b;
+    --btn-stop-hover: #ee5a5a;
+
+    /* チャット */
+    --chat-user-bg: #1e3a5f;
+    --chat-ai-bg: #16213e;
+    --chat-divider: #2a2a3a;
+
+    /* 半透明 */
+    --accent-alpha-10: rgba(96, 239, 255, 0.1);
+    --status-error-alpha-50: rgba(233, 69, 96, 0.5);
+    --status-success-alpha-50: rgba(149, 213, 178, 0.5);
+    --service-error-alpha-20: rgba(244, 67, 54, 0.2);
+    --overlay-dark: rgba(0, 0, 0, 0.8);
+    --overlay-medium: rgba(0, 0, 0, 0.5);
+    --shadow-popup: rgba(0, 0, 0, 0.5);
+    --shadow-toast: rgba(0, 0, 0, 0.4);
+    --toast-bg: rgba(22, 33, 62, 0.92);
+    --toast-border: rgba(255, 255, 255, 0.1);
+    --table-hover: rgba(255, 255, 255, 0.05);
+
+    /* グラデーション */
+    --gradient-volume-start: #00ff87;
+    --gradient-volume-end: #60efff;
+    --gradient-progress-start: #60efff;
+    --gradient-progress-end: #e94560;
+
+    /* スライダー */
+    --slider-p2p: #f39c12;
+    --slider-mic: #27ae60;
+}
+
+/* ==========================================================================
+   Teal Theme — 落ち着いた青緑アクセント
+   ========================================================================== */
+[data-theme="teal"] {
+    --accent: #00B4A0;
+    --accent-hover: #009E8C;
+    --accent-ai: #00C9B2;
+    --accent-ai-hover: #00A896;
+    --accent-on-accent: #fff;
+    --accent-on-accent-dark: #fff;
+    --accent-alpha-10: rgba(0, 180, 160, 0.1);
+    --gradient-volume-end: #00B4A0;
+    --gradient-progress-start: #00B4A0;
+}
+
+/* ==========================================================================
+   Ocean Theme — クールな深海ブルー
+   ========================================================================== */
+[data-theme="ocean"] {
+    --accent: #4A90D9;
+    --accent-hover: #3A7BC8;
+    --accent-ai: #5BA0E9;
+    --accent-ai-hover: #4A90D9;
+    --accent-on-accent: #fff;
+    --accent-on-accent-dark: #fff;
+    --accent-alpha-10: rgba(74, 144, 217, 0.1);
+    --gradient-volume-end: #4A90D9;
+    --gradient-progress-start: #4A90D9;
+}
+
+/* ==========================================================================
+   Sunset Theme — 暖かいオレンジアクセント
+   ========================================================================== */
+[data-theme="sunset"] {
+    --accent: #FF8A65;
+    --accent-hover: #FF7043;
+    --accent-ai: #FFA280;
+    --accent-ai-hover: #FF8A65;
+    --accent-on-accent: #1a1a2e;
+    --accent-on-accent-dark: #1a1a2e;
+    --accent-alpha-10: rgba(255, 138, 101, 0.1);
+    --gradient-volume-end: #FF8A65;
+    --gradient-progress-start: #FF8A65;
+}
+
+/* ==========================================================================
+   Light Theme — 明るい背景
+   ========================================================================== */
+[data-theme="light"] {
+    --bg-page: #f0f2f5;
+    --bg-card: #ffffff;
+    --bg-section: #e8edf2;
+    --bg-input: #f5f5f5;
+    --bg-chat: #fafafa;
+    --bg-meter: #e0e0e0;
+    --bg-hover: #dce4ed;
+
+    --accent: #0097A7;
+    --accent-hover: #00838F;
+    --accent-ai: #00ACC1;
+    --accent-ai-hover: #0097A7;
+    --accent-on-accent: #fff;
+    --accent-on-accent-dark: #fff;
+
+    --text-primary: #222;
+    --text-secondary: #666;
+    --text-tertiary: #777;
+    --text-muted: #999;
+    --text-light: #555;
+    --text-dim: #777;
+    --text-white: #fff;
+    --text-dark: #fff;
+    --text-streaming: #333;
+
+    --border-main: #ddd;
+    --border-medium: #ccc;
+    --border-light: #bbb;
+
+    --btn-secondary: #e0e0e0;
+    --btn-secondary-hover: #d0d0d0;
+    --btn-disabled: #ccc;
+    --btn-voice: #d8d8e8;
+    --btn-voice-hover: #c8c8d8;
+    --btn-stop: #ef5350;
+    --btn-stop-hover: #e53935;
+
+    --chat-user-bg: #e3f0fc;
+    --chat-ai-bg: #f5f5f5;
+    --chat-divider: #e0e0e0;
+
+    --accent-alpha-10: rgba(0, 151, 167, 0.1);
+    --status-error-alpha-50: rgba(233, 69, 96, 0.4);
+    --status-success-alpha-50: rgba(76, 175, 80, 0.4);
+    --service-error-alpha-20: rgba(244, 67, 54, 0.1);
+    --overlay-dark: rgba(0, 0, 0, 0.5);
+    --overlay-medium: rgba(0, 0, 0, 0.3);
+    --shadow-popup: rgba(0, 0, 0, 0.2);
+    --shadow-toast: rgba(0, 0, 0, 0.15);
+    --toast-bg: rgba(255, 255, 255, 0.95);
+    --toast-border: rgba(0, 0, 0, 0.1);
+    --table-hover: rgba(0, 0, 0, 0.03);
+
+    --gradient-volume-start: #4CAF50;
+    --gradient-volume-end: #0097A7;
+    --gradient-progress-start: #0097A7;
+    --gradient-progress-end: #e94560;
+
+    --status-error-bg: #fce4ec;
+    --status-error-text: #c62828;
+    --status-success-bg: #e8f5e9;
+    --status-neutral: #555;
+    --status-blocked-bg: #f3e5f5;
+    --status-blocked-text: #7b1fa2;
+    --status-warning-bg: #fff8e1;
+}
+
+/* ==========================================================================
+   Theme Picker UI
+   ========================================================================== */
+.theme-picker {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+.theme-swatch {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--swatch);
+    border: 3px solid transparent;
+    cursor: pointer;
+    transition: border-color 0.2s, transform 0.15s;
+    padding: 0;
+}
+.theme-swatch:hover {
+    transform: scale(1.1);
+}
+.theme-swatch.active {
+    border-color: var(--text-primary);
+}
+.theme-swatch-label {
+    font-size: 10px;
+    color: var(--text-secondary);
+    text-align: center;
+    margin-top: 4px;
+}
+
+/* ステータスカラーのユーティリティクラス（JS動的切替用） */
+.status-color-error   { color: var(--status-error) !important; }
+.status-color-success { color: var(--status-success-bright) !important; }
+.status-color-muted   { color: var(--text-secondary) !important; }

@@ -1,9 +1,10 @@
 // Service Worker for Webトランシーバー PWA
 
-const CACHE_NAME = 'ptt-cache-v2';
+const CACHE_NAME = 'ptt-cache-v3';
 const ASSETS_TO_CACHE = [
     '/',
     '/index.html',
+    '/themes.css',
     '/js/stream.js',
     '/js/history.js',
     '/js/info.js',
