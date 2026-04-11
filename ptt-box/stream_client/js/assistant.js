@@ -764,10 +764,10 @@ function setupAISpeechRecognition() {
             if (statusEl) {
                 if (event.error === 'not-allowed') {
                     statusEl.textContent = 'マイク許可なし';
-                    statusEl.style.color = '#ff4757';
+                    statusEl.className = 'ai-mic-status status-color-error';
                 } else {
                     statusEl.textContent = 'エラー: ' + event.error;
-                    statusEl.style.color = '#ff4757';
+                    statusEl.className = 'ai-mic-status status-color-error';
                 }
             }
             stopAISpeechRecognition();
@@ -796,7 +796,7 @@ function setupAISpeechRecognition() {
         debugLog('AI SpeechRecognition setup error: ' + err.message);
         if (statusEl) {
             statusEl.textContent = '初期化エラー';
-            statusEl.style.color = '#ff4757';
+            statusEl.className = 'ai-mic-status status-color-error';
         }
         return false;
     }
@@ -861,7 +861,7 @@ function startAISpeechRecognition() {
         // 送信ボタンは有効のまま（押すと音声確定→送信の1ステップ操作）
         if (statusEl) {
             statusEl.textContent = '音声認識中...';
-            statusEl.style.color = '#2ed573';
+            statusEl.className = 'ai-mic-status status-color-success';
         }
         debugLog('AI voice input started');
 
@@ -888,7 +888,7 @@ function startAISpeechRecognition() {
         }
         if (statusEl) {
             statusEl.textContent = '開始エラー: ' + e.message;
-            statusEl.style.color = '#ff4757';
+            statusEl.className = 'ai-mic-status status-color-error';
         }
     }
 }
@@ -929,7 +929,7 @@ function stopAISpeechRecognition() {
     debugLog('AI voice input: ' + (aiVoiceFinalText || 'no text'));
     if (statusEl) {
         statusEl.textContent = 'タップで音声入力';
-        statusEl.style.color = '#888';
+        statusEl.className = 'ai-mic-status status-color-muted';
     }
 
     aiVoiceFinalText = '';
@@ -1012,7 +1012,7 @@ function startVoskRecognition() {
         voiceBtn.textContent = '🎤 聞き取り中...';
         if (statusEl) {
             statusEl.textContent = 'Vosk認識中...';
-            statusEl.style.color = '#2ed573';
+            statusEl.className = 'ai-mic-status status-color-success';
         }
 
         // Start capturing audio
@@ -1044,7 +1044,7 @@ function startVoskRecognition() {
         debugLog('Vosk WebSocket error');
         if (statusEl) {
             statusEl.textContent = 'Vosk接続エラー';
-            statusEl.style.color = '#ff4757';
+            statusEl.className = 'ai-mic-status status-color-error';
         }
     };
 
@@ -1099,7 +1099,7 @@ function startVoskAudioCapture() {
         var statusEl = document.getElementById('aiMicStatus');
         if (statusEl) {
             statusEl.textContent = 'マイク許可なし';
-            statusEl.style.color = '#ff4757';
+            statusEl.className = 'ai-mic-status status-color-error';
         }
         stopVoskRecognition();
     });
@@ -1168,7 +1168,7 @@ function stopVoskRecognition() {
     debugLog('Vosk voice input: ' + (aiVoiceFinalText || 'no text'));
     if (statusEl) {
         statusEl.textContent = 'タップで音声入力';
-        statusEl.style.color = '#888';
+        statusEl.className = 'ai-mic-status status-color-muted';
     }
 
     aiVoiceFinalText = '';
@@ -1201,7 +1201,7 @@ function initAIAssistant() {
         voiceBtn.textContent = '非対応';
         if (status) {
             status.textContent = '音声認識非対応';
-            status.style.color = '#ff4757';
+            status.className = 'ai-mic-status status-color-error';
         }
         debugLog('SpeechRecognition not supported');
         return;
@@ -1241,7 +1241,7 @@ function initAIAssistant() {
     // 初期状態を表示
     if (status) {
         status.textContent = 'タップで音声入力';
-        status.style.color = '#888';
+        status.className = 'ai-mic-status status-color-muted';
     }
 
     // AIタブ内の操作でWake Lockを延長

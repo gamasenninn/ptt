@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+    <script>document.documentElement.dataset.theme = localStorage.getItem('ptt-theme') || 'midnight';</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#16213e">
@@ -9,6 +10,7 @@
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
     <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="stylesheet" href="themes.css">
     <title>Webトランシーバー</title>
     <style>
         * {
@@ -22,12 +24,12 @@
             max-width: 600px;
             margin: 5px auto;
             padding: 5px;
-            background: #1a1a2e;
-            color: #eee;
+            background: var(--bg-page);
+            color: var(--text-primary);
             overscroll-behavior: none;  /* プルダウンリロード抑制 */
         }
         .container {
-            background: #16213e;
+            background: var(--bg-card);
             border-radius: 12px;
             padding: 10px 15px;
             text-align: center;
@@ -48,38 +50,38 @@
             transition: all 0.2s;
         }
         .connection-toggle.disconnected {
-            background: #641220 !important;
-            color: #f8d7da;
+            background: var(--status-error-bg) !important;
+            color: var(--status-error-text);
         }
         .connection-toggle.connecting {
-            background: #3d405b !important;
-            color: #f4f1de;
+            background: var(--btn-secondary) !important;
+            color: var(--status-neutral);
         }
         .connection-toggle.connected {
-            background: #1b4332 !important;
-            color: #95d5b2;
+            background: var(--status-success-bg) !important;
+            color: var(--status-success-soft);
         }
         .connection-toggle.preparing {
-            background: #5c4d1a !important;
-            color: #f4f1de;
+            background: var(--status-warning-bg) !important;
+            color: var(--status-neutral);
         }
         .connection-toggle.blocked {
-            background: #4a1942 !important;
-            color: #e8b4d8;
+            background: var(--status-blocked-bg) !important;
+            color: var(--status-blocked-text);
         }
         .connection-indicator {
             width: 10px;
             height: 10px;
             border-radius: 50%;
         }
-        .disconnected .connection-indicator { background: #e94560; }
-        .connecting .connection-indicator { background: #f4f1de; animation: pulse 1s infinite; }
-        .connected .connection-indicator { background: #95d5b2; }
-        .preparing .connection-indicator { background: #f4f1de; animation: pulse 1s infinite; }
-        .blocked .connection-indicator { background: #e8b4d8; }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]) {
-            background: #e94560;
-            color: white;
+        .disconnected .connection-indicator { background: var(--status-error); }
+        .connecting .connection-indicator { background: var(--status-neutral); animation: pulse 1s infinite; }
+        .connected .connection-indicator { background: var(--status-success-soft); }
+        .preparing .connection-indicator { background: var(--status-neutral); animation: pulse 1s infinite; }
+        .blocked .connection-indicator { background: var(--status-blocked-text); }
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch) {
+            background: var(--status-error);
+            color: var(--text-white);
             border: none;
             padding: 12px 30px;
             font-size: 16px;
@@ -88,28 +90,30 @@
             margin: 5px;
             transition: background 0.2s;
         }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):hover:not(:disabled) {
-            background: #ff6b6b;
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):hover:not(:disabled) {
+            background: var(--status-error-hover);
         }
-        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):disabled {
-            background: #555;
+        button:not(.ptt-button):not(.clients-badge):not(.history-edit-btn):not(.connection-toggle):not(.tab-btn):not(.modal-close):not(.clients-popup-close):not([class^="ai-btn"]):not(.theme-swatch):disabled {
+            background: var(--btn-disabled);
             cursor: not-allowed;
         }
         button:not(.ptt-button).secondary {
-            background: #3d405b;
+            background: var(--btn-secondary);
+            border: 1px solid var(--btn-secondary-border);
+            color: var(--btn-secondary-text);
         }
         button:not(.ptt-button).secondary:hover:not(:disabled) {
-            background: #5c5f7e;
+            background: var(--btn-secondary-hover);
         }
         .volume-meter {
             height: 4px;
-            background: #0a1628;
+            background: var(--bg-meter);
             border-radius: 2px;
             overflow: hidden;
         }
         .volume-bar {
             height: 100%;
-            background: linear-gradient(90deg, #00ff87, #60efff);
+            background: linear-gradient(90deg, var(--gradient-volume-start), var(--gradient-volume-end));
             width: 0%;
             transition: width 0.05s;
             border-radius: 2px;
@@ -117,7 +121,7 @@
         .info {
             margin-top: 20px;
             font-size: 12px;
-            color: #888;
+            color: var(--text-secondary);
         }
         /* PTT Button */
         .ptt-container {
@@ -135,24 +139,24 @@
             transition: border-color 0.15s, box-shadow 0.15s;
         }
         .ptt-ring.active {
-            border-color: #e94560;
-            box-shadow: 0 0 30px rgba(233, 69, 96, 0.5);
+            border-color: var(--status-error);
+            box-shadow: 0 0 30px var(--status-error-alpha-50);
         }
         .ptt-ring.transmitting {
-            border-color: #e94560;
-            box-shadow: 0 0 30px rgba(233, 69, 96, 0.5);
+            border-color: var(--status-error);
+            box-shadow: 0 0 30px var(--status-error-alpha-50);
         }
         .ptt-ring.receiving {
-            border-color: #95d5b2;
-            box-shadow: 0 0 30px rgba(149, 213, 178, 0.5);
+            border-color: var(--status-success-soft);
+            box-shadow: 0 0 30px var(--status-success-alpha-50);
         }
         .ptt-button {
             width: 140px;
             height: 140px;
             border-radius: 50%;
-            background: #3d405b;
-            border: 5px solid #555;
-            color: #eee;
+            background: var(--btn-secondary);
+            border: 5px solid var(--border-light);
+            color: var(--text-primary);
             cursor: pointer;
             display: flex;
             flex-direction: column;
@@ -170,8 +174,8 @@
         .ptt-button.transmitting,
         .ptt-button.receiving {
             /* 内側ボタンは色を変えない（外側リングが変わる） */
-            background: #3d405b !important;
-            border-color: #555 !important;
+            background: var(--btn-secondary) !important;
+            border-color: var(--border-light) !important;
             box-shadow: none !important;
         }
         .ptt-button.pressing,
@@ -179,8 +183,8 @@
             transform: scale(0.95);
         }
         .ptt-button:disabled {
-            background: #333;
-            border-color: #444;
+            background: var(--border-main);
+            border-color: var(--border-medium);
             cursor: not-allowed;
             opacity: 0.5;
         }
@@ -191,8 +195,8 @@
         @media (hover: none) {
             .ptt-button:hover,
             .ptt-button:focus {
-                background: #3d405b;
-                border-color: #555;
+                background: var(--btn-secondary);
+                border-color: var(--border-light);
                 transform: none;
                 box-shadow: none;
             }
@@ -212,7 +216,7 @@
             gap: 8px;
             width: 100%;
             padding: 6px 15px;
-            background: #0f3460;
+            background: var(--bg-section);
             border-radius: 8px;
             margin: 0 0 8px 0;
             font-size: 13px;
@@ -221,14 +225,14 @@
             width: 10px;
             height: 10px;
             border-radius: 50%;
-            background: #666;
+            background: var(--text-muted);
         }
         .speaker-indicator.transmitting {
-            background: #e94560;
+            background: var(--status-error);
             animation: pulse 1s infinite;
         }
         .speaker-indicator.receiving {
-            background: #95d5b2;
+            background: var(--status-success-soft);
             animation: pulse 1s infinite;
         }
         @keyframes pulse {
@@ -243,12 +247,12 @@
             gap: 8px;
             font-size: 11px;
             padding: 4px 8px;
-            background: rgba(244, 67, 54, 0.2);
+            background: var(--service-error-alpha-20);
             border-radius: 4px;
             margin-bottom: 8px;
         }
         .service-status.hidden { display: none; }
-        .service-status-label { color: #f44336; }
+        .service-status-label { color: var(--status-service-down); }
         .service-item {
             display: flex;
             align-items: center;
@@ -259,10 +263,10 @@
             height: 8px;
             border-radius: 50%;
         }
-        .service-dot.up { background: #4caf50; }
-        .service-dot.down { background: #f44336; }
-        .service-dot.unknown { background: #9e9e9e; }
-        .service-name { color: #ccc; }
+        .service-dot.up { background: var(--status-service-up); }
+        .service-dot.down { background: var(--status-service-down); }
+        .service-dot.unknown { background: var(--status-service-unknown); }
+        .service-name { color: var(--text-light); }
 
         /* Tab Navigation */
         .tab-nav {
@@ -274,19 +278,19 @@
             padding: 8px;
             background: transparent !important;
             border: none;
-            color: #666;
+            color: var(--text-muted);
             cursor: pointer;
             font-size: 14px;
             margin: 0;
-            border-bottom: 2px solid #0f3460;
+            border-bottom: 2px solid var(--bg-section);
             transition: color 0.2s, border-color 0.2s;
         }
         .tab-btn:hover {
-            color: #aaa;
+            color: var(--text-tertiary);
         }
         .tab-btn.active {
-            color: #60efff;
-            border-bottom-color: #60efff;
+            color: var(--accent);
+            border-bottom-color: var(--accent);
         }
         .tab-content {
             display: none;
@@ -308,7 +312,7 @@
             justify-content: center;
             align-items: center;
             padding: 15px;
-            color: #60efff;
+            color: var(--accent);
             font-size: 14px;
         }
         .pull-indicator.visible {
@@ -320,7 +324,7 @@
         .pull-indicator .spinner {
             width: 20px;
             height: 20px;
-            border: 2px solid #60efff;
+            border: 2px solid var(--accent);
             border-top-color: transparent;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
@@ -336,7 +340,7 @@
             display: flex;
             flex-direction: column;
             padding: 12px;
-            background: #0f3460;
+            background: var(--bg-section);
             border-radius: 8px;
             margin-bottom: 8px;
             cursor: pointer;
@@ -344,10 +348,10 @@
             gap: 6px;
         }
         .history-item:hover {
-            background: #1a4a7a;
+            background: var(--bg-hover);
         }
         .history-item.playing {
-            background: #1b4332;
+            background: var(--status-success-bg);
         }
         .history-row1 {
             display: flex;
@@ -359,13 +363,13 @@
         }
         .history-play-icon {
             font-size: 16px;
-            color: #888;
+            color: var(--text-secondary);
             flex-shrink: 0;
             width: 20px;
             text-align: center;
         }
         .history-item.playing .history-play-icon {
-            color: #e94560;
+            color: var(--status-error);
         }
         .source-badge {
             font-size: 16px;
@@ -373,8 +377,8 @@
         }
         .client-id {
             font-size: 0.75em;
-            color: #60efff;
-            background: rgba(96, 239, 255, 0.1);
+            color: var(--accent);
+            background: var(--accent-alpha-10);
             padding: 2px 6px;
             border-radius: 3px;
             font-family: monospace;
@@ -382,20 +386,20 @@
         }
         .history-datetime {
             font-size: 12px;
-            color: #60efff;
+            color: var(--accent);
         }
         .history-preview {
             font-size: 13px;
-            color: #aaa;
+            color: var(--text-tertiary);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
         .history-edit-btn {
             padding: 6px 12px;
-            background: #3d405b;
-            border: none;
-            color: #aaa;
+            background: var(--btn-secondary);
+            border: 1px solid var(--btn-secondary-border);
+            color: var(--btn-secondary-text);
             font-size: 12px;
             border-radius: 4px;
             cursor: pointer;
@@ -403,17 +407,17 @@
             margin-left: auto;
         }
         .history-edit-btn:hover {
-            background: #5c5f7e;
-            color: #fff;
+            background: var(--btn-secondary-hover);
+            color: var(--text-white);
         }
         .history-empty {
             text-align: center;
-            color: #666;
+            color: var(--text-muted);
             padding: 40px 20px;
         }
         .history-loading {
             text-align: center;
-            color: #888;
+            color: var(--text-secondary);
             padding: 40px 20px;
         }
 
@@ -425,7 +429,7 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.8);
+            background: var(--overlay-dark);
             z-index: 1000;
             align-items: center;
             justify-content: center;
@@ -435,7 +439,7 @@
             display: flex;
         }
         .modal-content {
-            background: #16213e;
+            background: var(--bg-card);
             border-radius: 12px;
             width: 100%;
             max-width: 600px;
@@ -448,7 +452,7 @@
             justify-content: space-between;
             align-items: center;
             padding: 15px 20px;
-            border-bottom: 1px solid #0f3460;
+            border-bottom: 1px solid var(--bg-section);
         }
         .modal-title {
             font-size: 16px;
@@ -457,7 +461,7 @@
         .modal-close {
             background: none;
             border: none;
-            color: #888;
+            color: var(--text-secondary);
             font-size: 24px;
             cursor: pointer;
             padding: 0;
@@ -471,10 +475,10 @@
         .modal-textarea {
             width: 100%;
             height: 300px;
-            background: #0a0a15;
-            border: 1px solid #0f3460;
+            background: var(--bg-input);
+            border: 1px solid var(--bg-section);
             border-radius: 6px;
-            color: #eee;
+            color: var(--text-primary);
             font-family: monospace;
             font-size: 13px;
             padding: 12px;
@@ -484,7 +488,7 @@
             display: flex;
             gap: 10px;
             padding: 15px 20px;
-            border-top: 1px solid #0f3460;
+            border-top: 1px solid var(--bg-section);
             justify-content: flex-end;
         }
         .modal-btn {
@@ -494,21 +498,21 @@
             cursor: pointer;
         }
         .modal-btn-primary {
-            background: #60efff;
-            color: #1a1a2e;
+            background: var(--accent);
+            color: var(--accent-on-accent-dark);
             border: none;
         }
         .modal-btn-secondary {
-            background: #3d405b;
-            color: #eee;
-            border: none;
+            background: var(--btn-secondary);
+            color: var(--btn-secondary-text);
+            border: 1px solid var(--btn-secondary-border);
         }
 
         /* Clients Count */
         .clients-badge {
             background: none;
             border: none;
-            color: #888;
+            color: var(--text-secondary);
             font-size: 12px;
             cursor: pointer;
             display: none;
@@ -516,7 +520,7 @@
             margin: 0;
         }
         .clients-badge:hover {
-            color: #60efff;
+            color: var(--accent);
         }
         .clients-badge.visible {
             display: inline;
@@ -528,14 +532,14 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: #16213e;
+            background: var(--bg-card);
             border-radius: 12px;
             min-width: 250px;
             max-width: 90%;
             max-height: 60vh;
             z-index: 1001;
             display: none;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 4px 20px var(--shadow-popup);
         }
         .clients-popup.active {
             display: block;
@@ -545,7 +549,7 @@
             justify-content: space-between;
             align-items: center;
             padding: 12px 16px;
-            border-bottom: 1px solid #0f3460;
+            border-bottom: 1px solid var(--bg-section);
         }
         .clients-popup-title {
             font-size: 14px;
@@ -554,7 +558,7 @@
         .clients-popup-close {
             background: none;
             border: none;
-            color: #888;
+            color: var(--text-secondary);
             font-size: 20px;
             cursor: pointer;
             padding: 0;
@@ -572,19 +576,19 @@
             padding: 10px 16px;
         }
         .client-item-popup:hover {
-            background: #0f3460;
+            background: var(--bg-section);
         }
         .client-icon {
             font-size: 16px;
         }
         .client-name-popup {
             font-size: 14px;
-            color: #eee;
+            color: var(--text-primary);
         }
         .no-clients-popup {
             padding: 20px;
             text-align: center;
-            color: #888;
+            color: var(--text-secondary);
             font-size: 14px;
         }
         .clients-overlay {
@@ -593,7 +597,7 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
+            background: var(--overlay-medium);
             z-index: 1000;
             display: none;
         }
@@ -609,10 +613,10 @@
         #aiQueryInput {
             width: 100%;
             padding: 12px;
-            border: 1px solid #333;
+            border: 1px solid var(--border-main);
             border-radius: 6px;
-            background: #0a0a15;
-            color: #fff;
+            background: var(--bg-input);
+            color: var(--text-primary);
             font-size: 16px;
             font-family: inherit;
             resize: vertical;
@@ -621,14 +625,14 @@
             overflow-y: auto;
         }
         #aiQueryInput::placeholder {
-            color: #666;
+            color: var(--text-muted);
         }
         @keyframes ai-pulse-border {
-            0%, 100% { border-color: #2ed573; }
-            50% { border-color: #1a8a4e; }
+            0%, 100% { border-color: var(--status-success-bright); }
+            50% { border-color: var(--status-success-border-dim); }
         }
         #aiQueryInput.voice-active {
-            border: 2px solid #2ed573;
+            border: 2px solid var(--status-success-bright);
             animation: ai-pulse-border 1.5s infinite;
         }
         .ai-button-row {
@@ -639,10 +643,10 @@
         .ai-btn-voice {
             flex: 1;
             padding: 12px 16px;
-            background: #4a4a6a;
-            border: none;
+            background: var(--btn-voice);
+            border: 1px solid var(--btn-secondary-border);
             border-radius: 6px;
-            color: #fff;
+            color: var(--btn-secondary-text);
             font-size: 14px;
             cursor: pointer;
             transition: background 0.2s;
@@ -652,29 +656,29 @@
             user-select: none;
         }
         .ai-btn-voice:hover:not(:disabled) {
-            background: #5a5a7a;
+            background: var(--btn-voice-hover);
         }
         .ai-btn-voice:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
         .ai-btn-voice.listening {
-            background: #2ed573;
+            background: var(--status-success-bright);
             animation: pulse 1.5s infinite;
         }
         .ai-btn-send {
             flex: 1;
             padding: 12px 16px;
-            background: #00d9ff;
+            background: var(--accent-ai);
             border: none;
             border-radius: 6px;
-            color: #000;
+            color: var(--accent-on-accent);
             font-size: 14px;
             cursor: pointer;
             transition: background 0.2s;
         }
         .ai-btn-send:hover:not(:disabled) {
-            background: #00b8d9;
+            background: var(--accent-ai-hover);
         }
         .ai-btn-send:disabled {
             opacity: 0.5;
@@ -688,23 +692,23 @@
         }
         .ai-mic-status {
             font-size: 12px;
-            color: #888;
+            color: var(--text-secondary);
         }
         .ai-btn-stop {
             padding: 8px 16px;
-            background: #ff6b6b;
+            background: var(--status-error-hover);
             border: none;
             border-radius: 6px;
-            color: #fff;
+            color: var(--text-white);
             font-size: 13px;
             cursor: pointer;
             transition: background 0.2s;
         }
         .ai-btn-stop:hover {
-            background: #ee5a5a;
+            background: var(--btn-stop-hover);
         }
         .ai-chat-container {
-            background: #0f0f23;
+            background: var(--bg-chat);
             border-radius: 6px;
             min-height: 200px;
             max-height: calc(100vh - 380px);
@@ -713,37 +717,37 @@
         }
         .ai-chat-message {
             padding: 12px 16px;
-            border-bottom: 1px solid #2a2a3a;
+            border-bottom: 1px solid var(--chat-divider);
         }
         .ai-chat-message:last-child {
             border-bottom: none;
         }
         .ai-chat-message.user {
-            background: #1e3a5f;
+            background: var(--chat-user-bg);
         }
         .ai-chat-message.ai {
-            background: #16213e;
+            background: var(--bg-card);
         }
         .ai-chat-message .role {
             font-size: 12px;
             font-weight: bold;
-            color: #00d9ff;
+            color: var(--accent-ai);
             margin-bottom: 6px;
         }
         .ai-chat-message .content {
-            color: #eee;
+            color: var(--text-primary);
             line-height: 1.5;
             font-size: 14px;
         }
         .ai-chat-message .content code {
-            background: #0f0f23;
+            background: var(--bg-chat);
             padding: 2px 6px;
             border-radius: 3px;
             font-family: 'Monaco', 'Menlo', monospace;
             font-size: 0.9em;
         }
         .ai-chat-message .content pre {
-            background: #0f0f23;
+            background: var(--bg-chat);
             padding: 10px;
             border-radius: 4px;
             overflow-x: auto;
@@ -764,21 +768,21 @@
             margin-bottom: 0;
         }
         .ai-chat-message.loading .content {
-            color: #888;
+            color: var(--text-secondary);
             font-style: italic;
         }
         .ai-chat-message.error .content {
-            color: #ff6b6b;
+            color: var(--status-error-hover);
         }
         .ai-chat-message.streaming .content {
-            color: #ddd;
+            color: var(--text-streaming);
         }
         .ai-chat-message.streaming .ai-status {
-            color: #888;
+            color: var(--text-secondary);
             font-style: italic;
         }
         .ai-chat-empty {
-            color: #666;
+            color: var(--text-muted);
             text-align: center;
             padding: 40px 20px;
             font-style: italic;
@@ -795,17 +799,17 @@
         .ai-btn-clear {
             width: 100%;
             padding: 10px;
-            background: #3d405b;
-            border: none;
+            background: var(--btn-secondary);
+            border: 1px solid var(--btn-secondary-border);
             border-radius: 6px;
-            color: #aaa;
+            color: var(--btn-secondary-text);
             font-size: 13px;
             cursor: pointer;
             transition: background 0.2s;
         }
         .ai-btn-clear:hover {
-            background: #5c5f7e;
-            color: #fff;
+            background: var(--btn-secondary-hover);
+            color: var(--text-white);
         }
         /* Information Toast */
         .info-toast-container {
@@ -824,13 +828,13 @@
             align-items: flex-start;
             gap: 10px;
             padding: 12px 14px;
-            background: rgba(22, 33, 62, 0.92);
+            background: var(--toast-bg);
             backdrop-filter: blur(8px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--toast-border);
             border-radius: 10px;
-            color: #eee;
+            color: var(--text-primary);
             font-size: 13px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 4px 16px var(--shadow-toast);
             opacity: 0;
             transform: translateX(40px);
             transition: opacity 0.3s, transform 0.3s;
@@ -858,7 +862,7 @@
             margin-bottom: 2px;
         }
         .info-toast-text {
-            color: #bbb;
+            color: var(--text-dim);
             word-break: break-word;
         }
     </style>
@@ -923,7 +927,7 @@
             <div style="margin-top: 12px; display: flex; align-items: center; gap: 10px;">
                 <span style="font-size: 20px;" title="PCストリーム">🔈</span>
                 <input type="range" id="volumeSlider" min="0" max="100" value="40"
-                       style="flex: 1; height: 8px; cursor: pointer; accent-color: #60efff;"
+                       style="flex: 1; height: 8px; cursor: pointer; accent-color: var(--accent);"
                        oninput="setVolume(this.value)">
                 <span id="volumeValue" style="min-width: 40px; text-align: right;">40%</span>
             </div>
@@ -931,22 +935,22 @@
             <div style="margin-top: 8px; display: flex; align-items: center; gap: 10px;">
                 <span style="font-size: 20px;" title="P2P音声">👥</span>
                 <input type="range" id="p2pVolumeSlider" min="0" max="100" value="40"
-                       style="flex: 1; height: 8px; cursor: pointer; accent-color: #f39c12;"
+                       style="flex: 1; height: 8px; cursor: pointer; accent-color: var(--slider-p2p);"
                        oninput="setP2PVolume(this.value)">
                 <span id="p2pVolumeValue" style="min-width: 40px; text-align: right;">40%</span>
             </div>
 
             <div style="margin-top: 10px;">
-                <button onclick="openSettings()" style="background: #3d405b; padding: 8px 16px; font-size: 14px; width: 100%;">⚙️ 設定</button>
+                <button onclick="openSettings()" style="background: var(--btn-secondary); border: 1px solid var(--btn-secondary-border); color: var(--btn-secondary-text); padding: 8px 16px; font-size: 14px; width: 100%;">⚙️ 設定</button>
             </div>
 
             <div id="debugButtonContainer" style="margin-top: 10px; display: none;">
-                <button onclick="toggleDebug()" style="background: #333; padding: 8px 16px; font-size: 14px; width: 100%;">デバッグ表示</button>
+                <button onclick="toggleDebug()" style="background: var(--border-main); padding: 8px 16px; font-size: 14px; width: 100%;">デバッグ表示</button>
             </div>
 
-            <div id="debug" style="margin-top: 10px; font-size: 12px; color: #aaa; text-align: left; max-height: 200px; overflow-y: auto; background: #0a0a15; padding: 12px; border-radius: 6px; word-break: break-all; display: none;">
+            <div id="debug" style="margin-top: 10px; font-size: 12px; color: var(--text-tertiary); text-align: left; max-height: 200px; overflow-y: auto; background: var(--bg-input); padding: 12px; border-radius: 6px; word-break: break-all; display: none;">
             </div>
-            <button id="sendLogsBtn" onclick="sendLogsToServer()" style="margin-top: 8px; background: #0f3460; padding: 8px 16px; font-size: 14px; width: 100%; display: none;">📤 ログをサーバーに送信</button>
+            <button id="sendLogsBtn" onclick="sendLogsToServer()" style="margin-top: 8px; background: var(--bg-section); padding: 8px 16px; font-size: 14px; width: 100%; display: none;">📤 ログをサーバーに送信</button>
         </div>
 
         <!-- AI Tab -->
@@ -979,11 +983,11 @@
         <!-- History Tab -->
         <div id="tab-history" class="tab-content">
             <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
-                <button onclick="loadHistory()" style="background: #3d405b; padding: 10px 20px; font-size: 14px;">更新</button>
+                <button onclick="loadHistory()" style="background: var(--btn-secondary); border: 1px solid var(--btn-secondary-border); color: var(--btn-secondary-text); padding: 10px 20px; font-size: 14px;">更新</button>
                 <div style="flex: 1; display: flex; align-items: center; gap: 8px;">
                     <span style="font-size: 16px;">🔊</span>
                     <input type="range" id="historyVolumeSlider" min="0" max="100" value="40"
-                           style="flex: 1; height: 6px; cursor: pointer; accent-color: #60efff;"
+                           style="flex: 1; height: 6px; cursor: pointer; accent-color: var(--accent);"
                            oninput="setHistoryVolume(this.value)">
                     <span id="historyVolumeValue" style="min-width: 35px; font-size: 12px; text-align: right;">40%</span>
                 </div>
@@ -1002,7 +1006,7 @@
 
         <!-- Admin Tab -->
         <div id="tab-admin" class="tab-content">
-            <iframe id="admin-iframe" src="" style="width: 100%; height: calc(100vh - 100px); border: none; background: #0a0a15;"></iframe>
+            <iframe id="admin-iframe" src="" style="width: 100%; height: calc(100vh - 100px); border: none; background: var(--bg-input);"></iframe>
         </div>
     </div>
 
@@ -1035,18 +1039,18 @@
                 <div style="margin-bottom: 20px;">
                     <div style="margin-bottom: 10px; font-weight: 500;">表示名</div>
                     <div style="display: flex; gap: 10px; align-items: center;">
-                        <input type="text" id="displayNameInput" placeholder="名前を入力" maxlength="20" style="flex: 1; padding: 12px; background: #0a0a15; border: 1px solid #333; border-radius: 6px; color: #eee; font-size: 14px;">
-                        <button onclick="saveDisplayName()" style="padding: 12px 20px; background: #3d405b; border: none; color: #eee; border-radius: 6px; cursor: pointer;">保存</button>
+                        <input type="text" id="displayNameInput" placeholder="名前を入力" maxlength="20" style="flex: 1; padding: 12px; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 6px; color: var(--text-primary); font-size: 14px;">
+                        <button onclick="saveDisplayName()" style="padding: 12px 20px; background: var(--btn-secondary); border: 1px solid var(--btn-secondary-border); color: var(--btn-secondary-text); border-radius: 6px; cursor: pointer;">保存</button>
                     </div>
-                    <div id="displayNameHint" style="margin-top: 10px; font-size: 12px; color: #888;">他のユーザーに表示される名前です</div>
+                    <div id="displayNameHint" style="margin-top: 10px; font-size: 12px; color: var(--text-secondary);">他のユーザーに表示される名前です</div>
                 </div>
                 <div style="margin-bottom: 20px;">
                     <div style="margin-bottom: 10px; font-weight: 500;">PTTショートカットキー</div>
                     <div style="display: flex; gap: 10px; align-items: center;">
-                        <div id="pttKeyDisplay" style="flex: 1; padding: 12px; background: #0a0a15; border-radius: 6px; text-align: center; font-family: monospace;">Ctrl+Space</div>
-                        <button onclick="startKeyRegistration()" id="registerKeyBtn" style="padding: 12px 20px; background: #3d405b; border: none; color: #eee; border-radius: 6px; cursor: pointer;">登録</button>
+                        <div id="pttKeyDisplay" style="flex: 1; padding: 12px; background: var(--bg-input); border-radius: 6px; text-align: center; font-family: monospace;">Ctrl+Space</div>
+                        <button onclick="startKeyRegistration()" id="registerKeyBtn" style="padding: 12px 20px; background: var(--btn-secondary); border: 1px solid var(--btn-secondary-border); color: var(--btn-secondary-text); border-radius: 6px; cursor: pointer;">登録</button>
                     </div>
-                    <div id="keyRegistrationHint" style="margin-top: 10px; font-size: 12px; color: #888; display: none;">キーを押してください...</div>
+                    <div id="keyRegistrationHint" style="margin-top: 10px; font-size: 12px; color: var(--text-secondary); display: none;">キーを押してください...</div>
                 </div>
                 <div style="margin-bottom: 20px;">
                     <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
@@ -1065,43 +1069,53 @@
                     <div style="display: flex; align-items: center; gap: 10px;">
                         <span style="font-size: 20px;">🎤</span>
                         <input type="range" id="micGainSlider" min="50" max="300" value="100"
-                               style="flex: 1; height: 8px; cursor: pointer; accent-color: #27ae60;"
+                               style="flex: 1; height: 8px; cursor: pointer; accent-color: var(--slider-mic);"
                                oninput="setMicGain(this.value)">
                         <span id="micGainValue" style="min-width: 50px; text-align: right;">1.0x</span>
                     </div>
-                    <div style="margin-top: 8px; font-size: 12px; color: #888;">送信音量を調整（0.5x〜3.0x）</div>
+                    <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">送信音量を調整（0.5x〜3.0x）</div>
                 </div>
                 <div style="margin-bottom: 20px;">
                     <div style="margin-bottom: 10px; font-weight: 500;">音声認識エンジン</div>
-                    <select id="speechEngineSelect" onchange="saveSpeechEngine(this.value)" style="width: 100%; padding: 12px; background: #0a0a15; border: 1px solid #333; border-radius: 6px; color: #eee; font-size: 14px; cursor: pointer;">
+                    <select id="speechEngineSelect" onchange="saveSpeechEngine(this.value)" style="width: 100%; padding: 12px; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 6px; color: var(--text-primary); font-size: 14px; cursor: pointer;">
                         <option value="webspeech">Web Speech API（高精度）</option>
                         <option value="vosk">Vosk（低遅延・安定）</option>
                     </select>
-                    <div style="margin-top: 8px; font-size: 12px; color: #888;">
+                    <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">
                         Web Speech API: Google音声認識（高精度、ネット必須）<br>
                         Vosk: ローカル認識（低遅延・安定、サーバー起動必須）
                     </div>
                 </div>
                 <div style="margin-bottom: 20px;">
                     <div style="margin-bottom: 10px; font-weight: 500;">AI音声</div>
-                    <select id="ttsModeSelect" onchange="saveTtsMode(this.value); toggleEdgeTtsVoiceGroup(this.value)" style="width: 100%; padding: 12px; background: #0a0a15; border: 1px solid #333; border-radius: 6px; color: #eee; font-size: 14px; cursor: pointer;">
+                    <select id="ttsModeSelect" onchange="saveTtsMode(this.value); toggleEdgeTtsVoiceGroup(this.value)" style="width: 100%; padding: 12px; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 6px; color: var(--text-primary); font-size: 14px; cursor: pointer;">
                         <option value="edge">Edge TTS（高品質・端末）</option>
                         <option value="client">端末TTS（軽量）</option>
                         <option value="none">音声なし</option>
                     </select>
                     <div id="edgeTtsVoiceGroup" style="margin-top: 8px; display: none;">
-                        <select id="edgeTtsVoiceSelect" onchange="saveEdgeTtsVoice(this.value)" style="width: 100%; padding: 10px; background: #0a0a15; border: 1px solid #333; border-radius: 6px; color: #eee; font-size: 14px; cursor: pointer;">
+                        <select id="edgeTtsVoiceSelect" onchange="saveEdgeTtsVoice(this.value)" style="width: 100%; padding: 10px; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 6px; color: var(--text-primary); font-size: 14px; cursor: pointer;">
                             <option value="ja-JP-NanamiNeural">Nanami（女性）</option>
                             <option value="ja-JP-KeitaNeural">Keita（男性）</option>
                         </select>
                     </div>
-                    <div style="margin-top: 8px; font-size: 12px; color: #888;">
+                    <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">
                         Edge TTS: MSニューラル音声（高品質・端末処理）<br>
                         端末TTS: ブラウザ内蔵の音声合成（軽量）
                     </div>
                 </div>
+                <div style="margin-bottom: 20px;">
+                    <div style="margin-bottom: 10px; font-weight: 500;">テーマ</div>
+                    <div class="theme-picker" id="themePicker">
+                        <div style="text-align: center;"><button class="theme-swatch" data-theme="midnight" style="--swatch: #60efff" title="Midnight"></button><div class="theme-swatch-label">Midnight</div></div>
+                        <div style="text-align: center;"><button class="theme-swatch" data-theme="teal" style="--swatch: #00B4A0" title="Teal"></button><div class="theme-swatch-label">Teal</div></div>
+                        <div style="text-align: center;"><button class="theme-swatch" data-theme="ocean" style="--swatch: #4A90D9" title="Ocean"></button><div class="theme-swatch-label">Ocean</div></div>
+                        <div style="text-align: center;"><button class="theme-swatch" data-theme="sunset" style="--swatch: #FF8A65" title="Sunset"></button><div class="theme-swatch-label">Sunset</div></div>
+                        <div style="text-align: center;"><button class="theme-swatch" data-theme="light" style="--swatch: #0097A7" title="Light"></button><div class="theme-swatch-label">Light</div></div>
+                    </div>
+                </div>
                 <div style="margin-bottom: 10px;">
-                    <button onclick="location.reload()" style="width: 100%; padding: 12px; background: #641220; border: none; color: #f8d7da; border-radius: 6px; cursor: pointer;">ページを再読み込み</button>
+                    <button onclick="location.reload()" style="width: 100%; padding: 12px; background: var(--status-error-bg); border: none; color: var(--status-error-text); border-radius: 6px; cursor: pointer;">ページを再読み込み</button>
                 </div>
             </div>
             <div class="modal-footer">
@@ -1127,6 +1141,29 @@
     <script src="js/history.js"></script>
     <script src="js/assistant.js"></script>
     <script src="js/info.js"></script>
+    <script>
+        // テーマ切り替え
+        function setTheme(name) {
+            document.documentElement.dataset.theme = name;
+            localStorage.setItem('ptt-theme', name);
+            const meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) meta.content = getComputedStyle(document.documentElement).getPropertyValue('--bg-card').trim();
+            document.querySelectorAll('.theme-swatch').forEach(s => {
+                s.classList.toggle('active', s.dataset.theme === name);
+            });
+            // iframe（ダッシュボード等）にもテーマを反映
+            const iframe = document.getElementById('admin-iframe');
+            if (iframe && iframe.contentDocument) {
+                try { iframe.contentDocument.documentElement.dataset.theme = name; } catch(e) {}
+            }
+        }
+        document.getElementById('themePicker').addEventListener('click', e => {
+            const swatch = e.target.closest('.theme-swatch');
+            if (swatch) setTheme(swatch.dataset.theme);
+        });
+        // 初期状態のアクティブ表示
+        setTheme(localStorage.getItem('ptt-theme') || 'midnight');
+    </script>
     <script>
         // Service Worker登録
         if ('serviceWorker' in navigator) {

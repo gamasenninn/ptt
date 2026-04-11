@@ -274,7 +274,7 @@ function checkInAppBrowser() {
 function showInAppBrowserWarning(appName) {
     const warning = document.createElement('div');
     warning.id = 'inapp-warning';
-    warning.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff6b6b;color:white;padding:15px;text-align:center;z-index:9999;font-size:14px;';
+    warning.style.cssText = 'position:fixed;top:0;left:0;right:0;background:var(--status-error-hover);color:var(--text-white);padding:15px;text-align:center;z-index:9999;font-size:14px;';
     warning.innerHTML = `
         <div style="margin-bottom:8px;"><strong>${appName}の内蔵ブラウザでは音声が再生できません</strong></div>
         <div style="font-size:12px;">右下の「︙」→「ブラウザで開く」を選択してください</div>
@@ -496,7 +496,8 @@ async function connect() {
                 const hint = document.getElementById('displayNameHint');
                 if (hint) {
                     hint.textContent = 'この名前は使用中です';
-                    hint.style.color = '#f87171';
+                    hint.className = 'status-color-error';
+                    hint.style.fontSize = '12px';
                 }
             } else if (data.type === 'logs_saved') {
                 debugLog('Logs saved: ' + data.filename + ' (' + data.lineCount + ' lines)');
@@ -1538,10 +1539,12 @@ function saveDisplayName() {
         const hint = document.getElementById('displayNameHint');
         if (hint) {
             hint.textContent = '保存しました';
-            hint.style.color = '#4ade80';
+            hint.className = 'status-color-success';
+            hint.style.fontSize = '12px';
             setTimeout(() => {
                 hint.textContent = '他のユーザーに表示される名前です';
-                hint.style.color = '#888';
+                hint.className = 'status-color-muted';
+                hint.style.fontSize = '12px';
             }, 2000);
         }
         debugLog('Display name saved: ' + name);
